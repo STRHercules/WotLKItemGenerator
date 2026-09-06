@@ -1,0 +1,87 @@
+-- Death Knight | Required Level 80 | 10 finalized items
+-- Generator seed: 2117234368
+START TRANSACTION;
+
+DELETE FROM `item_template` WHERE `entry` IN (
+    309951, 309966, 309969, 309976, 309985, 309986, 309987, 309992, 309993, 309995
+);
+
+INSERT INTO `item_template`
+(
+    `entry`,
+    `class`,
+    `subclass`,
+    `SoundOverrideSubclass`,
+    `name`,
+    `displayid`,
+    `Quality`,
+    `Flags`,
+    `FlagsExtra`,
+    `BuyCount`,
+    `BuyPrice`,
+    `SellPrice`,
+    `InventoryType`,
+    `AllowableClass`,
+    `AllowableRace`,
+    `ItemLevel`,
+    `RequiredLevel`,
+    `stat_type1`,
+    `stat_value1`,
+    `stat_type2`,
+    `stat_value2`,
+    `stat_type3`,
+    `stat_value3`,
+    `stat_type4`,
+    `stat_value4`,
+    `stat_type5`,
+    `stat_value5`,
+    `stat_type6`,
+    `stat_value6`,
+    `stat_type7`,
+    `stat_value7`,
+    `stat_type8`,
+    `stat_value8`,
+    `stat_type9`,
+    `stat_value9`,
+    `stat_type10`,
+    `stat_value10`,
+    `dmg_min1`,
+    `dmg_max1`,
+    `dmg_type1`,
+    `armor`,
+    `delay`,
+    `ammo_type`,
+    `RangedModRange`,
+    `bonding`,
+    `description`,
+    `Material`,
+    `sheath`,
+    `RandomProperty`,
+    `RandomSuffix`,
+    `block`,
+    `MaxDurability`,
+    `socketColor_1`,
+    `socketContent_1`,
+    `socketColor_2`,
+    `socketContent_2`,
+    `socketColor_3`,
+    `socketContent_3`,
+    `socketBonus`,
+    `RequiredDisenchantSkill`,
+    `DisenchantID`,
+    `flagsCustom`,
+    `VerifiedBuild`
+)
+VALUES
+(309951,4,1,-1,'Mantle, Light Rage',59034,4,0,0,1,613780,122756,16,1059,-1,232,80,7,58,4,64,13,52,31,54,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,151,0,0,0,1,'',7,0,0,0,0,0,2,0,0,0,0,0,0,-1,0,0,12340),
+(309966,2,8,-1,'Argent Champion''s Duskwoven Longblade',64750,4,0,0,1,734072,183518,17,35,-1,219,80,7,97,4,90,14,73,12,86,0,0,0,0,0,0,0,0,0,0,0,0,633,879,0,0,3500,0,0,2,'The air around it smells faintly of burning cedar.',0,1,0,0,0,100,2,0,0,0,0,0,0,-1,0,0,12340),
+(309969,4,4,-1,'The Nightmare Legguards',64568,4,0,0,1,738150,246050,7,35,-1,251,80,4,114,7,92,37,91,32,96,31,81,0,0,0,0,0,0,0,0,0,0,0,0,0,1937,0,0,0,1,'The blade has been sharpened so many times that its shape has changed.',6,0,0,0,0,100,0,0,0,0,0,0,0,-1,0,0,12340),
+(309976,4,4,-1,'Black Lord Carapace',51707,3,0,0,1,726110,145222,5,35,-1,200,80,7,67,4,71,13,52,31,53,37,56,0,0,0,0,0,0,0,0,0,0,0,0,0,1601,0,0,0,2,'',6,0,0,0,0,100,0,0,0,0,0,0,0,-1,0,0,12340),
+(309985,2,7,-1,'Spellblade, Wolf Fist',55975,4,0,0,1,589360,117872,13,35,-1,213,80,4,73,7,58,32,48,37,57,0,0,0,0,0,0,0,0,0,0,0,0,319,435,0,0,2400,0,0,2,'',0,3,0,0,0,75,0,0,0,0,0,0,0,-1,0,0,12340),
+(309986,4,4,-1,'Snowy Headplate of Wind King',64630,4,0,0,1,637029,212343,1,35,-1,245,80,4,79,7,84,36,70,38,158,32,66,0,0,0,0,0,0,0,0,0,0,0,0,0,1520,0,0,0,1,'',6,0,0,0,0,60,2,0,0,0,0,0,0,-1,0,0,12340),
+(309987,4,4,-1,'Dragon King''s Pauldrons',61731,4,0,0,1,509625,169875,3,35,-1,245,80,7,108,4,97,13,98,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1287,0,0,0,1,'',6,0,0,0,0,60,4,0,0,0,0,0,0,-1,0,0,12340),
+(309992,4,4,-1,'Deathkeeper''s Tombforged Legguards',58774,4,0,0,1,981810,196362,7,35,-1,226,80,7,96,4,97,12,85,37,80,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1758,0,0,0,2,'Its clasp bears the symbol of a long-dead household.',6,0,0,0,0,100,2,0,8,0,0,0,0,-1,0,0,12340),
+(309993,4,0,-1,'Sunforged Runering',64169,4,0,0,1,872665,174533,11,35,-1,264,80,4,73,7,65,36,64,44,51,32,57,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,'',4,0,0,0,0,0,0,0,0,0,0,0,0,-1,0,0,12340),
+(309995,4,1,-1,'Moonlit Warder Cloak',56737,4,0,0,1,446095,89219,16,35,-1,200,80,4,36,7,40,32,35,31,34,37,32,0,0,0,0,0,0,0,0,0,0,0,0,0,130,0,0,0,2,'',7,0,0,0,0,0,8,0,0,0,0,0,0,-1,0,0,12340);
+
+COMMIT;

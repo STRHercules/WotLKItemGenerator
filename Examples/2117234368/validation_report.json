@@ -1,0 +1,212 @@
+{
+  "seed": "2117234368",
+  "requested_number": 100000,
+  "selected_classes": [
+    "Warrior",
+    "Paladin",
+    "Hunter",
+    "Rogue",
+    "Priest",
+    "Death Knight",
+    "Shaman",
+    "Mage",
+    "Warlock",
+    "Druid"
+  ],
+  "total_items": 100000,
+  "entry_min": 200000,
+  "entry_max": 389999,
+  "unique_entries": 100000,
+  "unique_names": 100000,
+  "unique_displayids": 12033,
+  "unique_reference_entries": 12076,
+  "quality_counts": {
+    "Epic": 8993,
+    "Uncommon": 56198,
+    "Rare": 34806,
+    "Legendary": 3
+  },
+  "role_counts": {
+    "strength_dps": 16622,
+    "tank": 12941,
+    "healer": 12486,
+    "hunter": 10000,
+    "agility_dps": 16928,
+    "caster_dps": 31023
+  },
+  "kind_counts": {
+    "armor": 66538,
+    "2h_sword": 614,
+    "back": 6285,
+    "2h_mace": 673,
+    "finger": 6570,
+    "neck": 5564,
+    "crossbow": 242,
+    "trinket": 4227,
+    "1h_sword": 1018,
+    "polearm": 358,
+    "1h_axe": 509,
+    "2h_axe": 605,
+    "shield": 307,
+    "1h_mace": 1303,
+    "gun": 221,
+    "bow": 389,
+    "relic": 463,
+    "dagger": 1072,
+    "fist": 188,
+    "staff": 2176,
+    "wand": 678
+  },
+  "classes": {
+    "Warrior": {
+      "count": 10000,
+      "entry_min": 200000,
+      "entry_max": 209999,
+      "unique_names": 10000,
+      "unique_displayids": 3284,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Paladin": {
+      "count": 10000,
+      "entry_min": 220000,
+      "entry_max": 229999,
+      "unique_names": 10000,
+      "unique_displayids": 3221,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Hunter": {
+      "count": 10000,
+      "entry_min": 240000,
+      "entry_max": 249999,
+      "unique_names": 10000,
+      "unique_displayids": 3083,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Rogue": {
+      "count": 10000,
+      "entry_min": 260000,
+      "entry_max": 269999,
+      "unique_names": 10000,
+      "unique_displayids": 3118,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Priest": {
+      "count": 10000,
+      "entry_min": 280000,
+      "entry_max": 289999,
+      "unique_names": 10000,
+      "unique_displayids": 3035,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Death Knight": {
+      "count": 10000,
+      "entry_min": 300000,
+      "entry_max": 309999,
+      "unique_names": 10000,
+      "unique_displayids": 2507,
+      "level_min": 55,
+      "level_max": 80
+    },
+    "Shaman": {
+      "count": 10000,
+      "entry_min": 320000,
+      "entry_max": 329999,
+      "unique_names": 10000,
+      "unique_displayids": 3284,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Mage": {
+      "count": 10000,
+      "entry_min": 340000,
+      "entry_max": 349999,
+      "unique_names": 10000,
+      "unique_displayids": 3123,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Warlock": {
+      "count": 10000,
+      "entry_min": 360000,
+      "entry_max": 369999,
+      "unique_names": 10000,
+      "unique_displayids": 3091,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Druid": {
+      "count": 10000,
+      "entry_min": 380000,
+      "entry_max": 389999,
+      "unique_names": 10000,
+      "unique_displayids": 3068,
+      "level_min": 1,
+      "level_max": 80
+    }
+  },
+  "loot_pool_count": 6,
+  "loot_pool_row_count": 100000,
+  "loot_attachment_count": 310,
+  "loot_chance": 2.0,
+  "world_loot_source": "R:\\Users\\Zach\\Documents\\GitHub\\WotLKItemGenerator\\creature_loot_template.sql",
+  "reference_loot_source": "R:\\Users\\Zach\\Documents\\GitHub\\WotLKItemGenerator\\reference_loot_template.sql",
+  "item_template_source": "R:\\Users\\Zach\\Documents\\GitHub\\WotLKItemGenerator\\item_template.sql",
+  "item_dbc": {
+    "source_file_count": 2,
+    "source_paths": [
+      "R:\\Users\\Zach\\Documents\\GitHub\\WotLKItemGenerator\\Item.dbc",
+      "R:\\Users\\Zach\\Documents\\GitHub\\WotLKItemGenerator\\Item.custom.dbc"
+    ],
+    "source_row_count": 46155,
+    "source_overlap_count": 0,
+    "generated_row_count": 100000,
+    "merged_row_count": 146155,
+    "overwritten_row_count": 0,
+    "string_block_size": 1,
+    "output": "client/Item.dbc",
+    "merged_manifest": "client/item_dbc_merged_rows.csv",
+    "source": null,
+    "manifest": "client/item_dbc_rows.csv"
+  },
+  "reference_catalog_count": 16843,
+  "reference_catalog_unique_displayids": 16733,
+  "reference_catalog_effective_count": 16843,
+  "reference_catalog_effective_unique_displayids": 16733,
+  "reference_catalog_fallback_categories": [],
+  "reference_catalog_inventory_type_mismatch_count": 0,
+  "world_loot_reference_count": 310,
+  "loot_bracket_distribution": {
+    "01-19": 18585,
+    "20-39": 20492,
+    "40-59": 22048,
+    "60-69": 13664,
+    "70-79": 19219,
+    "80": 5992
+  },
+  "world_loot_bracket_distribution": {
+    "01-19": 41,
+    "20-39": 71,
+    "40-59": 80,
+    "60-69": 56,
+    "70-79": 52,
+    "80": 10
+  },
+  "generated_loot_pool_ids": [
+    3000000,
+    3000001,
+    3000002,
+    3000003,
+    3000004,
+    3000005
+  ],
+  "random_effects_enabled": false,
+  "socket_bonus_ids_generated": false,
+  "disenchant_ids_generated": false,
+  "random_property_or_suffix_enabled": false,
+  "validation_errors": 0
+}

@@ -315,9 +315,34 @@ it is automatically merged as an additional baseline.
 
 # Expected Project Layout
 
-The default path calculation assumes the generator lives three directory levels below the repository root.
+The preferred layout is now a **standalone repository** with the three AzerothCore SQL source files stored beside the generator.
 
-For example:
+```text
+WotLKItemGenerator/
+├─ generate_pack.py
+├─ README.md
+├─ Item.dbc
+├─ Item.custom.dbc                # optional
+├─ creature_loot_template.sql
+├─ reference_loot_template.sql
+└─ item_template.sql
+```
+
+With this layout, the normal command works without any path arguments:
+
+```powershell
+py .\generate_pack.py
+```
+
+For each of the three SQL inputs, the generator resolves its default path independently:
+
+```text
+1. Look beside generate_pack.py.
+2. If that exact SQL file exists there, use it.
+3. Otherwise fall back to the historical nested AzerothCore repository path.
+```
+
+The historical nested layout remains supported for compatibility:
 
 ```text
 EsteriaWoW/
@@ -337,19 +362,21 @@ EsteriaWoW/
          └─ Item.custom.dbc        # optional
 ```
 
-With that layout:
+In the nested layout, when a same-named SQL file is not present beside the generator, the fallback is:
 
 ```text
-ROOT
-= CustomModules/Item Generator/v2.6.2
-
-REPO_ROOT
-= EsteriaWoW
+<repository root>/data/sql/base/db_world/<filename>
 ```
 
-The default SQL paths are then derived from `REPO_ROOT`.
+You can override any automatic path explicitly with:
 
-If your generator is stored elsewhere, use the source-path command-line arguments documented below.
+```text
+--world-loot-source
+--reference-loot-source
+--item-template-source
+```
+
+Explicit command-line paths always take precedence over the automatic defaults.
 
 ---
 
@@ -3094,21 +3121,35 @@ To fully remove the custom items from the client:
 
 ## FileNotFoundError: world-loot source not found
 
-The default repository-root calculation does not match your folder layout.
+The generator could not find the required SQL source at its resolved default path.
 
-Use:
+For a standalone checkout, the simplest supported layout is to place these three files directly beside `generate_pack.py`:
 
-```powershell
---world-loot-source
+```text
+creature_loot_template.sql
+reference_loot_template.sql
+item_template.sql
 ```
 
-with the correct path.
-
-Also verify:
+Then run:
 
 ```powershell
---reference-loot-source
---item-template-source
+py .\generate_pack.py
+```
+
+If a local SQL file is absent, the generator falls back to the historical nested AzerothCore path under:
+
+```text
+data/sql/base/db_world/
+```
+
+For a different layout, override the paths explicitly:
+
+```powershell
+py .\generate_pack.py `
+  --world-loot-source "PATH\creature_loot_template.sql" `
+  --reference-loot-source "PATH\reference_loot_template.sql" `
+  --item-template-source "PATH\item_template.sql"
 ```
 
 ---

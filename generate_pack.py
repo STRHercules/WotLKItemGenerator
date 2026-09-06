@@ -23,9 +23,15 @@ DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
 MAX_ITEMS_PER_CLASS = 20_000
 MAX_TOTAL_ITEMS = 200_000
-DEFAULT_WORLD_LOOT_SOURCE = REPO_ROOT / 'data' / 'sql' / 'base' / 'db_world' / 'creature_loot_template.sql'
-DEFAULT_REFERENCE_LOOT_SOURCE = REPO_ROOT / 'data' / 'sql' / 'base' / 'db_world' / 'reference_loot_template.sql'
-DEFAULT_ITEM_TEMPLATE_SOURCE = REPO_ROOT / 'data' / 'sql' / 'base' / 'db_world' / 'item_template.sql'
+def _default_world_sql_source(filename):
+    local_source = ROOT / filename
+    if local_source.is_file():
+        return local_source
+    return REPO_ROOT / 'data' / 'sql' / 'base' / 'db_world' / filename
+
+DEFAULT_WORLD_LOOT_SOURCE = _default_world_sql_source('creature_loot_template.sql')
+DEFAULT_REFERENCE_LOOT_SOURCE = _default_world_sql_source('reference_loot_template.sql')
+DEFAULT_ITEM_TEMPLATE_SOURCE = _default_world_sql_source('item_template.sql')
 DEFAULT_ITEM_DBC_SOURCE = ROOT / 'Item.dbc'
 DEFAULT_ITEM_DBC_CUSTOM_SOURCE = ROOT / 'Item.custom.dbc'
 
