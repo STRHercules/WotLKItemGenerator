@@ -1,0 +1,267 @@
+{
+  "seed": "5955861405",
+  "requested_number": 100000,
+  "selected_classes": [
+    "Warrior",
+    "Paladin",
+    "Hunter",
+    "Rogue",
+    "Priest",
+    "Death Knight",
+    "Shaman",
+    "Mage",
+    "Warlock",
+    "Druid"
+  ],
+  "total_items": 100000,
+  "entry_min": 200000,
+  "entry_max": 389999,
+  "unique_entries": 100000,
+  "unique_names": 100000,
+  "unique_displayids": 12008,
+  "unique_reference_entries": 12074,
+  "quality_counts": {
+    "Uncommon": 56199,
+    "Rare": 34770,
+    "Epic": 9028,
+    "Legendary": 3
+  },
+  "role_counts": {
+    "strength_dps": 16554,
+    "tank": 12881,
+    "healer": 12616,
+    "hunter": 10000,
+    "agility_dps": 16944,
+    "caster_dps": 31005
+  },
+  "kind_counts": {
+    "armor": 66496,
+    "finger": 6539,
+    "neck": 5591,
+    "1h_axe": 558,
+    "trinket": 4300,
+    "2h_axe": 601,
+    "1h_sword": 1020,
+    "2h_mace": 711,
+    "polearm": 331,
+    "back": 6338,
+    "shield": 263,
+    "bow": 381,
+    "1h_mace": 1239,
+    "2h_sword": 607,
+    "crossbow": 232,
+    "gun": 182,
+    "relic": 443,
+    "fist": 219,
+    "dagger": 1055,
+    "staff": 2233,
+    "wand": 661
+  },
+  "classes": {
+    "Warrior": {
+      "count": 10000,
+      "entry_min": 200000,
+      "entry_max": 209999,
+      "unique_names": 10000,
+      "unique_displayids": 3242,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Paladin": {
+      "count": 10000,
+      "entry_min": 220000,
+      "entry_max": 229999,
+      "unique_names": 10000,
+      "unique_displayids": 3308,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Hunter": {
+      "count": 10000,
+      "entry_min": 240000,
+      "entry_max": 249999,
+      "unique_names": 10000,
+      "unique_displayids": 3065,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Rogue": {
+      "count": 10000,
+      "entry_min": 260000,
+      "entry_max": 269999,
+      "unique_names": 10000,
+      "unique_displayids": 3092,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Priest": {
+      "count": 10000,
+      "entry_min": 280000,
+      "entry_max": 289999,
+      "unique_names": 10000,
+      "unique_displayids": 3048,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Death Knight": {
+      "count": 10000,
+      "entry_min": 300000,
+      "entry_max": 309999,
+      "unique_names": 10000,
+      "unique_displayids": 2534,
+      "level_min": 55,
+      "level_max": 80
+    },
+    "Shaman": {
+      "count": 10000,
+      "entry_min": 320000,
+      "entry_max": 329999,
+      "unique_names": 10000,
+      "unique_displayids": 3277,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Mage": {
+      "count": 10000,
+      "entry_min": 340000,
+      "entry_max": 349999,
+      "unique_names": 10000,
+      "unique_displayids": 3111,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Warlock": {
+      "count": 10000,
+      "entry_min": 360000,
+      "entry_max": 369999,
+      "unique_names": 10000,
+      "unique_displayids": 3110,
+      "level_min": 1,
+      "level_max": 80
+    },
+    "Druid": {
+      "count": 10000,
+      "entry_min": 380000,
+      "entry_max": 389999,
+      "unique_names": 10000,
+      "unique_displayids": 3091,
+      "level_min": 1,
+      "level_max": 80
+    }
+  },
+  "loot_pool_count": 6,
+  "loot_pool_row_count": 100000,
+  "loot_attachment_count": 310,
+  "loot_chance": 2.0,
+  "world_loot_source": "creature_loot_template.sql",
+  "reference_loot_source": "reference_loot_template.sql",
+  "item_template_source": "item_template.sql",
+  "feature_sources": {
+    "item_set_dbc": "ItemSet.dbc",
+    "spell_dbc": "Spell.dbc",
+    "spell_enchantment_dbc": "SpellItemEnchantment.dbc",
+    "disenchant": "disenchant_loot_template.sql",
+    "spell_proc": "spell_proc.sql",
+    "spell_script_names": "spell_script_names.sql"
+  },
+  "disabled_features": [],
+  "feature_counts": {
+    "sets": 200,
+    "spell-effects": 843,
+    "chance-on-hit": 93,
+    "on-use": 502,
+    "socket-bonuses": 7020,
+    "disenchant": 99056
+  },
+  "feature_catalog_audit": {
+    "effect_packages": 17774,
+    "script_excluded": 457,
+    "proc_overrides": 246,
+    "socket_bonuses": 5936,
+    "disenchant_pairs": 18526
+  },
+  "item_set": {
+    "source_path": "ItemSet.dbc",
+    "source_row_count": 509,
+    "generated_row_count": 40,
+    "merged_row_count": 549,
+    "overwritten_row_count": 0,
+    "string_block_size": 11849,
+    "output": "client/ItemSet.dbc",
+    "server_output": "server/dbc/ItemSet.dbc"
+  },
+  "item_dbc": {
+    "source_file_count": 2,
+    "source_paths": [
+      "Item.dbc",
+      "Item.custom.dbc"
+    ],
+    "source_row_count": 46155,
+    "source_overlap_count": 0,
+    "generated_row_count": 100000,
+    "merged_row_count": 146155,
+    "overwritten_row_count": 0,
+    "string_block_size": 1,
+    "output": "client/Item.dbc",
+    "merged_manifest": "client/item_dbc_merged_rows.csv",
+    "source": null,
+    "manifest": "client/item_dbc_rows.csv"
+  },
+  "reference_catalog_count": 16843,
+  "reference_catalog_unique_displayids": 16733,
+  "reference_catalog_effective_count": 16843,
+  "reference_catalog_effective_unique_displayids": 16733,
+  "reference_catalog_fallback_categories": [],
+  "reference_catalog_inventory_type_mismatch_count": 0,
+  "world_loot_reference_count": 310,
+  "loot_bracket_distribution": {
+    "01-19": 18549,
+    "20-39": 20382,
+    "40-59": 22042,
+    "60-69": 13711,
+    "70-79": 19310,
+    "80": 6006
+  },
+  "world_loot_bracket_distribution": {
+    "01-19": 41,
+    "20-39": 71,
+    "40-59": 80,
+    "60-69": 56,
+    "70-79": 52,
+    "80": 10
+  },
+  "generated_loot_pool_ids": [
+    3000000,
+    3000001,
+    3000002,
+    3000003,
+    3000004,
+    3000005
+  ],
+  "random_effects_enabled": true,
+  "socket_bonus_ids_generated": true,
+  "disenchant_ids_generated": true,
+  "chance_on_hit_enabled": true,
+  "on_use_enabled": true,
+  "sets_enabled": true,
+  "random_property_or_suffix_enabled": false,
+  "validation_errors": 0,
+  "name_repair_count": 3,
+  "name_repairs": [
+    {
+      "entry": 200693,
+      "old_name": "Chestguard of the Wintergrasp Guard",
+      "new_name": "Chestguard of the Wintergrasp"
+    },
+    {
+      "entry": 209767,
+      "old_name": "Legguards of the Wintergrasp Guard",
+      "new_name": "Legguards of the Wintergrasp"
+    },
+    {
+      "entry": 267523,
+      "old_name": "Shoulderguards of the Dragonblight Vanguard",
+      "new_name": "Shoulderguards of the Dragonblight"
+    }
+  ]
+}

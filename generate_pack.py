@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, csv, hashlib, json, math, os, re, shutil, struct, uuid, zipfile
-from collections import Counter, defaultdict
+import argparse, csv, hashlib, json, math, os, re, shutil, struct, sys, time, uuid, zipfile
+from collections import Counter, defaultdict, deque
 from datetime import datetime
 from pathlib import Path
 
@@ -67,11 +67,402 @@ DISABLE_ALIASES = {
     'all-new': NEW_FEATURES,
 }
 
+# Terminal UI is presentation-only. Rich is optional so the generator remains runnable with
+# the Python standard library alone; interactive terminals automatically use it when present.
+try:
+    from rich import box as rich_box
+    from rich.console import Console, Group
+    from rich.live import Live
+    from rich.panel import Panel
+    from rich.progress_bar import ProgressBar
+    from rich.spinner import Spinner
+    from rich.table import Table
+    from rich.text import Text
+    RICH_AVAILABLE = True
+except ImportError:  # pragma: no cover - exercised on installations without Rich
+    Console = Group = Live = Panel = ProgressBar = Spinner = Table = Text = rich_box = None
+    RICH_AVAILABLE = False
+
+UI_MODES = ('auto','fancy','plain')
+
+
+def resolve_ui_mode(requested='auto',is_tty=None,rich_available=None):
+    requested=str(requested or 'auto').lower()
+    if requested not in UI_MODES:
+        raise ValueError(f'unknown UI mode: {requested}')
+    if is_tty is None:
+        is_tty=bool(getattr(sys.stdout,'isatty',lambda:False)())
+    if rich_available is None:
+        rich_available=RICH_AVAILABLE
+    if requested=='plain':
+        return 'plain'
+    if requested=='fancy':
+        return 'fancy' if rich_available else 'plain'
+    return 'fancy' if is_tty and rich_available else 'plain'
+
+
+def _format_elapsed(seconds):
+    seconds=max(0.0,float(seconds or 0.0))
+    minutes,sec=divmod(seconds,60)
+    hours,minutes=divmod(int(minutes),60)
+    if hours:
+        return f'{hours:02d}:{minutes:02d}:{sec:05.2f}'
+    return f'{minutes:02d}:{sec:05.2f}'
+
+
+def _feature_display_names(disabled):
+    labels=(('sets','Sets'),('spell-effects','Effects'),('chance-on-hit','Procs'),('on-use','On-Use'),
+            ('socket-bonuses','Socket Bonuses'),('disenchant','Disenchant'))
+    return [label for key,label in labels if key not in set(disabled or ())]
+
+
+def notable_item_event(item):
+    if item.get('Quality')==5:
+        return {'kind':'legendary','title':item.get('name','Legendary item'),
+                'detail':f"{item.get('class_name','')} • Level {item.get('RequiredLevel','?')} • ilvl {item.get('ItemLevel','?')} • {len(item.get('sockets',()))} sockets"}
+    if item.get('itemset'):
+        return {'kind':'set','title':item.get('set_name') or item.get('name','Generated set'),
+                'detail':f"{item.get('class_name','')} • {str(item.get('role','')).replace('_',' ').title()} • set {item.get('itemset')}"}
+    feature=item.get('special_effect_feature')
+    if feature:
+        kind={'chance-on-hit':'proc','on-use':'on-use','spell-effects':'effect'}.get(feature,'effect')
+        return {'kind':kind,'title':item.get('name','Special item'),
+                'detail':f"{feature} • stock item {item.get('effect_source_entry',0)} • spell {item.get('effect_source_spell',0)}"}
+    return None
+
+
+class PlainTerminalUI:
+    """Low-noise terminal output used for redirected output, CI, and Rich fallback."""
+    def __init__(self,stream=None,animations=True,show_items=False,quiet=False):
+        self.stream=stream or sys.stdout
+        self.animations=bool(animations)
+        self.show_items=bool(show_items)
+        self.quiet=bool(quiet)
+        self._phase=''
+        self._last_percent=-1
+        self._seen_sets=set()
+        self.runtime=None
+
+    def _write(self,text=''):
+        if not self.quiet:
+            print(text,file=self.stream,flush=True)
+
+    def banner(self):
+        if self.quiet: return
+        self._write('╔══════════════════════════════════════════════╗')
+        self._write('║              ⚒  WotLK ITEM FORGE            ║')
+        self._write('║          AzerothCore • WotLK 3.3.5a         ║')
+        self._write('╚══════════════════════════════════════════════╝')
+
+    def configure(self,runtime):
+        self.runtime=runtime
+        if self.quiet: return
+        features=' • '.join(_feature_display_names(runtime.get('disabled_features',()))) or 'None'
+        self._write(f"Seed: {runtime['seed']} ({runtime['source']})")
+        self._write(f"Items: {runtime['number']:,} | Classes: {', '.join(runtime['classes'])}")
+        self._write(f"Features: {features}")
+        self._write(f"Output: {runtime['output_dir']}")
+
+    def source_check(self,label,path,ok=True):
+        if self.quiet: return
+        mark='✓' if ok else '✗'
+        self._write(f'{mark} {label}: {Path(path).name}')
+
+    def phase(self,name,total=None,detail=''):
+        self._phase=name; self._last_percent=-1
+        if self.quiet: return
+        suffix=f' — {detail}' if detail else ''
+        self._write(f'\n⚙ {name}{suffix}')
+
+    def progress(self,completed,total,current='',class_name=None,class_completed=None,class_total=None):
+        if self.quiet or not total: return
+        percent=int((completed/max(1,total))*100)
+        milestone=(percent==100 or percent>=self._last_percent+10 or completed==1)
+        if not milestone: return
+        self._last_percent=percent
+        detail=f' | {current}' if current else ''
+        class_detail=''
+        if class_name and class_total:
+            class_detail=f' | {class_name} {class_completed or 0:,}/{class_total:,}'
+        self._write(f'  [{percent:3d}%] {completed:,}/{total:,}{class_detail}{detail}')
+
+    def status(self,text):
+        if not self.quiet: self._write(f'  → {text}')
+
+    def event(self,kind,title,detail=''):
+        if self.quiet: return
+        icon={'legendary':'★','set':'◈','proc':'⚡','on-use':'✧','effect':'✦','epic':'◆'}.get(kind,'•')
+        self._write(f'  {icon} {title}' + (f' — {detail}' if detail else ''))
+
+    def item(self,item):
+        event=notable_item_event(item)
+        if event and event['kind']=='set':
+            set_id=item.get('itemset')
+            if set_id in self._seen_sets: return
+            self._seen_sets.add(set_id)
+        if event and (event['kind'] in ('legendary','set') or self.show_items):
+            self.event(event['kind'],event['title'],event['detail'])
+        elif not event and self.show_items and item.get('Quality')==4:
+            self.event('epic',item.get('name','Epic item'),f"{item.get('class_name','')} • Level {item.get('RequiredLevel','?')} • ilvl {item.get('ItemLevel','?')}")
+
+    def phase_done(self,name=None,detail=''):
+        if self.quiet: return
+        label=name or self._phase
+        self._write(f'✓ {label}' + (f' — {detail}' if detail else ''))
+
+    def validation(self,errors,name_changes=()):
+        if name_changes:
+            self._write(f'! NAME REPAIRS — {len(name_changes)} names shortened')
+            for change in name_changes[:50]:
+                self._write(f"  {change['entry']}: {change['old_name']} -> {change['new_name']}")
+            if len(name_changes)>50:
+                self._write(f'  ... and {len(name_changes)-50} more; see validation_report.json')
+        if errors:
+            self._write(f'✗ VALIDATION FAILED — {len(errors)} errors')
+        else:
+            self._write('✓ VALIDATION PASSED')
+
+    def complete(self,report,elapsed,output_dir):
+        if self.quiet:
+            repairs=report.get('name_repair_count',0)
+            suffix=f' ({repairs} names shortened)' if repairs else ''
+            print(f"Generation complete: {report.get('item_count',report.get('total_items',0)):,} items -> {output_dir}{suffix}",file=self.stream,flush=True)
+            return
+        q=report.get('quality_distribution',report.get('quality_counts',{}))
+        f=report.get('feature_counts',{})
+        self._write('\n╔══════════════════ GENERATION COMPLETE ══════════════════╗')
+        self._write(f"  Items        {report.get('item_count',report.get('total_items',0)):>10,}")
+        for quality in ('Uncommon','Rare','Epic','Legendary'):
+            if quality in q: self._write(f"  {quality:<12} {q.get(quality,0):>10,}")
+        self._write(f"  Sets         {f.get('sets',0):>10,}")
+        self._write(f"  Effects      {f.get('spell-effects',0):>10,}")
+        self._write(f"  Procs        {f.get('chance-on-hit',0):>10,}")
+        self._write(f"  On Use       {f.get('on-use',0):>10,}")
+        self._write(f"  Socket bonus {f.get('socket-bonuses',0):>10,}")
+        self._write(f"  Disenchant   {f.get('disenchant',0):>10,}")
+        self._write(f"  Name repairs {report.get('name_repair_count',0):>10,}")
+        self._write(f"  Validation   {'PASSED' if report.get('validation_errors',0)==0 else 'FAILED'}")
+        self._write(f"  Time         {_format_elapsed(elapsed)}")
+        self._write(f"  Output       {output_dir}")
+        self._write('╚══════════════════════════════════════════════════════════╝')
+
+    def error(self,message):
+        print(f'ERROR: {message}',file=self.stream,flush=True)
+
+    def close(self):
+        pass
+
+
+class QuietTerminalUI(PlainTerminalUI):
+    def __init__(self,stream=None,**kwargs):
+        super().__init__(stream=stream,quiet=True,animations=False,show_items=False)
+
+
+class FancyTerminalUI(PlainTerminalUI):
+    """Rich live dashboard for interactive terminals."""
+    def __init__(self,stream=None,animations=True,show_items=False,quiet=False):
+        if not RICH_AVAILABLE:
+            raise RuntimeError('Rich terminal UI requested but Rich is not installed')
+        super().__init__(stream=stream or sys.stdout,animations=animations,show_items=show_items,quiet=quiet)
+        self.console=Console(file=self.stream,force_terminal=None,soft_wrap=False)
+        self.live=None
+        self.phase_total=0; self.phase_completed=0; self.current=''; self.detail=''
+        self.class_progress={}; self.class_totals={}
+        self.events=deque(maxlen=7)
+        self.sources=[]
+        self.phase_started=time.monotonic()
+
+    def banner(self):
+        if self.quiet: return
+        self.live=Live(self._render(),console=self.console,refresh_per_second=12 if self.animations else 4,
+                       transient=False,vertical_overflow='visible')
+        self.live.start()
+
+    def configure(self,runtime):
+        self.runtime=runtime
+        self.class_totals=dict(runtime.get('class_counts',{}))
+        self.class_progress={name:0 for name in self.class_totals}
+        self._refresh()
+
+    def source_check(self,label,path,ok=True):
+        self.sources.append((label,Path(path).name,bool(ok)))
+        self._refresh()
+
+    def phase(self,name,total=None,detail=''):
+        self._phase=name; self.detail=detail; self.phase_total=int(total or 0); self.phase_completed=0
+        self.current=''; self._last_percent=-1; self.phase_started=time.monotonic()
+        if name in ('Generating item skeletons','Finalizing generated items'):
+            self.class_progress={name:0 for name in self.class_totals}
+        self._refresh()
+
+    def progress(self,completed,total,current='',class_name=None,class_completed=None,class_total=None):
+        self.phase_completed=int(completed); self.phase_total=int(total or self.phase_total or 0); self.current=current or self.current
+        if class_name:
+            self.class_progress[class_name]=int(class_completed if class_completed is not None else self.class_progress.get(class_name,0))
+            if class_total is not None: self.class_totals[class_name]=int(class_total)
+        self._refresh(throttled=True)
+
+    def status(self,text):
+        self.current=text; self._refresh()
+
+    def event(self,kind,title,detail=''):
+        icon={'legendary':'★','set':'◈','proc':'⚡','on-use':'✧','effect':'✦','epic':'◆'}.get(kind,'•')
+        style={'legendary':'bold yellow','set':'bold magenta','proc':'bright_cyan','on-use':'bright_blue','effect':'cyan','epic':'magenta'}.get(kind,'white')
+        self.events.append((icon,title,detail,style))
+        self._refresh()
+
+    def item(self,item):
+        event=notable_item_event(item)
+        if event and event['kind']=='set':
+            set_id=item.get('itemset')
+            if set_id in self._seen_sets: return
+            self._seen_sets.add(set_id)
+        if event:
+            self.event(event['kind'],event['title'],event['detail'])
+        elif self.show_items and item.get('Quality')==4:
+            self.event('epic',item.get('name','Epic item'),f"{item.get('class_name','')} • Level {item.get('RequiredLevel','?')} • ilvl {item.get('ItemLevel','?')}")
+
+    def phase_done(self,name=None,detail=''):
+        label=name or self._phase
+        self.events.append(('✓',label,detail,'green'))
+        if self.phase_total: self.phase_completed=self.phase_total
+        self.current=''; self._refresh()
+
+    def validation(self,errors,name_changes=()):
+        if name_changes:
+            self.events.append(('!','NAME REPAIRS',f'{len(name_changes)} names shortened','yellow'))
+            for change in name_changes[:50]:
+                self.events.append(('↻',f"{change['entry']}: {change['old_name']} -> {change['new_name']}",'','yellow'))
+            if len(name_changes)>50:
+                self.events.append(('…','NAME REPAIRS',f'{len(name_changes)-50} more in validation_report.json','yellow'))
+        if errors:
+            self.events.append(('✗','VALIDATION FAILED',f'{len(errors)} errors','bold red'))
+        else:
+            self.events.append(('✓','VALIDATION PASSED','All generator checks passed','bold green'))
+        self._refresh()
+
+    def complete(self,report,elapsed,output_dir):
+        if self.live:
+            self.live.update(self._render())
+            self.live.stop(); self.live=None
+        q=report.get('quality_distribution',report.get('quality_counts',{})); f=report.get('feature_counts',{})
+        grid=Table.grid(padding=(0,2))
+        grid.add_column(style='bold'); grid.add_column(justify='right')
+        grid.add_row('Items generated',f"{report.get('item_count',report.get('total_items',0)):,}")
+        for quality,style in (('Uncommon','green'),('Rare','blue'),('Epic','magenta'),('Legendary','yellow')):
+            if quality in q: grid.add_row(Text(quality,style=style),f"{q.get(quality,0):,}")
+        grid.add_row('Item sets',f"{f.get('sets',0):,}")
+        grid.add_row('Special effects',f"{f.get('spell-effects',0):,}")
+        grid.add_row('Chance-on-hit procs',f"{f.get('chance-on-hit',0):,}")
+        grid.add_row('On-use abilities',f"{f.get('on-use',0):,}")
+        grid.add_row('Socket bonuses',f"{f.get('socket-bonuses',0):,}")
+        grid.add_row('Disenchantable',f"{f.get('disenchant',0):,}")
+        grid.add_row('Name repairs',f"{report.get('name_repair_count',0):,}")
+        grid.add_row('Validation',Text('✓ PASSED' if report.get('validation_errors',0)==0 else '✗ FAILED',style='bold green' if report.get('validation_errors',0)==0 else 'bold red'))
+        grid.add_row('Time',_format_elapsed(elapsed))
+        grid.add_row('Output',str(output_dir))
+        self.console.print(Panel(grid,title='[bold yellow]⚒ GENERATION COMPLETE[/bold yellow]',border_style='bright_blue',box=rich_box.DOUBLE))
+
+    def error(self,message):
+        if self.live:
+            self.live.stop(); self.live=None
+        self.console.print(Panel(str(message),title='[bold red]GENERATION FAILED[/bold red]',border_style='red'))
+
+    def close(self):
+        if self.live:
+            self.live.stop(); self.live=None
+
+    def _refresh(self,throttled=False):
+        if not self.live: return
+        now=time.monotonic()
+        if throttled:
+            last=getattr(self,'_last_refresh',0.0)
+            if now-last<0.035 and self.phase_completed!=self.phase_total: return
+        self._last_refresh=now
+        self.live.update(self._render(),refresh=True)
+
+    def _render(self):
+        header=Panel(Text('⚒  WotLK ITEM FORGE\nAzerothCore • WotLK 3.3.5a',justify='center',style='bold bright_cyan'),
+                     border_style='bright_blue',box=rich_box.DOUBLE)
+        pieces=[header]
+        if self.runtime:
+            cfg=Table.grid(padding=(0,2)); cfg.add_column(style='bold cyan'); cfg.add_column()
+            features=' • '.join(_feature_display_names(self.runtime.get('disabled_features',()))) or 'None'
+            cfg.add_row('Seed',f"{self.runtime['seed']} ({self.runtime['source']})")
+            cfg.add_row('Items',f"{self.runtime['number']:,}")
+            cfg.add_row('Classes',', '.join(self.runtime['classes']))
+            cfg.add_row('Features',features)
+            cfg.add_row('Output',str(self.runtime['output_dir']))
+            pieces.append(Panel(cfg,title='[bold]Forge Configuration[/bold]',border_style='cyan'))
+        elif self.sources:
+            src=Table.grid(padding=(0,1)); src.add_column(); src.add_column()
+            for label,name,ok in self.sources[-9:]:
+                src.add_row(Text('✓' if ok else '✗',style='green' if ok else 'red'),f'{label}: {name}')
+            pieces.append(Panel(src,title='[bold]Source Check[/bold]',border_style='cyan'))
+
+        if self._phase:
+            phase_table=Table.grid(expand=True,padding=(0,1)); phase_table.add_column(ratio=1)
+            if self.animations and self.phase_completed < self.phase_total if self.phase_total else self.animations:
+                phase_title=Spinner('dots',text=Text(self._phase,style='bold yellow'),style='bright_cyan')
+            else:
+                phase_title=Text(self._phase,style='bold yellow')
+            phase_table.add_row(phase_title)
+            if self.phase_total:
+                bar=ProgressBar(total=max(1,self.phase_total),completed=min(self.phase_completed,self.phase_total),width=None,style='grey37',complete_style='bright_cyan',finished_style='green')
+                pct=int(100*self.phase_completed/max(1,self.phase_total))
+                phase_table.add_row(Group(bar,Text(f'{pct:3d}%   {self.phase_completed:,} / {self.phase_total:,}',style='dim')))
+            if self.current: phase_table.add_row(Text(f'Current: {self.current}',style='white'))
+            elapsed=time.monotonic()-self.phase_started
+            phase_table.add_row(Text(f'Elapsed: {_format_elapsed(elapsed)}',style='dim'))
+            pieces.append(Panel(phase_table,title='[bold]Current Work[/bold]',border_style='yellow'))
+
+        if self.class_totals and self._phase in ('Generating item skeletons','Finalizing generated items'):
+            t=Table(box=None,expand=True,padding=(0,1)); t.add_column('Class',style='bold'); t.add_column('Progress',ratio=1); t.add_column('',justify='right')
+            for name,total in self.class_totals.items():
+                if total<=0: continue
+                done=self.class_progress.get(name,0)
+                t.add_row(name,ProgressBar(total=total,completed=min(done,total),width=None,complete_style='cyan',finished_style='green'),f'{done:,}/{total:,}')
+            pieces.append(Panel(t,title='[bold]Class Progress[/bold]',border_style='blue'))
+
+        if self.events:
+            ev=Table.grid(padding=(0,1)); ev.add_column(width=2); ev.add_column(ratio=1)
+            for icon,title,detail,style in self.events:
+                text=Text(title,style=style)
+                if detail: text.append(f'  {detail}',style='dim')
+                ev.add_row(Text(icon,style=style),text)
+            pieces.append(Panel(ev,title='[bold]Recent Discoveries[/bold]',border_style='magenta'))
+        return Group(*pieces)
+
+
+def create_terminal_ui(args,stream=None,is_tty=None,rich_available=None):
+    if getattr(args,'quiet',False):
+        return QuietTerminalUI(stream=stream)
+    mode=resolve_ui_mode(getattr(args,'ui','auto'),is_tty=is_tty,rich_available=rich_available)
+    kwargs={'stream':stream,'animations':not getattr(args,'no_animations',False),'show_items':getattr(args,'show_items',False)}
+    if mode=='fancy' and RICH_AVAILABLE:
+        return FancyTerminalUI(**kwargs)
+    return PlainTerminalUI(**kwargs)
+
 def _default_item_dbc_sources():
     sources=[DEFAULT_ITEM_DBC_SOURCE]
     if DEFAULT_ITEM_DBC_CUSTOM_SOURCE.is_file():
         sources.append(DEFAULT_ITEM_DBC_CUSTOM_SOURCE)
     return sources
+
+def _portable_source_path(path):
+    """Return a reproducible source label without leaking host directories."""
+    path=Path(path).expanduser()
+    try:
+        return path.resolve().relative_to(ROOT.resolve()).as_posix()
+    except (ValueError,OSError):
+        return path.name
+
+def _copy_server_itemset(client_itemset_path,output_root):
+    client_itemset_path=Path(client_itemset_path)
+    server_path=Path(output_root)/'server'/'dbc'/'ItemSet.dbc'
+    server_path.parent.mkdir(parents=True,exist_ok=True)
+    shutil.copy2(client_itemset_path,server_path)
+    return server_path
 GENERATED_LOOT_POOL_BASE = 3_000_000
 GENERATED_LOOT_ATTACHMENT_ITEM_BASE = 2_000_000_000
 LOOT_BRACKETS = [
@@ -1226,16 +1617,20 @@ def parse_args(argv=None):
     parser.add_argument('--spell-proc-source',type=Path,default=DEFAULT_SPELL_PROC_SOURCE,metavar='PATH',help=f'spell_proc.sql used to audit proc conditions (default: {DEFAULT_SPELL_PROC_SOURCE}).')
     parser.add_argument('--spell-script-names-source',type=Path,default=DEFAULT_SPELL_SCRIPT_NAMES_SOURCE,metavar='PATH',help=f'spell_script_names.sql used to audit scripted spells (default: {DEFAULT_SPELL_SCRIPT_NAMES_SOURCE}).')
     parser.add_argument('--disable',dest='disable_groups',action='append',nargs='+',default=[],metavar='FEATURE',help=f'Disable one or more new features: {", ".join(NEW_FEATURES)}; aliases: effects, all-new.')
-    parser.add_argument('--set-rate',type=_percent_arg,default=0.20,metavar='PERCENT',help='Percentage of generated items reserved as five-piece set members (default: 0.20).')
+    parser.add_argument('--set-rate',type=_percent_arg,default=0.20,metavar='PERCENT',help='Percentage of generated items reserved as generated set members; five pieces by default (default: 0.20).')
     parser.add_argument('--set-min-level',type=_nonnegative_int_arg,default=20,metavar='LEVEL',help='Minimum required level for generated set pieces (default: 20).')
     parser.add_argument('--set-size',type=_positive_int_arg,default=5,metavar='COUNT',help='Generated set piece count; five is the WotLK default (default: 5).')
     parser.add_argument('--spell-effect-rate-multiplier',type=_multiplier_arg,default=1.0,metavar='MULTIPLIER',help='Multiplier for stock On Equip spell-effect frequency (default: 1.0).')
     parser.add_argument('--proc-rate-multiplier',type=_multiplier_arg,default=1.0,metavar='MULTIPLIER',help='Multiplier for stock Chance on Hit frequency (default: 1.0).')
     parser.add_argument('--on-use-rate-multiplier',type=_multiplier_arg,default=1.0,metavar='MULTIPLIER',help='Multiplier for stock On Use frequency (default: 1.0).')
-    parser.add_argument('--effect-ilvl-window',type=_nonnegative_int_arg,default=15,metavar='ILVL',help='Maximum stock effect item-level distance before widening selection (default: 15).')
+    parser.add_argument('--effect-ilvl-window',type=_nonnegative_int_arg,default=15,metavar='ILVL',help='Maximum stock effect item-level distance; leveling items are additionally capped to 5/10/15 ilvl windows for WotLK-like progression (default: 15).')
     parser.add_argument('--socket-bonus-rate',type=_percent_arg,default=100.0,metavar='PERCENT',help='Percentage of eligible socketed items receiving a stock socket bonus (default: 100).')
     parser.add_argument('--disenchant-rate',type=_percent_arg,default=100.0,metavar='PERCENT',help='Percentage of eligible items receiving validated stock disenchant data (default: 100).')
     parser.add_argument('--max-special-effects',type=_nonnegative_int_arg,default=1,metavar='COUNT',help='Maximum independent spell-effect packages per item (default: 1).')
+    parser.add_argument('--ui',choices=UI_MODES,default='auto',help='Terminal display mode: auto, fancy, or plain (default: auto).')
+    parser.add_argument('--no-animations',action='store_true',help='Keep the styled UI but disable animated spinners/refresh effects.')
+    parser.add_argument('--show-items',action='store_true',help='Expand the live discovery feed with additional interesting generated items.')
+    parser.add_argument('--quiet',action='store_true',help='Suppress progress output; print only errors and the final completion line.')
     args=parser.parse_args(argv)
     args.disabled_features=_expand_disabled_features(args.disable_groups)
     return args
@@ -1261,13 +1656,13 @@ def derive_auto_seed(user_guid,now=None):
     value=int.from_bytes(hashlib.blake2b(payload,digest_size=8).digest(),'big') % 10_000_000_000
     return f'{value:010d}'
 
-def configure_runtime(argv=None,now=None,guid_path=None):
+def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global SEED, OUT, SQLDIR, LOOT_CHANCE, WORLD_LOOT_SOURCE, REFERENCE_LOOT_SOURCE, ITEM_TEMPLATE_SOURCE, ITEM_DBC_SOURCES, ITEM_DBC_OVERWRITE
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
     global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W
-    args=parse_args(argv)
+    args=parse_args(argv) if args is None else args
     world_loot_source=Path(args.world_loot_source).expanduser().resolve()
     reference_loot_source=Path(args.reference_loot_source).expanduser().resolve()
     item_template_source=Path(args.item_template_source).expanduser().resolve()
@@ -1278,23 +1673,49 @@ def configure_runtime(argv=None,now=None,guid_path=None):
     disenchant_source=Path(args.disenchant_source).expanduser().resolve()
     spell_proc_source=Path(args.spell_proc_source).expanduser().resolve()
     spell_script_names_source=Path(args.spell_script_names_source).expanduser().resolve()
+    if ui:
+        ui.phase('Inspecting AzerothCore sources',total=10,detail='Verifying SQL and DBC inputs')
+    source_check_count=0
     for label,path in (('world-loot source',world_loot_source),('reference-loot source',reference_loot_source),('item-template source',item_template_source)):
         if not path.is_file():
+            if ui: ui.source_check(label,path,False)
             raise FileNotFoundError(f'{label} not found: {path}')
+        source_check_count+=1
+        if ui:
+            ui.source_check(label,path,True); ui.progress(source_check_count,10,current=Path(path).name)
     for item_dbc_source in item_dbc_sources:
         if not item_dbc_source.is_file():
+            if ui: ui.source_check('item-dbc source',item_dbc_source,False)
             raise FileNotFoundError(f'item-dbc source not found: {item_dbc_source}')
+    # Multiple Item.dbc baselines count as one logical source check in the dashboard.
+    source_check_count+=1
+    if ui:
+        ui.source_check('Item.dbc baseline(s)',', '.join(path.name for path in item_dbc_sources),True); ui.progress(source_check_count,10,current='Item.dbc baseline(s)')
     for label,path in (
             ('item-set DBC source',item_set_dbc_source),('spell DBC source',spell_dbc_source),
             ('spell-enchantment DBC source',spell_enchantment_dbc_source),('disenchant source',disenchant_source),
-            ('spell-proc source',spell_proc_source),('spell-script-names source',spell_script_names_source)):
+            ('spell-proc source',spell_proc_source)):
         if not path.is_file():
+            if ui: ui.source_check(label,path,False)
             raise FileNotFoundError(f'{label} not found: {path}')
+        source_check_count+=1
+        if ui:
+            ui.source_check(label,path,True); ui.progress(source_check_count,10,current=Path(path).name)
+    if not spell_script_names_source.is_file():
+        if ui: ui.source_check('spell-script-names source',spell_script_names_source,False)
+        raise FileNotFoundError(f'spell-script-names source not found: {spell_script_names_source}')
+    source_check_count+=1
+    if ui:
+        ui.source_check('spell-script-names source',spell_script_names_source,True); ui.progress(source_check_count,10,current=spell_script_names_source.name)
+        ui.phase_done('Inspecting AzerothCore sources')
+        ui.phase('Harvesting stock WotLK data',total=2,detail='Appearances, spells, effects, sets, sockets, and disenchant tables')
+        ui.status('Harvesting stock item appearances and weapon anchors')
     harvested_a,harvested_w,catalog_audit=harvest_reference_catalog(item_template_source)
     if catalog_audit['errors']:
         details='\n'.join(f' - {error}' for error in catalog_audit['errors'][:20])
         raise ValueError(f'item-template appearance harvest failed ({len(catalog_audit["errors"])} errors):\n{details}')
     A=harvested_a; W=harvested_w
+    if ui: ui.progress(1,2,current='Stock appearance catalog ready')
     if args.seed is not None:
         seed=args.seed
         source='command-line'
@@ -1344,10 +1765,14 @@ def configure_runtime(argv=None,now=None,guid_path=None):
     SOCKET_BONUS_RATE=args.socket_bonus_rate
     DISENCHANT_RATE=args.disenchant_rate
     MAX_SPECIAL_EFFECTS=args.max_special_effects
+    if ui: ui.status('Loading spell, proc, set, socket, and disenchant catalogs')
     FEATURE_CATALOG=load_feature_catalogs(
         item_template_source,item_set_dbc_source,spell_dbc_source,spell_enchantment_dbc_source,
         disenchant_source,spell_proc_source,spell_script_names_source,
     ) if DISABLED_FEATURES != set(NEW_FEATURES) else empty_feature_catalog()
+    if ui:
+        ui.progress(2,2,current='Feature catalogs ready')
+        ui.phase_done('Harvesting stock WotLK data')
     REFERENCE_CATALOG_AUDIT=catalog_audit
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
@@ -1606,7 +2031,8 @@ def load_feature_catalogs(item_template_path,item_set_path,spell_path,enchantmen
             })
 
         disenchant_id=meta['disenchant_id']
-        if disenchant_id and disenchant_id in catalog['disenchant_ids']:
+        if (disenchant_id and disenchant_id in catalog['disenchant_ids']
+                and meta['required_disenchant_skill']>=0):
             catalog['disenchant_pairs'].append({
                 'disenchant_id':disenchant_id,'required_skill':meta['required_disenchant_skill'],
                 'source_entry':meta['entry'],'source_item_level':meta['item_level'],'source_quality':meta['quality'],
@@ -1640,9 +2066,12 @@ def load_feature_catalogs(item_template_path,item_set_path,spell_path,enchantmen
             continue
         masks={meta['class_mask'] for meta in members if meta['class_mask'] not in (-1,0)}
         class_mask=next(iter(masks)) if len(masks)==1 else -1
+        role_counts=Counter(meta['role'] for meta in members if meta.get('role'))
+        set_role=role_counts.most_common(1)[0][0] if role_counts else ''
         catalog.setdefault('set_templates',[]).append({
             'source_set_id':set_id,'name':_dbc_string(catalog['item_set_strings'],row[1]),'bonuses':tuple(bonuses),
-            'visuals':visuals,'class_mask':class_mask,'item_level':round(sum(meta['item_level'] for meta in members)/len(members)),
+            'visuals':visuals,'class_mask':class_mask,'role':set_role,
+            'item_level':round(sum(meta['item_level'] for meta in members)/len(members)),
             'quality':max(meta['quality'] for meta in members),'members':tuple(meta['entry'] for meta in members),
         })
     catalog.setdefault('set_templates',[])
@@ -2260,6 +2689,41 @@ def valid_item_name(name):
     return (len(name) <= MAX_NAME_CHARS and len(name.split()) <= MAX_NAME_WORDS
             and not has_duplicate_name_root(name))
 
+def _short_name_candidates(name):
+    words=name.split()
+    seen={name}
+    for end in range(len(words)-1,1,-1):
+        candidate=' '.join(words[:end])
+        if candidate not in seen:
+            seen.add(candidate)
+            yield candidate
+    compact=' '.join(word for word in words if word.lower() not in NAME_GLUE_WORDS)
+    if compact and compact not in seen:
+        yield compact
+
+def repair_item_names(items):
+    used={item['name'] for item in items}
+    changes=[]
+    for item in items:
+        old_name=item['name']
+        if valid_item_name(old_name):
+            continue
+        used.discard(old_name)
+        new_name=next((candidate for candidate in _short_name_candidates(old_name)
+                        if valid_item_name(candidate) and candidate not in used), None)
+        if new_name is None:
+            new_name=f"Generated Item {item['entry']}"
+        item['name']=new_name
+        used.add(new_name)
+        changes.append({'entry':item['entry'],'old_name':old_name,'new_name':new_name})
+    return changes
+
+def _oath_name_rate_excessive(names):
+    names=list(names)
+    return len(names)>=1000 and (sum('Oath' in name for name in names)/len(names))>=0.04
+
+OATH_NAME_ACCEPT_RATE=0.20
+
 LEGENDARY_ROOTS = [
     'Aetherion','Ashwake','Blackstar','Dawnspire','Dreadwake','Emberfall','Everfrost','Fatesong',
     'Frostvein','Gravesong','Lightfall','Moonrend','Nightfall','Northstar','Oathrender','Rimeheart',
@@ -2377,6 +2841,8 @@ def make_name(entry,slot,weapon_kind=None,legendary=False,armor_subclass=None):
         elif pat==9: name=f'{base}, {proper}'
         elif pat==10: name=f"{owner}'s {base} of the {suf}"
         else: name=f'{adj} {base} of {suf}'
+        if 'Oath' in name and r01(entry,'oath-name-throttle',attempt)>=OATH_NAME_ACCEPT_RATE:
+            continue
         if valid_item_name(name):
             yield name
 
@@ -2432,7 +2898,7 @@ def socket_colors(req,ilvl,q,entry,slot,ref_q):
         while len(colors)<n:
             x=r01(entry,'legend_socket_color',len(colors)); colors.append(2 if x<.40 else 4 if x<.75 else 8)
         return colors
-    # Conservative progression, no generated socket bonus ID.
+    # Conservative socket progression; validated socket bonuses are assigned later when enabled.
     chance = .06 if req<70 else .14 if req<75 else .24 if req<80 else (.24 if q==2 else .36 if q==3 else .50)
     if r01(entry,'socket_chance')>=chance: return []
     maxn=1 if req<70 else 2 if req<80 else 3
@@ -2511,17 +2977,38 @@ def _indexed_candidates(index,quality,item_level):
                     seen.add(marker); rows.append(row)
     return rows
 
+ROLE_EFFECT_COMPATIBILITY = {
+    'strength_dps': {'strength_dps','agility_dps'},
+    'agility_dps': {'agility_dps','hunter','strength_dps'},
+    'hunter': {'hunter','agility_dps'},
+    'caster_dps': {'caster_dps','healer'},
+    'healer': {'healer','caster_dps'},
+    'tank': {'tank','strength_dps'},
+}
+
+def _effect_role_tier(item_role,source_role):
+    if source_role==item_role:
+        return 0
+    if source_role and source_role in ROLE_EFFECT_COMPATIBILITY.get(item_role,{item_role}):
+        return 1
+    if not source_role:
+        return 2
+    return None
+
+def _effect_ilvl_window(item_level):
+    progression_cap=5 if item_level<40 else 10 if item_level<70 else 15
+    return min(EFFECT_ILVL_WINDOW,progression_cap)
+
 def _effect_candidates(item,feature):
     trigger={'spell-effects':1,'chance-on-hit':2,'on-use':None}[feature]
-    rows=[]
     triggers=(0,5) if trigger is None else (trigger,)
     indexed=[]
     for candidate_trigger in triggers:
         for source_class in (item['item_class'],2,4):
-            for candidate_quality in range(max(0,item['Quality']-1),min(5,item['Quality']+1)+1):
+            for candidate_quality in range(max(0,item['Quality']-1),item['Quality']+1):
                 for candidate_bucket in range(max(0,item['ItemLevel']//10-2),item['ItemLevel']//10+3):
                     indexed.extend(FEATURE_CATALOG['effect_index'].get((candidate_trigger,source_class,candidate_quality,candidate_bucket),()))
-    seen=set()
+    seen=set(); rows=[]; window=_effect_ilvl_window(item['ItemLevel'])
     for package in indexed:
         marker=id(package)
         if marker in seen:
@@ -2529,18 +3016,16 @@ def _effect_candidates(item,feature):
         seen.add(marker)
         if feature=='chance-on-hit' and item['item_class']!=2:
             continue
+        if package['source_quality']>item['Quality']:
+            continue
         if not _class_mask_matches(package['source_class_mask'],item['class_name']):
             continue
-        if abs(package['source_quality']-item['Quality'])>1:
+        if abs(package['source_item_level']-item['ItemLevel'])>window:
             continue
-        if abs(package['source_item_level']-item['ItemLevel'])<=EFFECT_ILVL_WINDOW:
-            rows.append(package)
-    if rows:
-        return rows
-    return [package for package in indexed if (
-        (feature!='chance-on-hit' or item['item_class']==2) and
-        _class_mask_matches(package['source_class_mask'],item['class_name'])
-    )]
+        if _effect_role_tier(item['role'],package.get('source_role')) is None:
+            continue
+        rows.append(package)
+    return rows
 
 def _feature_chance(item,feature):
     quality=item['Quality']
@@ -2563,10 +3048,13 @@ def _choose_effect_package(item,feature):
         if feature=='chance-on-hit':
             return 0 if row['source_class']==2 else 1
         return 0 if row['source_inventory_type']==item['InventoryType'] else 1
-    def role_penalty(row):
-        return 0 if not row.get('source_role') or item['role']==row.get('source_role') else 1
-    candidates=sorted(candidates,key=lambda row:(role_penalty(row),slot_penalty(row),abs(row['source_item_level']-item['ItemLevel']),abs(row['source_quality']-item['Quality']),row['source_entry'],row['spell_id']))
-    return candidates[h64(item['entry'],'effect-package',feature)%len(candidates)]
+    best_role=min(_effect_role_tier(item['role'],row.get('source_role')) for row in candidates)
+    candidates=[row for row in candidates if _effect_role_tier(item['role'],row.get('source_role'))==best_role]
+    best_slot=min(slot_penalty(row) for row in candidates)
+    candidates=[row for row in candidates if slot_penalty(row)==best_slot]
+    candidates=sorted(candidates,key=lambda row:(abs(row['source_item_level']-item['ItemLevel']),abs(row['source_quality']-item['Quality']),row['source_entry'],row['spell_id']))
+    top=candidates[:min(5,len(candidates))]
+    return top[h64(item['entry'],'effect-package',feature)%len(top)]
 
 def _assign_special_effect(item):
     if MAX_SPECIAL_EFFECTS<=0 or item.get('itemset'):
@@ -2605,11 +3093,19 @@ def _assign_socket_bonus(item):
         return
     candidates=_indexed_candidates(FEATURE_CATALOG['socket_index'],item['Quality'],item['ItemLevel'])
     candidates=_nearby_candidates(candidates,item)
-    candidates=[row for row in candidates if row['socket_count']<=len(item['sockets']) or row['socket_count']==0]
+    candidates=[row for row in candidates if (
+        row['source_quality']<=item['Quality']
+        and (row['socket_count']<=len(item['sockets']) or row['socket_count']==0)
+        and row.get('required_level',0)<=item.get('RequiredLevel',80)
+        and _effect_role_tier(item['role'],row.get('source_role')) is not None
+    )]
     if not candidates:
         return
-    candidates=sorted(candidates,key=lambda row:(0 if not row.get('source_role') or row['source_role']==item['role'] else 1,abs(row['source_item_level']-item['ItemLevel']),abs(row['source_quality']-item['Quality']),row['source_entry'],row['enchantment_id']))
-    chosen=candidates[h64(item['entry'],'socket-bonus')%len(candidates)]
+    best_role=min(_effect_role_tier(item['role'],row.get('source_role')) for row in candidates)
+    candidates=[row for row in candidates if _effect_role_tier(item['role'],row.get('source_role'))==best_role]
+    candidates=sorted(candidates,key=lambda row:(abs(row['source_item_level']-item['ItemLevel']),abs(row['source_quality']-item['Quality']),row['source_entry'],row['enchantment_id']))
+    top=candidates[:min(5,len(candidates))]
+    chosen=top[h64(item['entry'],'socket-bonus')%len(top)]
     item['socketBonus']=chosen['enchantment_id']
     item['socket_bonus_source_entry']=chosen['source_entry']
     item['socket_bonus_effects']={
@@ -2623,39 +3119,88 @@ def _assign_disenchant(item):
         return
     candidates=_indexed_candidates(FEATURE_CATALOG['disenchant_index'],item['Quality'],item['ItemLevel'])
     candidates=_nearby_candidates(candidates,item)
-    candidates=[row for row in candidates if abs(row['source_quality']-item['Quality'])<=1]
+    candidates=[row for row in candidates if row['source_quality']==item['Quality'] and row.get('required_skill',-1)>=0]
     if not candidates:
         return
-    candidates=sorted(candidates,key=lambda row:(abs(row['source_item_level']-item['ItemLevel']),abs(row['source_quality']-item['Quality']),row['source_entry'],row['disenchant_id']))
-    chosen=candidates[h64(item['entry'],'disenchant')%len(candidates)]
+    candidates=sorted(candidates,key=lambda row:(abs(row['source_item_level']-item['ItemLevel']),row['source_entry'],row['disenchant_id']))
+    top=candidates[:min(5,len(candidates))]
+    chosen=top[h64(item['entry'],'disenchant')%len(top)]
     item['RequiredDisenchantSkill']=chosen['required_skill']
     item['DisenchantID']=chosen['disenchant_id']
     item['disenchant_source_entry']=chosen['source_entry']
 
 def _choose_set_template(anchor):
     templates=[]
+    set_window=_effect_ilvl_window(anchor['item_level'])*2
     for template in FEATURE_CATALOG.get('set_templates',[]):
         if not _class_mask_matches(template['class_mask'],anchor['class_name']):
             continue
-        if abs(template['item_level']-anchor['item_level'])>EFFECT_ILVL_WINDOW*2:
+        if template['quality']>anchor['quality'] or anchor['quality']-template['quality']>1:
             continue
-        if abs(template['quality']-anchor['quality'])>1:
+        template_role=template.get('role','')
+        if template_role and template_role!=anchor['role']:
+            continue
+        if abs(template['item_level']-anchor['item_level'])>set_window:
             continue
         thresholds={threshold for threshold,_ in template['bonuses']}
         if 2 not in thresholds or (SET_SIZE>=4 and 4 not in thresholds):
             continue
         templates.append(template)
     if not templates:
-        templates=[template for template in FEATURE_CATALOG.get('set_templates',[]) if _class_mask_matches(template['class_mask'],anchor['class_name']) and 2 in {threshold for threshold,_ in template['bonuses']} and (SET_SIZE<4 or 4 in {threshold for threshold,_ in template['bonuses']})]
-    if not templates:
         return None
-    templates.sort(key=lambda row:(abs(row['item_level']-anchor['item_level']),abs(row['quality']-anchor['quality']),row['source_set_id']))
-    return templates[h64(anchor['entry'],'set-template')%len(templates)]
+    templates.sort(key=lambda row:(0 if row.get('role')==anchor['role'] else 1,abs(row['item_level']-anchor['item_level']),abs(row['quality']-anchor['quality']),row['source_set_id']))
+    top=templates[:min(5,len(templates))]
+    return top[h64(anchor['entry'],'set-template')%len(top)]
 
-def _set_name(anchor):
-    theme=THEMES[h64(anchor['entry'],'set-theme')%len(THEMES)].title()
-    role={'strength_dps':'Might','agility_dps':'Feral','caster_dps':'Caster','hunter':'Hunt','healer':'Restoration','tank':'Guardian'}.get(anchor['role'],anchor['role'].title())
-    return f'{theme} {anchor["class_name"]} {role}'
+SET_THEME_TITLES = (
+    'Frozen Star','Raven Court','Darkiron Vigil','Emerald Dream','Crimson Dawn','Silver Hand',
+    'Ebon Watch','Moon Guard','Wild Hunt','Titan Forge','Ancient North','Shattered Crown',
+    'Storm Crown','Hallowed Flame','Black Citadel','Dragon Queen','Frostborn Vigil','Runic Watch',
+    'Scarlet Keep','Sable Moon','Bone Wastes','High Citadel','Twilight Reach','Drowned Hall',
+    'Deep Forge','Rimefang','Northwatch','Argent Vanguard','Violet Citadel','Sunreaver Host',
+    'Frostwolf Clan','Warsong Clan','Wildhammer Clan','Bronzebeard Clan','Lordaeron Guard',
+    "Quel'Thalas Spires",'Khaz Modan Forge','Icecrown Citadel','Ulduar Watch','Dragonblight Vanguard','Wintergrasp Guard','Wyrmrest Accord',
+)
+SET_STYLE_BY_ROLE = {
+    'strength_dps': ('Battlegear','Warplate','Harness'),
+    'agility_dps': ('Battlegear','Harness','Raiment'),
+    'hunter': ('Battlegear','Harness','Raiment'),
+    'caster_dps': ('Regalia','Raiment','Vestments'),
+    'healer': ('Vestments','Raiment','Regalia'),
+    'tank': ('Warplate','Battlegear','Harness'),
+}
+
+def _set_name(anchor,attempt=0):
+    styles=SET_STYLE_BY_ROLE.get(anchor['role'],('Battlegear','Regalia','Raiment'))
+    theme=SET_THEME_TITLES[h64(anchor['entry'],'set-theme',attempt)%len(SET_THEME_TITLES)]
+    style=styles[h64(anchor['entry'],'set-style',attempt)%len(styles)]
+    return f'{style} of the {theme}'
+
+def _normalize_set_bonuses(bonuses,set_size):
+    wanted=(2,4) if set_size>=4 else (2,) if set_size>=2 else ()
+    normalized=[]
+    for threshold in wanted:
+        spell_id=next((spell_id for candidate_threshold,spell_id in bonuses if candidate_threshold==threshold and spell_id),0)
+        if spell_id:
+            normalized.append((threshold,spell_id))
+    return tuple(normalized)
+
+SET_PIECE_NAMES_BY_STYLE={
+    'Battlegear': {'head':'Helm','shoulder':'Shoulderguards','chest':'Breastplate','hands':'Gauntlets','legs':'Legplates','waist':'Girdle','feet':'Greaves','wrists':'Bracers','back':'Cloak','neck':'Gorget'},
+    'Warplate': {'head':'Helm','shoulder':'Pauldrons','chest':'Chestguard','hands':'Gauntlets','legs':'Legguards','waist':'Girdle','feet':'Sabatons','wrists':'Bracers','back':'Cloak','neck':'Gorget'},
+    'Harness': {'head':'Headguard','shoulder':'Shoulderpads','chest':'Tunic','hands':'Handguards','legs':'Legguards','waist':'Belt','feet':'Boots','wrists':'Wristguards','back':'Cloak','neck':'Choker'},
+    'Regalia': {'head':'Cowl','shoulder':'Mantle','chest':'Robes','hands':'Gloves','legs':'Leggings','waist':'Cord','feet':'Slippers','wrists':'Cuffs','back':'Cloak','neck':'Pendant'},
+    'Raiment': {'head':'Cowl','shoulder':'Mantle','chest':'Robes','hands':'Gloves','legs':'Leggings','waist':'Cord','feet':'Boots','wrists':'Cuffs','back':'Cloak','neck':'Pendant'},
+    'Vestments': {'head':'Cowl','shoulder':'Mantle','chest':'Robes','hands':'Gloves','legs':'Leggings','waist':'Cord','feet':'Slippers','wrists':'Cuffs','back':'Cloak','neck':'Pendant'},
+}
+
+def _set_piece_name(slot,set_name):
+    if ' of the ' in set_name:
+        style,theme=set_name.split(' of the ',1)
+    else:
+        style,theme='',set_name
+    piece_names=SET_PIECE_NAMES_BY_STYLE.get(style,SET_PIECE_NAMES_BY_STYLE['Battlegear'])
+    return f"{piece_names.get(slot,slot.title())} of the {theme}"
 
 def assign_item_sets(skeletons):
     if not feature_enabled('sets') or SET_RATE<=0 or SET_SIZE<1:
@@ -2688,19 +3233,25 @@ def assign_item_sets(skeletons):
         template=_choose_set_template(anchor)
         if template is None:
             continue
+        final_bonuses=_normalize_set_bonuses(template['bonuses'],SET_SIZE)
+        if 2 not in {threshold for threshold,_ in final_bonuses} or (SET_SIZE>=4 and 4 not in {threshold for threshold,_ in final_bonuses}):
+            continue
         set_id=next_set_id; next_set_id+=1
-        set_name=_set_name(anchor)
-        if set_name in used_set_names:
-            set_name=f'{set_name} {len(used_set_names)+1}'
+        for name_attempt in range(len(SET_THEME_TITLES)*4):
+            set_name=_set_name(anchor,name_attempt)
+            if set_name not in used_set_names:
+                break
+        else:
+            continue
         used_set_names.add(set_name)
         for member in candidates:
             member['set_id']=set_id
             member['set_name']=set_name
-            member['set_bonuses']=template['bonuses']
+            member['set_bonuses']=final_bonuses
             member['set_template_id']=template['source_set_id']
             member['set_visual_ref']=template['visuals'].get(member['slot'])
             used.add(member['entry'])
-        definitions.append({'set_id':set_id,'name':set_name,'bonuses':template['bonuses'],'items':tuple(member['entry'] for member in candidates),'template_id':template['source_set_id']})
+        definitions.append({'set_id':set_id,'name':set_name,'bonuses':final_bonuses,'items':tuple(member['entry'] for member in candidates),'template_id':template['source_set_id']})
     return definitions
 
 def generated_item_set_rows(items):
@@ -2712,14 +3263,15 @@ def generated_item_set_rows(items):
     for set_id,members in sorted(grouped.items()):
         members.sort(key=lambda item:SET_SLOT_ORDER.index(item['slot']) if item['slot'] in SET_SLOT_ORDER else 99)
         first=members[0]
-        bonuses=tuple((threshold,spell_id) for threshold,spell_id in first.get('set_bonuses',()) if threshold<=len(members))
+        bonuses=_normalize_set_bonuses(first.get('set_bonuses',()),len(members))
         rows.append(item_set_row(set_id,first.get('set_name','Generated Set'),[item['entry'] for item in members],bonuses))
     return rows
 
-def build_skeletons():
+def build_skeletons(ui=None):
     if ACTIVE_CLASSES is None or CLASS_ITEM_COUNTS is None or TARGET_ITEM_COUNT is None:
         raise RuntimeError('Runtime generation plan is not configured. Call configure_runtime() first.')
     sk=[]
+    completed=0
     for cname,_source_mask,_legacy_start in ACTIVE_CLASSES:
         count=CLASS_ITEM_COUNTS.get(cname,0)
         levels=level_list(cname,count)
@@ -2731,6 +3283,9 @@ def build_skeletons():
             weapon_kind=st['kind'] if st['cls']==2 else None
             class_mask=compatible_class_mask(cname,role,req,mask_kind,armor_subclass=st['sub'],weapon_kind=weapon_kind)
             sk.append(dict(entry=entry,class_name=cname,class_mask=class_mask,required_level=req,item_level=ilvl,quality=q,role=role,**st))
+            completed+=1
+            if ui and (completed==1 or completed==TARGET_ITEM_COUNT or completed%25==0 or i+1==count):
+                ui.progress(completed,TARGET_ITEM_COUNT,current=f'{cname} • Level {req} • {QUALITY_NAME[q]}',class_name=cname,class_completed=i+1,class_total=count)
     if len(sk)!=TARGET_ITEM_COUNT:
         raise RuntimeError(f'generation plan produced {len(sk)} skeletons, expected {TARGET_ITEM_COUNT}')
 
@@ -2748,11 +3303,13 @@ def build_skeletons():
         selected_ids={x['entry'] for x in selected}
         selected.extend(x for x in eligible if x['entry'] not in selected_ids and len(selected)<target)
     for x in selected: x['quality']=5
+    if ui and feature_enabled('sets'):
+        ui.status('Assembling complete class/role item sets')
     assign_item_sets(sk)
     return sk
 
-def finish_items(sk):
-    names=set(); items=[]
+def finish_items(sk,ui=None):
+    names=set(); items=[]; ui_class_completed=Counter()
     for idx,x in enumerate(sk):
         entry=x['entry']; q=x['quality']; ilvl=x['item_level']; req=x['required_level']; cname=x['class_name']; role=x['role']; slot=x['slot']
         theme=qpick(entry)
@@ -2779,15 +3336,14 @@ def finish_items(sk):
         # Name uniqueness over the entire generated collection.
         name=None
         armor_name_sub=x['sub'] if x['kind']=='armor' else None
-        set_piece_names={'head':'Crown','shoulder':'Mantle','chest':'Raiment','hands':'Gloves','legs':'Leggings','waist':'Belt','feet':'Boots','wrists':'Bracers','back':'Cloak','neck':'Pendant'}
-        name_candidates=([f"{set_piece_names.get(slot,slot.title())} of the {x['set_name']}"] if x.get('set_id') else
+        name_candidates=([_set_piece_name(slot,x['set_name'])] if x.get('set_id') else
                          make_name(entry,'shield' if x['kind']=='shield' else 'relic' if x['kind']=='relic' else slot,
                                    weapon_kind,q==5,armor_subclass=armor_name_sub))
         for cand in name_candidates:
             if cand not in names:
                 name=cand; break
         if name is None:
-            raise RuntimeError(f'name exhaustion {entry}')
+            name=f'Generated Item {entry}'
         names.add(name)
         bkey=x['budget_key']; buy,sell=vendor_values(ilvl,q,bkey,entry)
         bonding=1 if q==5 or (req==80 and q>=4 and ilvl>=232) else 2
@@ -2811,9 +3367,16 @@ def finish_items(sk):
         _assign_socket_bonus(item)
         _assign_disenchant(item)
         items.append(item)
+        if ui:
+            ui.item(item)
+            ui_class_completed[cname]+=1
+            completed=idx+1
+            if completed==1 or completed==len(sk) or completed%25==0:
+                class_total=CLASS_ITEM_COUNTS.get(cname,0) if CLASS_ITEM_COUNTS else 0
+                ui.progress(completed,len(sk),current=f'{cname} • Level {req} • {QUALITY_NAME[q]} • {name}',class_name=cname,class_completed=ui_class_completed[cname],class_total=class_total)
     return items
 
-def validate(items):
+def validate(items,ui=None):
     errors=[]
     entries=[x['entry'] for x in items]; names=[x['name'] for x in items]
     expected_total=TARGET_ITEM_COUNT if TARGET_ITEM_COUNT is not None else len(items)
@@ -2849,7 +3412,7 @@ def validate(items):
         errors.append('legendary bespoke-design policy violation')
 
     camel_name_re=re.compile(r'[a-z][A-Z]')
-    for x in items:
+    for validation_index,x in enumerate(items,1):
         if not (1<=x['RequiredLevel']<=80): errors.append(f"{x['entry']} bad req")
         if x['ItemLevel']<x['RequiredLevel']: errors.append(f"{x['entry']} ilvl<req")
         if x['Quality'] not in (2,3,4,5): errors.append(f"{x['entry']} quality")
@@ -2867,10 +3430,23 @@ def validate(items):
                 errors.append(f"{x['entry']} unknown spell {package['spell_id']}")
             if package['trigger'] not in (0,1,2,5):
                 errors.append(f"{x['entry']} invalid spell trigger {package['trigger']}")
+            if package.get('source_quality',x['Quality'])>x['Quality']:
+                errors.append(f"{x['entry']} effect copied from higher quality source")
+            if abs(package.get('source_item_level',x['ItemLevel'])-x['ItemLevel'])>_effect_ilvl_window(x['ItemLevel']):
+                errors.append(f"{x['entry']} effect source outside progression window")
+            if _effect_role_tier(x['role'],package.get('source_role')) is None:
+                errors.append(f"{x['entry']} unrelated-role effect source")
         if x.get('socketBonus') and x['socketBonus'] not in FEATURE_CATALOG['enchantments']:
             errors.append(f"{x['entry']} unknown socket bonus {x['socketBonus']}")
         if x.get('DisenchantID') and x['DisenchantID'] not in FEATURE_CATALOG['disenchant_ids']:
             errors.append(f"{x['entry']} unknown disenchant {x['DisenchantID']}")
+        if x.get('DisenchantID') and x.get('RequiredDisenchantSkill',-1)<0:
+            errors.append(f"{x['entry']} disenchant source has negative required skill")
+        if x.get('itemset'):
+            expected_thresholds=(2,4) if SET_SIZE>=4 else (2,) if SET_SIZE>=2 else ()
+            actual_thresholds=tuple(threshold for threshold,_ in x.get('set_bonuses',()))
+            if actual_thresholds!=expected_thresholds:
+                errors.append(f"{x['entry']} set bonuses are not normalized: {actual_thresholds}")
         if x.get('itemset') and x.get('special_effect_feature'):
             errors.append(f"{x['entry']} set piece has independent special effect")
         if x['item_class']==2:
@@ -2885,6 +3461,11 @@ def validate(items):
         if x['kind']=='armor':
             expected=armor_subclass(x['class_name'],x['RequiredLevel'])
             if x['subclass']!=expected: errors.append(f"{x['entry']} armor compatibility")
+        if ui and (validation_index==1 or validation_index==len(items) or validation_index%100==0):
+            ui.progress(validation_index,len(items),current=f"{x['class_name']} • {x['name']}")
+    ordinary_names=[x['name'] for x in items if x['Quality']!=5]
+    if _oath_name_rate_excessive(ordinary_names):
+        errors.append('ordinary naming pool overuses Oath (>=4%)')
     return errors
 
 SQL_COLUMNS=['entry','class','subclass','SoundOverrideSubclass','name','displayid','Quality','Flags','FlagsExtra','BuyCount','BuyPrice','SellPrice','InventoryType','AllowableClass','AllowableRace','ItemLevel','RequiredLevel']
@@ -2949,15 +3530,19 @@ def _format_entry_ranges(items):
 def _loot_sql_row(values):
     return '('+','.join(fmt(v) for v in values)+')'
 
-def write_outputs(items):
+def write_outputs(items,ui=None,name_changes=()):
     if (OUT is None or SQLDIR is None or LOOT_CHANCE is None or WORLD_LOOT_SOURCE is None or
             REFERENCE_LOOT_SOURCE is None or ITEM_TEMPLATE_SOURCE is None or ITEM_DBC_SOURCES is None or
             ITEM_SET_DBC_SOURCE is None or REFERENCE_CATALOG_AUDIT is None):
         raise RuntimeError('Runtime output directory is not configured. Call configure_runtime() first.')
+    if ui: ui.status('Mapping world-loot references')
     world_references=load_world_loot_references(WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE)
+    if ui: ui.progress(1,10,current='World-loot references mapped')
     loot=build_loot_records(items,world_references)
+    if ui: ui.progress(2,10,current='Generated loot pools built')
     item_dbc_rows=[item_dbc_row(x) for x in items]
     item_set_rows=generated_item_set_rows(items) if feature_enabled('sets') else []
+    if ui: ui.progress(3,10,current='Client DBC rows prepared')
     for item_dbc_source in ITEM_DBC_SOURCES:
         try:
             item_dbc_source.relative_to(OUT)
@@ -2975,6 +3560,7 @@ def write_outputs(items):
     if OUT.exists(): shutil.rmtree(OUT)
     SQLDIR.mkdir(parents=True)
     client_dir=OUT/'client'; client_dir.mkdir()
+    if ui: ui.progress(4,10,current='Output directories prepared')
     with (client_dir/'item_dbc_rows.csv').open('w',encoding='utf-8',newline='') as f:
         w=csv.writer(f); w.writerow(ITEM_DBC_COLUMNS); w.writerows(item_dbc_rows)
     item_dbc_info={'source_file_count':0,'source_paths':[],'source_row_count':0,'source_overlap_count':0,
@@ -2983,6 +3569,7 @@ def write_outputs(items):
     merged_item_dbc_rows=None
     if ITEM_DBC_SOURCES:
         item_dbc_info.update(merge_item_dbcs(ITEM_DBC_SOURCES,item_dbc_rows,client_dir/'Item.dbc',ITEM_DBC_OVERWRITE))
+        item_dbc_info['source_paths']=[_portable_source_path(path) for path in ITEM_DBC_SOURCES]
         item_dbc_info['output']='client/Item.dbc'
         merged_item_dbc_rows,_=_read_item_dbc(client_dir/'Item.dbc')
         with (client_dir/'item_dbc_merged_rows.csv').open('w',encoding='utf-8',newline='') as f:
@@ -2991,12 +3578,18 @@ def write_outputs(items):
         item_dbc_info['merged_manifest']='client/item_dbc_merged_rows.csv'
     item_set_info=None
     if feature_enabled('sets'):
-        item_set_info=merge_item_sets(ITEM_SET_DBC_SOURCE,item_set_rows,client_dir/'ItemSet.dbc')
+        client_itemset=client_dir/'ItemSet.dbc'
+        item_set_info=merge_item_sets(ITEM_SET_DBC_SOURCE,item_set_rows,client_itemset)
+        server_itemset=_copy_server_itemset(client_itemset,OUT)
+        item_set_info['source_path']=_portable_source_path(ITEM_SET_DBC_SOURCE)
+        item_set_info['output']='client/ItemSet.dbc'
+        item_set_info['server_output']=server_itemset.relative_to(OUT).as_posix()
         with (client_dir/'item_set_rows.csv').open('w',encoding='utf-8',newline='') as f:
             w=csv.writer(f); w.writerow(['ID','Name','ItemIDs','BonusThresholds','BonusSpellIDs','SourceTemplateID'])
             for row in item_set_rows:
                 bonuses=[(row[43+i],row[35+i]) for i in range(8) if row[35+i] and row[43+i]]
                 w.writerow([row[0],getattr(row,'name',''),'|'.join(map(str,row[18:28])).strip('|'),bonuses and '|'.join(str(pair[0]) for pair in bonuses) or '',bonuses and '|'.join(str(pair[1]) for pair in bonuses) or '',next((item.get('set_template_id',0) for item in items if item.get('itemset')==row[0]),0)])
+    if ui: ui.progress(6,10,current='ItemSet.dbc merged and staged for client/server')
     with (OUT/'items.ndjson').open('w',encoding='utf-8') as f:
         for x in items:
             y=dict(x); y['stats']=[{'id':a,'value':b,'name':c} for a,b,c in x['stats']]
@@ -3009,6 +3602,8 @@ def write_outputs(items):
     for x in items: refs[(x['reference_entry'],x['displayid'])]=(x['reference_entry'],x['displayid'],x['reference_item_level'],x['reference_quality'])
     with (OUT/'reference_catalog_used.csv').open('w',newline='',encoding='utf-8') as f:
         w=csv.writer(f); w.writerow(['reference_entry','displayid','item_level','quality']); w.writerows(sorted(refs.values()))
+
+    if ui: ui.progress(7,10,current='Manifests and item records written')
 
     import_order=[]
     generated_class_names=[]
@@ -3030,6 +3625,8 @@ def write_outputs(items):
                     f.write('INSERT INTO `item_template`\n(\n    '+',\n    '.join(f'`{c}`' for c in SQL_COLUMNS)+'\n)\nVALUES\n')
                     rows=['('+','.join(fmt(v) for v in sql_values(x))+')' for x in batch]
                     f.write(',\n'.join(rows)+';\n\nCOMMIT;\n')
+
+    if ui: ui.progress(8,10,current='Item SQL batches written')
 
     loot_dir=SQLDIR/'loot'; loot_dir.mkdir()
     loot_columns=',\n    '.join(f'`{c}`' for c in LOOT_SQL_COLUMNS)
@@ -3082,6 +3679,8 @@ def write_outputs(items):
             for x in items:
                 if x['class_name']==cname: f.write(f".additem {x['entry']} 1 -- {x['name']}\n")
 
+    if ui: ui.progress(9,10,current='Loot SQL and GM command files written')
+
     entry_filter=_entry_filter_sql(items)
     pool_filter=f'`Entry` IN ({pool_id_list})'
     pool_reference_filter=f'`Reference` IN ({pool_id_list})'
@@ -3115,7 +3714,7 @@ def write_outputs(items):
                         'unique_names':len({x['name'] for x in xs}),'unique_displayids':len({x['displayid'] for x in xs}),
                         'level_min':min(x['RequiredLevel'] for x in xs),'level_max':max(x['RequiredLevel'] for x in xs)}
     item_dbc_report=dict(item_dbc_info)
-    item_dbc_report['source']=str(ITEM_DBC_SOURCES[0]) if len(ITEM_DBC_SOURCES)==1 else None
+    item_dbc_report['source']=_portable_source_path(ITEM_DBC_SOURCES[0]) if len(ITEM_DBC_SOURCES)==1 else None
     item_dbc_report['manifest']='client/item_dbc_rows.csv'
     feature_counts={feature:sum(1 for x in items if (
         (feature=='sets' and x.get('itemset')) or
@@ -3132,11 +3731,11 @@ def write_outputs(items):
             'quality_counts':dict(q),'role_counts':dict(roles),'kind_counts':dict(kinds),'classes':classes,
             'loot_pool_count':len(loot['pools']),'loot_pool_row_count':len(loot['pool_rows']),
             'loot_attachment_count':len(loot['attachments']),'loot_chance':LOOT_CHANCE,
-            'world_loot_source':str(WORLD_LOOT_SOURCE),'reference_loot_source':str(REFERENCE_LOOT_SOURCE),
-            'item_template_source':str(ITEM_TEMPLATE_SOURCE),
-            'feature_sources':{'item_set_dbc':str(ITEM_SET_DBC_SOURCE),'spell_dbc':str(SPELL_DBC_SOURCE),
-                               'spell_enchantment_dbc':str(SPELL_ENCHANTMENT_DBC_SOURCE),'disenchant':str(DISENCHANT_SOURCE),
-                               'spell_proc':str(SPELL_PROC_SOURCE),'spell_script_names':str(SPELL_SCRIPT_NAMES_SOURCE)},
+            'world_loot_source':_portable_source_path(WORLD_LOOT_SOURCE),'reference_loot_source':_portable_source_path(REFERENCE_LOOT_SOURCE),
+            'item_template_source':_portable_source_path(ITEM_TEMPLATE_SOURCE),
+            'feature_sources':{'item_set_dbc':_portable_source_path(ITEM_SET_DBC_SOURCE),'spell_dbc':_portable_source_path(SPELL_DBC_SOURCE),
+                               'spell_enchantment_dbc':_portable_source_path(SPELL_ENCHANTMENT_DBC_SOURCE),'disenchant':_portable_source_path(DISENCHANT_SOURCE),
+                               'spell_proc':_portable_source_path(SPELL_PROC_SOURCE),'spell_script_names':_portable_source_path(SPELL_SCRIPT_NAMES_SOURCE)},
             'disabled_features':sorted(DISABLED_FEATURES),'feature_counts':feature_counts,
             'feature_catalog_audit':FEATURE_CATALOG['audit'],'item_set':item_set_info,
             'item_dbc':item_dbc_report,
@@ -3152,7 +3751,8 @@ def write_outputs(items):
             'random_effects_enabled':feature_enabled('spell-effects'),'socket_bonus_ids_generated':feature_enabled('socket-bonuses'),
             'disenchant_ids_generated':feature_enabled('disenchant'),'chance_on_hit_enabled':feature_enabled('chance-on-hit'),
             'on_use_enabled':feature_enabled('on-use'),'sets_enabled':feature_enabled('sets'),
-            'random_property_or_suffix_enabled':False,'validation_errors':0}
+            'random_property_or_suffix_enabled':False,'validation_errors':0,
+            'name_repair_count':len(name_changes),'name_repairs':list(name_changes)}
     (OUT/'validation_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     digest=hashlib.sha256((OUT/'items.ndjson').read_bytes()).hexdigest()
     (OUT/'CHECKSUMS.txt').write_text(f'{digest}  items.ndjson\n',encoding='utf-8')
@@ -3164,20 +3764,21 @@ def write_outputs(items):
 Deterministic seed: `{SEED}`<br>
 Output directory: `generated-{SEED}`<br>
 Generated items: `{len(items)}`<br>
+Automatic name repairs: `{len(name_changes)}`<br>
 Classes: `{class_summary}`<br>
 Generated entry ranges: `{entry_summary}`<br>
 Generated loot pools: `{len(loot['pools'])}` (`{len(loot['pool_rows'])}` item rows)<br>
 World-loot attachments: `{len(loot['attachments'])}` at `{LOOT_CHANCE}%`<br>
-World-loot source: `{WORLD_LOOT_SOURCE}`<br>
-Reference-loot source: `{REFERENCE_LOOT_SOURCE}`<br>
-Item-template source: `{ITEM_TEMPLATE_SOURCE}`<br>
-Client Item.dbc sources: `{', '.join(map(str, ITEM_DBC_SOURCES))}`<br>
-ItemSet.dbc source: `{ITEM_SET_DBC_SOURCE}`<br>
-Spell.dbc source: `{SPELL_DBC_SOURCE}`<br>
-SpellItemEnchantment.dbc source: `{SPELL_ENCHANTMENT_DBC_SOURCE}`<br>
-Disenchant source: `{DISENCHANT_SOURCE}`<br>
-Spell proc source: `{SPELL_PROC_SOURCE}`<br>
-Spell script source: `{SPELL_SCRIPT_NAMES_SOURCE}`<br>
+World-loot source: `{_portable_source_path(WORLD_LOOT_SOURCE)}`<br>
+Reference-loot source: `{_portable_source_path(REFERENCE_LOOT_SOURCE)}`<br>
+Item-template source: `{_portable_source_path(ITEM_TEMPLATE_SOURCE)}`<br>
+Client Item.dbc sources: `{', '.join(_portable_source_path(path) for path in ITEM_DBC_SOURCES)}`<br>
+ItemSet.dbc source: `{_portable_source_path(ITEM_SET_DBC_SOURCE)}`<br>
+Spell.dbc source: `{_portable_source_path(SPELL_DBC_SOURCE)}`<br>
+SpellItemEnchantment.dbc source: `{_portable_source_path(SPELL_ENCHANTMENT_DBC_SOURCE)}`<br>
+Disenchant source: `{_portable_source_path(DISENCHANT_SOURCE)}`<br>
+Spell proc source: `{_portable_source_path(SPELL_PROC_SOURCE)}`<br>
+Spell script source: `{_portable_source_path(SPELL_SCRIPT_NAMES_SOURCE)}`<br>
 Disabled new features: `{', '.join(sorted(DISABLED_FEATURES)) or 'none'}`<br>
 Feature counts: `{json.dumps(feature_counts,sort_keys=True)}`<br>
 Harvested stock appearance references: `{REFERENCE_CATALOG_AUDIT['reference_count']}`<br>
@@ -3200,9 +3801,14 @@ Target: AzerothCore / WotLK 3.3.5a
 - `py generate_pack.py --item-dbc-source PATH --item-dbc-source PATH` - merge every complete or additive WotLK `Item.dbc` source supplied; repeat the option for each client baseline.
 - Add `--item-dbc-overwrite` only when intentionally replacing conflicting generated-ID rows in that source DBC.
 - `py generate_pack.py --disable sets chance-on-hit` - disable selected new features; `effects` disables all three item spell triggers and `all-new` disables every new feature.
-- `--set-rate`, `--set-min-level`, `--set-size` - tune complete class/role five-piece set generation.
-- `--spell-effect-rate-multiplier`, `--proc-rate-multiplier`, `--on-use-rate-multiplier`, `--effect-ilvl-window`, `--max-special-effects` - tune stock effect-package selection.
+- `--set-rate`, `--set-min-level`, `--set-size` - tune complete class/role set generation; five pieces is the default.
+- `--spell-effect-rate-multiplier`, `--proc-rate-multiplier`, `--on-use-rate-multiplier`, `--effect-ilvl-window`, `--max-special-effects` - tune stock effect-package selection; low-level effects still obey the stricter 5/10/15 progression windows.
 - `--socket-bonus-rate`, `--disenchant-rate` - tune validated stock socket and disenchant assignment.
+- `--ui auto|fancy|plain` - choose the terminal presentation; `auto` uses the Rich live dashboard on an interactive terminal when Rich is installed and falls back to plain output otherwise.
+- `--no-animations` - keep the styled dashboard but disable animated spinners.
+- `--show-items` - expand the live discovery feed beyond the default Legendary, set, proc, and special-effect callouts.
+- `--quiet` - suppress progress output and print only errors plus the final completion line.
+- Rich is optional. If installed, interactive `--ui auto` runs use the live dashboard; otherwise the generator automatically falls back to the standard-library plain UI.
 
 Flags can be combined in any order. The default remains 100,000 total and world-loot attachment chance defaults to 2%. Explicit `--number` is capped at 200,000 total and 20,000 per selected class.
 
@@ -3220,7 +3826,8 @@ Flags can be combined in any order. The default remains 100,000 total and world-
 - Static stats are packed contiguously from stat slot 1.
 - `RandomProperty` and `RandomSuffix` are zero.
 - Item spell effects are copied as complete stock packages and validated against `Spell.dbc`, `spell_proc.sql`, and `spell_script_names.sql`.
-- Generated sets use complete five-piece class/role groups, stock visual families where available, and stock 2/4-piece bonus spell archetypes in merged `client/ItemSet.dbc`.
+- Generated sets use complete class/role groups (five pieces by default), stock visual families where available, and exactly one stock 2-piece plus one stock 4-piece bonus when the configured size supports it in merged `client/ItemSet.dbc`.
+- The same generated `ItemSet.dbc` is staged under `server/dbc/ItemSet.dbc` because AzerothCore worldserver must load the generated set definitions too.
 - Socket bonuses are resolved through `SpellItemEnchantment.dbc`; no enchantment ID is invented.
 - Disenchant pairs are copied from stock item rows only when their `DisenchantID` exists in `disenchant_loot_template.sql`.
 - Set pieces do not receive independent random special effects by default.
@@ -3238,30 +3845,60 @@ Flags can be combined in any order. The default remains 100,000 total and world-
 1. Run `00_SCHEMA_CHECK.sql` and confirm the columns match your AzerothCore schema.
 2. Run `00_PREIMPORT_COLLISION_CHECK.sql`. Do not import unless every reported collision count is 0.
 3. Import files in `sql/IMPORT_ORDER.txt`.
-4. Restart worldserver after import.
-5. With the client closed, clear `Cache/WDB/<locale>/itemcache.wdb` if item names/icons are stale, then retest.
-6. `client/item_dbc_rows.csv` contains only this run's generated rows; `client/item_dbc_merged_rows.csv` contains the complete final client table.
-7. When sets are enabled, package `client/ItemSet.dbc` as `DBFilesClient\\ItemSet.dbc` alongside `client/Item.dbc`.
-8. All configured DBC sources are merged additively. Identical duplicate rows are accepted; conflicting rows stop generation instead of silently overwriting client data.
-9. Package only the final `client/Item.dbc` and `client/ItemSet.dbc` externally and keep other custom client assets/DBC rows in the effective source set.
+4. When sets are enabled, copy `server/dbc/ItemSet.dbc` into the AzerothCore worldserver DBC directory.
+5. Restart worldserver after the SQL import and server DBC copy.
+6. With the client closed, clear `Cache/WDB/<locale>/itemcache.wdb` if item names/icons are stale, then retest.
+7. `client/item_dbc_rows.csv` contains only this run's generated rows; `client/item_dbc_merged_rows.csv` contains the complete final client table.
+8. When sets are enabled, package `client/ItemSet.dbc` as `DBFilesClient\\ItemSet.dbc` alongside `client/Item.dbc`.
+9. All configured DBC sources are merged additively. Identical duplicate rows are accepted; conflicting rows stop generation instead of silently overwriting client data.
+10. Package only the final `client/Item.dbc` and `client/ItemSet.dbc` externally and keep other custom client assets/DBC rows in the effective source set.
 
 `00_PREIMPORT_COLLISION_CHECK.sql` checks item IDs, reserved pool IDs, pool references, and attachment keys. `99_REMOVE_GENERATED_ITEMS.sql` removes this run's generated items, pools, and pool attachments.
 """
     (OUT/'README.md').write_text(readme,encoding='utf-8')
+    if ui: ui.progress(10,10,current='Validation report, checksums, and README written')
     return report
 
 def main(argv=None):
-    runtime=configure_runtime(argv)
-    print(f"Generator seed: {runtime['seed']} ({runtime['source']})")
-    print(f"Items requested: {runtime['number']}")
-    print(f"Classes: {', '.join(runtime['classes'])}")
-    print(f"Output directory: {runtime['output_dir']}")
-    sk=build_skeletons()
-    items=finish_items(sk)
-    errs=validate(items)
-    if errs:
-        print('VALIDATION FAILED',len(errs)); print('\n'.join(errs[:50])); raise SystemExit(1)
-    report=write_outputs(items)
-    print(json.dumps(report,indent=2))
+    args=parse_args(argv)
+    ui=create_terminal_ui(args)
+    started=time.monotonic()
+    try:
+        ui.banner()
+        runtime=configure_runtime(args=args,ui=ui)
+        ui.configure(runtime)
+
+        ui.phase('Generating item skeletons',total=runtime['number'],detail='Levels, item levels, quality, roles, slots, and class compatibility')
+        sk=build_skeletons(ui=ui)
+        ui.phase_done('Generating item skeletons',f'{len(sk):,} skeletons ready')
+
+        ui.phase('Finalizing generated items',total=len(sk),detail='Stats, appearances, effects, sockets, disenchant data, and names')
+        items=finish_items(sk,ui=ui)
+        ui.phase_done('Finalizing generated items',f'{len(items):,} items forged')
+
+        ui.phase('Validating generated pack',total=len(items),detail='IDs • names • progression • effects • sets • sockets • disenchant')
+        name_changes=repair_item_names(items)
+        if name_changes:
+            ui.status(f'Adjusted {len(name_changes)} item names to satisfy name rules')
+        errs=validate(items,ui=ui)
+        ui.validation(errs,name_changes)
+        if errs:
+            ui.error('VALIDATION FAILED\n'+'\n'.join(errs[:50]))
+            raise SystemExit(1)
+        ui.phase_done('Validating generated pack','0 errors')
+
+        ui.phase('Writing output pack',total=10,detail='SQL • loot pools • Item.dbc • ItemSet.dbc • manifests • checksums')
+        report=write_outputs(items,ui=ui,name_changes=name_changes)
+        ui.phase_done('Writing output pack')
+        ui.complete(report,time.monotonic()-started,runtime['output_dir'])
+        return report
+    except KeyboardInterrupt:
+        ui.error('Generation cancelled by user.')
+        raise
+    except Exception as exc:
+        ui.error(str(exc))
+        raise
+    finally:
+        ui.close()
 
 if __name__=='__main__': main()

@@ -1,0 +1,2 @@
+# Optional only. The generator works without this package.
+rich

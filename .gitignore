@@ -9,3 +9,4 @@ Spell.dbc
 spell_script_names.sql
 SpellItemEnchantment.dbc
 spell_proc.sql
+/__pycache__
