@@ -17,6 +17,24 @@ REFERENCE_LOOT_SOURCE = None
 ITEM_TEMPLATE_SOURCE = None
 ITEM_DBC_SOURCES = None
 ITEM_DBC_OVERWRITE = False
+ITEM_SET_DBC_SOURCE = None
+SPELL_DBC_SOURCE = None
+SPELL_ENCHANTMENT_DBC_SOURCE = None
+DISENCHANT_SOURCE = None
+SPELL_PROC_SOURCE = None
+SPELL_SCRIPT_NAMES_SOURCE = None
+DISABLED_FEATURES = set()
+FEATURE_CATALOG = None
+SET_RATE = None
+SET_MIN_LEVEL = None
+SET_SIZE = None
+SPELL_EFFECT_RATE_MULTIPLIER = None
+PROC_RATE_MULTIPLIER = None
+ON_USE_RATE_MULTIPLIER = None
+EFFECT_ILVL_WINDOW = None
+SOCKET_BONUS_RATE = None
+DISENCHANT_RATE = None
+MAX_SPECIAL_EFFECTS = None
 REFERENCE_CATALOG_AUDIT = None
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
@@ -34,6 +52,20 @@ DEFAULT_REFERENCE_LOOT_SOURCE = _default_world_sql_source('reference_loot_templa
 DEFAULT_ITEM_TEMPLATE_SOURCE = _default_world_sql_source('item_template.sql')
 DEFAULT_ITEM_DBC_SOURCE = ROOT / 'Item.dbc'
 DEFAULT_ITEM_DBC_CUSTOM_SOURCE = ROOT / 'Item.custom.dbc'
+DEFAULT_ITEM_SET_DBC_SOURCE = ROOT / 'ItemSet.dbc'
+DEFAULT_SPELL_DBC_SOURCE = ROOT / 'Spell.dbc'
+DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE = ROOT / 'SpellItemEnchantment.dbc'
+DEFAULT_DISENCHANT_SOURCE = _default_world_sql_source('disenchant_loot_template.sql')
+DEFAULT_SPELL_PROC_SOURCE = _default_world_sql_source('spell_proc.sql')
+DEFAULT_SPELL_SCRIPT_NAMES_SOURCE = _default_world_sql_source('spell_script_names.sql')
+
+NEW_FEATURES = (
+    'sets', 'spell-effects', 'chance-on-hit', 'on-use', 'socket-bonuses', 'disenchant',
+)
+DISABLE_ALIASES = {
+    'effects': ('spell-effects', 'chance-on-hit', 'on-use'),
+    'all-new': NEW_FEATURES,
+}
 
 def _default_item_dbc_sources():
     sources=[DEFAULT_ITEM_DBC_SOURCE]
@@ -1112,6 +1144,56 @@ def _loot_chance_arg(value):
         raise argparse.ArgumentTypeError('loot chance must be greater than 0 and at most 100')
     return chance
 
+def _percent_arg(value):
+    try:
+        percent=float(value)
+    except (TypeError,ValueError) as exc:
+        raise argparse.ArgumentTypeError('value must be a number between 0 and 100') from exc
+    if not math.isfinite(percent) or not 0 <= percent <= 100:
+        raise argparse.ArgumentTypeError('value must be between 0 and 100')
+    return percent
+
+def _multiplier_arg(value):
+    try:
+        multiplier=float(value)
+    except (TypeError,ValueError) as exc:
+        raise argparse.ArgumentTypeError('multiplier must be a finite non-negative number') from exc
+    if not math.isfinite(multiplier) or multiplier < 0:
+        raise argparse.ArgumentTypeError('multiplier must be a finite non-negative number')
+    return multiplier
+
+def _positive_int_arg(value):
+    try:
+        number=int(value)
+    except (TypeError,ValueError) as exc:
+        raise argparse.ArgumentTypeError('value must be a positive integer') from exc
+    if number < 1:
+        raise argparse.ArgumentTypeError('value must be a positive integer')
+    return number
+
+def _nonnegative_int_arg(value):
+    try:
+        number=int(value)
+    except (TypeError,ValueError) as exc:
+        raise argparse.ArgumentTypeError('value must be a non-negative integer') from exc
+    if number < 0:
+        raise argparse.ArgumentTypeError('value must be a non-negative integer')
+    return number
+
+def _expand_disabled_features(groups):
+    disabled=set()
+    for group in groups or []:
+        for raw_name in group:
+            name=str(raw_name).strip().lower()
+            if name in DISABLE_ALIASES:
+                disabled.update(DISABLE_ALIASES[name])
+            elif name in NEW_FEATURES:
+                disabled.add(name)
+            else:
+                valid=', '.join((*NEW_FEATURES, *DISABLE_ALIASES))
+                raise argparse.ArgumentTypeError(f'unknown feature {raw_name!r}; choose from: {valid}')
+    return sorted(disabled)
+
 CLASS_ALIASES = {
     'warrior':'Warrior','paladin':'Paladin','hunter':'Hunter','rogue':'Rogue',
     'priest':'Priest','deathknight':'Death Knight','dk':'Death Knight',
@@ -1137,7 +1219,26 @@ def parse_args(argv=None):
     parser.add_argument('--item-template-source',type=Path,default=DEFAULT_ITEM_TEMPLATE_SOURCE,metavar='PATH',help=f'item_template.sql used to harvest the full stock appearance catalog (default: {DEFAULT_ITEM_TEMPLATE_SOURCE}).')
     parser.add_argument('--item-dbc-source',dest='item_dbc_sources',type=Path,action='append',default=None,metavar='PATH',help=f'Complete or additive WotLK Item.dbc source; repeat for every client DBC baseline (default: {DEFAULT_ITEM_DBC_SOURCE}, {DEFAULT_ITEM_DBC_CUSTOM_SOURCE}).')
     parser.add_argument('--item-dbc-overwrite',action='store_true',help='Replace conflicting generated-ID rows in --item-dbc-source instead of failing.')
-    return parser.parse_args(argv)
+    parser.add_argument('--item-set-dbc-source',type=Path,default=DEFAULT_ITEM_SET_DBC_SOURCE,metavar='PATH',help=f'WotLK ItemSet.dbc baseline (default: {DEFAULT_ITEM_SET_DBC_SOURCE}).')
+    parser.add_argument('--spell-dbc-source',type=Path,default=DEFAULT_SPELL_DBC_SOURCE,metavar='PATH',help=f'WotLK Spell.dbc used to validate effect packages (default: {DEFAULT_SPELL_DBC_SOURCE}).')
+    parser.add_argument('--spell-enchantment-dbc-source',type=Path,default=DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE,metavar='PATH',help=f'WotLK SpellItemEnchantment.dbc used to resolve socket bonuses (default: {DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE}).')
+    parser.add_argument('--disenchant-source',type=Path,default=DEFAULT_DISENCHANT_SOURCE,metavar='PATH',help=f'disenchant_loot_template.sql used to validate DisenchantID values (default: {DEFAULT_DISENCHANT_SOURCE}).')
+    parser.add_argument('--spell-proc-source',type=Path,default=DEFAULT_SPELL_PROC_SOURCE,metavar='PATH',help=f'spell_proc.sql used to audit proc conditions (default: {DEFAULT_SPELL_PROC_SOURCE}).')
+    parser.add_argument('--spell-script-names-source',type=Path,default=DEFAULT_SPELL_SCRIPT_NAMES_SOURCE,metavar='PATH',help=f'spell_script_names.sql used to audit scripted spells (default: {DEFAULT_SPELL_SCRIPT_NAMES_SOURCE}).')
+    parser.add_argument('--disable',dest='disable_groups',action='append',nargs='+',default=[],metavar='FEATURE',help=f'Disable one or more new features: {", ".join(NEW_FEATURES)}; aliases: effects, all-new.')
+    parser.add_argument('--set-rate',type=_percent_arg,default=0.20,metavar='PERCENT',help='Percentage of generated items reserved as five-piece set members (default: 0.20).')
+    parser.add_argument('--set-min-level',type=_nonnegative_int_arg,default=20,metavar='LEVEL',help='Minimum required level for generated set pieces (default: 20).')
+    parser.add_argument('--set-size',type=_positive_int_arg,default=5,metavar='COUNT',help='Generated set piece count; five is the WotLK default (default: 5).')
+    parser.add_argument('--spell-effect-rate-multiplier',type=_multiplier_arg,default=1.0,metavar='MULTIPLIER',help='Multiplier for stock On Equip spell-effect frequency (default: 1.0).')
+    parser.add_argument('--proc-rate-multiplier',type=_multiplier_arg,default=1.0,metavar='MULTIPLIER',help='Multiplier for stock Chance on Hit frequency (default: 1.0).')
+    parser.add_argument('--on-use-rate-multiplier',type=_multiplier_arg,default=1.0,metavar='MULTIPLIER',help='Multiplier for stock On Use frequency (default: 1.0).')
+    parser.add_argument('--effect-ilvl-window',type=_nonnegative_int_arg,default=15,metavar='ILVL',help='Maximum stock effect item-level distance before widening selection (default: 15).')
+    parser.add_argument('--socket-bonus-rate',type=_percent_arg,default=100.0,metavar='PERCENT',help='Percentage of eligible socketed items receiving a stock socket bonus (default: 100).')
+    parser.add_argument('--disenchant-rate',type=_percent_arg,default=100.0,metavar='PERCENT',help='Percentage of eligible items receiving validated stock disenchant data (default: 100).')
+    parser.add_argument('--max-special-effects',type=_nonnegative_int_arg,default=1,metavar='COUNT',help='Maximum independent spell-effect packages per item (default: 1).')
+    args=parser.parse_args(argv)
+    args.disabled_features=_expand_disabled_features(args.disable_groups)
+    return args
 
 def get_or_create_user_guid(path=None):
     path=Path(path) if path is not None else USER_GUID_FILE
@@ -1161,19 +1262,34 @@ def derive_auto_seed(user_guid,now=None):
     return f'{value:010d}'
 
 def configure_runtime(argv=None,now=None,guid_path=None):
-    global SEED, OUT, SQLDIR, LOOT_CHANCE, WORLD_LOOT_SOURCE, REFERENCE_LOOT_SOURCE, ITEM_TEMPLATE_SOURCE, ITEM_DBC_SOURCES, ITEM_DBC_OVERWRITE, REFERENCE_CATALOG_AUDIT
+    global SEED, OUT, SQLDIR, LOOT_CHANCE, WORLD_LOOT_SOURCE, REFERENCE_LOOT_SOURCE, ITEM_TEMPLATE_SOURCE, ITEM_DBC_SOURCES, ITEM_DBC_OVERWRITE
+    global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
+    global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
+    global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
     global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W
     args=parse_args(argv)
     world_loot_source=Path(args.world_loot_source).expanduser().resolve()
     reference_loot_source=Path(args.reference_loot_source).expanduser().resolve()
     item_template_source=Path(args.item_template_source).expanduser().resolve()
     item_dbc_sources=[Path(path).expanduser().resolve() for path in (args.item_dbc_sources or _default_item_dbc_sources())]
+    item_set_dbc_source=Path(args.item_set_dbc_source).expanduser().resolve()
+    spell_dbc_source=Path(args.spell_dbc_source).expanduser().resolve()
+    spell_enchantment_dbc_source=Path(args.spell_enchantment_dbc_source).expanduser().resolve()
+    disenchant_source=Path(args.disenchant_source).expanduser().resolve()
+    spell_proc_source=Path(args.spell_proc_source).expanduser().resolve()
+    spell_script_names_source=Path(args.spell_script_names_source).expanduser().resolve()
     for label,path in (('world-loot source',world_loot_source),('reference-loot source',reference_loot_source),('item-template source',item_template_source)):
         if not path.is_file():
             raise FileNotFoundError(f'{label} not found: {path}')
     for item_dbc_source in item_dbc_sources:
         if not item_dbc_source.is_file():
             raise FileNotFoundError(f'item-dbc source not found: {item_dbc_source}')
+    for label,path in (
+            ('item-set DBC source',item_set_dbc_source),('spell DBC source',spell_dbc_source),
+            ('spell-enchantment DBC source',spell_enchantment_dbc_source),('disenchant source',disenchant_source),
+            ('spell-proc source',spell_proc_source),('spell-script-names source',spell_script_names_source)):
+        if not path.is_file():
+            raise FileNotFoundError(f'{label} not found: {path}')
     harvested_a,harvested_w,catalog_audit=harvest_reference_catalog(item_template_source)
     if catalog_audit['errors']:
         details='\n'.join(f' - {error}' for error in catalog_audit['errors'][:20])
@@ -1211,6 +1327,27 @@ def configure_runtime(argv=None,now=None,guid_path=None):
     ITEM_TEMPLATE_SOURCE=item_template_source
     ITEM_DBC_SOURCES=item_dbc_sources
     ITEM_DBC_OVERWRITE=args.item_dbc_overwrite
+    ITEM_SET_DBC_SOURCE=item_set_dbc_source
+    SPELL_DBC_SOURCE=spell_dbc_source
+    SPELL_ENCHANTMENT_DBC_SOURCE=spell_enchantment_dbc_source
+    DISENCHANT_SOURCE=disenchant_source
+    SPELL_PROC_SOURCE=spell_proc_source
+    SPELL_SCRIPT_NAMES_SOURCE=spell_script_names_source
+    DISABLED_FEATURES=set(args.disabled_features)
+    SET_RATE=args.set_rate
+    SET_MIN_LEVEL=args.set_min_level
+    SET_SIZE=args.set_size
+    SPELL_EFFECT_RATE_MULTIPLIER=args.spell_effect_rate_multiplier
+    PROC_RATE_MULTIPLIER=args.proc_rate_multiplier
+    ON_USE_RATE_MULTIPLIER=args.on_use_rate_multiplier
+    EFFECT_ILVL_WINDOW=args.effect_ilvl_window
+    SOCKET_BONUS_RATE=args.socket_bonus_rate
+    DISENCHANT_RATE=args.disenchant_rate
+    MAX_SPECIAL_EFFECTS=args.max_special_effects
+    FEATURE_CATALOG=load_feature_catalogs(
+        item_template_source,item_set_dbc_source,spell_dbc_source,spell_enchantment_dbc_source,
+        disenchant_source,spell_proc_source,spell_script_names_source,
+    ) if DISABLED_FEATURES != set(NEW_FEATURES) else empty_feature_catalog()
     REFERENCE_CATALOG_AUDIT=catalog_audit
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
@@ -1223,8 +1360,293 @@ def configure_runtime(argv=None,now=None,guid_path=None):
         'class_counts':dict(CLASS_ITEM_COUNTS),'loot_chance':LOOT_CHANCE,
         'world_loot_source':WORLD_LOOT_SOURCE,'reference_loot_source':REFERENCE_LOOT_SOURCE,
         'item_template_source':ITEM_TEMPLATE_SOURCE,'item_dbc_sources':ITEM_DBC_SOURCES,
-        'item_dbc_overwrite':ITEM_DBC_OVERWRITE,'reference_catalog_audit':REFERENCE_CATALOG_AUDIT
+        'item_dbc_overwrite':ITEM_DBC_OVERWRITE,'reference_catalog_audit':REFERENCE_CATALOG_AUDIT,
+        'item_set_dbc_source':ITEM_SET_DBC_SOURCE,'spell_dbc_source':SPELL_DBC_SOURCE,
+        'spell_enchantment_dbc_source':SPELL_ENCHANTMENT_DBC_SOURCE,'disenchant_source':DISENCHANT_SOURCE,
+        'spell_proc_source':SPELL_PROC_SOURCE,'spell_script_names_source':SPELL_SCRIPT_NAMES_SOURCE,
+        'disabled_features':set(DISABLED_FEATURES),'set_rate':SET_RATE,'set_min_level':SET_MIN_LEVEL,
+        'set_size':SET_SIZE,'spell_effect_rate_multiplier':SPELL_EFFECT_RATE_MULTIPLIER,
+        'proc_rate_multiplier':PROC_RATE_MULTIPLIER,'on_use_rate_multiplier':ON_USE_RATE_MULTIPLIER,
+        'effect_ilvl_window':EFFECT_ILVL_WINDOW,'socket_bonus_rate':SOCKET_BONUS_RATE,
+        'disenchant_rate':DISENCHANT_RATE,'max_special_effects':MAX_SPECIAL_EFFECTS,
     }
+
+DBC_HEADER=struct.Struct('<4s4I')
+DBC_MAGIC=b'WDBC'
+ITEM_SET_FIELD_COUNT=53
+ITEM_SET_RECORD_SIZE=ITEM_SET_FIELD_COUNT*4
+
+class ItemSetRow(tuple):
+    def __new__(cls, values, name=''):
+        row=super().__new__(cls, tuple(int(value) for value in values))
+        row.name=str(name)
+        return row
+
+def _read_wdbc_records(path,expected_field_count=None,label='DBC'):
+    path=Path(path).expanduser().resolve()
+    data=path.read_bytes()
+    if len(data)<DBC_HEADER.size:
+        raise ValueError(f'{label} is shorter than its header: {path}')
+    magic,record_count,field_count,record_size,string_block_size=DBC_HEADER.unpack_from(data)
+    if magic!=DBC_MAGIC:
+        raise ValueError(f'unsupported {label} magic {magic!r}: {path}')
+    if expected_field_count is not None and field_count!=expected_field_count:
+        raise ValueError(f'{label} field count is {field_count}, expected {expected_field_count}: {path}')
+    if record_size!=field_count*4:
+        raise ValueError(f'{label} record size is {record_size}, expected {field_count*4}: {path}')
+    expected_size=DBC_HEADER.size+record_count*record_size+string_block_size
+    if len(data)!=expected_size:
+        raise ValueError(f'{label} size is {len(data)}, expected {expected_size}: {path}')
+    rows={}
+    offset=DBC_HEADER.size
+    for _ in range(record_count):
+        row=struct.unpack_from(f'<{field_count}I',data,offset)
+        offset+=record_size
+        if row[0] in rows:
+            raise ValueError(f'{label} contains duplicate entry {row[0]}: {path}')
+        rows[row[0]]=row
+    return rows,data[offset:],field_count,record_size
+
+def _read_item_set_dbc(path):
+    rows,string_block,field_count,record_size=_read_wdbc_records(path,ITEM_SET_FIELD_COUNT,'ItemSet.dbc')
+    if record_size!=ITEM_SET_RECORD_SIZE:
+        raise ValueError(f'ItemSet.dbc record size is {record_size}, expected {ITEM_SET_RECORD_SIZE}: {path}')
+    return rows,string_block
+
+def _dbc_string(string_block,offset):
+    if not offset or offset>=len(string_block):
+        return ''
+    end=string_block.find(b'\0',offset)
+    if end<0:
+        end=len(string_block)
+    return string_block[offset:end].decode('utf-8','replace')
+
+def item_set_row(set_id,name,item_ids,bonuses):
+    item_ids=list(item_ids)
+    if len(item_ids)>10:
+        raise ValueError('ItemSet.dbc supports at most 10 item IDs in this AzerothCore layout')
+    row=[0]*ITEM_SET_FIELD_COUNT
+    row[0]=int(set_id)
+    for index,item_id in enumerate(item_ids):
+        row[18+index]=int(item_id)
+    for index,(threshold,spell_id) in enumerate(bonuses):
+        if index>=8:
+            break
+        row[35+index]=int(spell_id)
+        row[43+index]=int(threshold)
+    return ItemSetRow(row,name)
+
+def merge_item_sets(source_path,generated_rows,output_path,overwrite=False):
+    source_path=Path(source_path).expanduser().resolve()
+    output_path=Path(output_path).expanduser().resolve()
+    if output_path==source_path:
+        raise ValueError('ItemSet.dbc output must not replace its source file')
+    existing,string_block=_read_item_set_dbc(source_path)
+    generated={}
+    strings=bytearray(string_block)
+    if not strings:
+        strings.extend(b'\0')
+    for raw_row in generated_rows:
+        row=tuple(int(value) for value in raw_row)
+        if len(row)!=ITEM_SET_FIELD_COUNT:
+            raise ValueError(f'ItemSet.dbc row must contain {ITEM_SET_FIELD_COUNT} fields')
+        if row[0] in generated:
+            raise ValueError(f'generated ItemSet.dbc rows contain duplicate entry {row[0]}')
+        name=getattr(raw_row,'name','')
+        values=list(row)
+        if name:
+            offset=len(strings)
+            strings.extend(str(name).encode('utf-8')+b'\0')
+            for locale_index in range(1,17):
+                values[locale_index]=offset
+        generated[values[0]]=tuple(values)
+    conflicts=sorted(entry for entry,row in generated.items() if entry in existing and existing[entry]!=row)
+    if conflicts and not overwrite:
+        sample=', '.join(map(str,conflicts[:20]))
+        suffix='...' if len(conflicts)>20 else ''
+        raise ValueError(f'ItemSet.dbc contains conflicting generated entries ({len(conflicts)}): {sample}{suffix}')
+    merged=dict(existing)
+    merged.update(generated)
+    payload=b''.join(struct.pack(f'<{ITEM_SET_FIELD_COUNT}I',*merged[entry]) for entry in sorted(merged))
+    output_path.parent.mkdir(parents=True,exist_ok=True)
+    output_path.write_bytes(DBC_HEADER.pack(DBC_MAGIC,len(merged),ITEM_SET_FIELD_COUNT,ITEM_SET_RECORD_SIZE,len(strings))+payload+bytes(strings))
+    return {
+        'source_path':str(source_path),'source_row_count':len(existing),'generated_row_count':len(generated),
+        'merged_row_count':len(merged),'overwritten_row_count':len(conflicts),'string_block_size':len(strings),
+        'output':str(output_path),
+    }
+
+def empty_feature_catalog():
+    return {
+        'spells':{},'enchantments':{},'item_sets':{},'item_set_strings':b'',
+        'effect_packages':[],'socket_bonuses':[],'disenchant_pairs':[],'stock_items':{},
+        'proc_spells':set(),'script_spells':set(),'disenchant_ids':set(),
+        'effect_index':defaultdict(list),'socket_index':defaultdict(list),'disenchant_index':defaultdict(list),'set_templates':[],
+        'audit':{'effect_packages':0,'script_excluded':0,'proc_overrides':0,'socket_bonuses':0,'disenchant_pairs':0},
+    }
+
+ITEM_TEMPLATE_SPELL_BASE=65
+ITEM_TEMPLATE_SPELL_WIDTH=7
+ITEM_TEMPLATE_ITEMSET_INDEX=112
+ITEM_TEMPLATE_SOCKET_COLOR_INDEX=118
+ITEM_TEMPLATE_SOCKET_BONUS_INDEX=124
+ITEM_TEMPLATE_REQUIRED_DISENCHANT_INDEX=126
+ITEM_TEMPLATE_DISENCHANT_INDEX=132
+SET_SLOT_INVENTORY_TYPES={'head':1,'shoulder':3,'chest':5,'hands':10,'legs':7}
+
+def _sql_int(value,default=0):
+    text=str(value).strip().strip('`')
+    if text.upper() in ('NULL',''):
+        return default
+    try:
+        return int(float(text))
+    except (TypeError,ValueError):
+        return default
+
+def _sql_float(value,default=0.0):
+    text=str(value).strip().strip('`')
+    if text.upper() in ('NULL',''):
+        return default
+    try:
+        return float(text)
+    except (TypeError,ValueError):
+        return default
+
+def _load_sql_entry_rows(path):
+    rows=[]
+    with Path(path).open(encoding='utf-8') as source:
+        for line in source:
+            if not REFERENCE_ENTRY_RE.match(line):
+                continue
+            values=_split_sql_tuple(line)
+            if values is not None:
+                rows.append(values)
+    return rows
+
+def _stock_item_metadata(fields):
+    if len(fields)<=ITEM_TEMPLATE_DISENCHANT_INDEX:
+        return None
+    entry=_sql_int(fields[0],-1)
+    if entry<0:
+        return None
+    stat_ids={_sql_int(fields[27+i*2]) for i in range(10) if _sql_int(fields[27+i*2])}
+    if 4 in stat_ids:
+        source_role='tank' if stat_ids & {12,13,14,15} else 'strength_dps'
+    elif 3 in stat_ids:
+        source_role='hunter' if _sql_int(fields[12]) in (15,26) else 'agility_dps'
+    elif 5 in stat_ids or 45 in stat_ids:
+        source_role='healer' if 43 in stat_ids else 'caster_dps'
+    else:
+        source_role=''
+    return {
+        'entry':entry,'class':_sql_int(fields[1]),'subclass':_sql_int(fields[2]),
+        'name':str(fields[4]).strip("'").replace("''", "'"),'displayid':_sql_int(fields[5]),
+        'quality':_sql_int(fields[6]),'class_mask':_sql_int(fields[13],-1),
+        'item_level':_sql_int(fields[15]),'required_level':_sql_int(fields[16]),
+        'inventory_type':_sql_int(fields[12]),'itemset':_sql_int(fields[ITEM_TEMPLATE_ITEMSET_INDEX]),
+        'socket_colors':tuple(_sql_int(fields[ITEM_TEMPLATE_SOCKET_COLOR_INDEX+i*2]) for i in range(3)),
+        'role':source_role,
+        'socket_bonus':_sql_int(fields[ITEM_TEMPLATE_SOCKET_BONUS_INDEX]),
+        'required_disenchant_skill':_sql_int(fields[ITEM_TEMPLATE_REQUIRED_DISENCHANT_INDEX],-1),
+        'disenchant_id':_sql_int(fields[ITEM_TEMPLATE_DISENCHANT_INDEX]),
+        'fields':fields,
+    }
+
+def load_feature_catalogs(item_template_path,item_set_path,spell_path,enchantment_path,disenchant_path,proc_path,script_path):
+    catalog=empty_feature_catalog()
+    catalog['spells'],_,_,_=_read_wdbc_records(spell_path,234,'Spell.dbc')
+    catalog['enchantments'],_,_,_=_read_wdbc_records(enchantment_path,38,'SpellItemEnchantment.dbc')
+    catalog['item_sets'],catalog['item_set_strings']=_read_item_set_dbc(item_set_path)
+    catalog['proc_spells']={_sql_int(row[0]) for row in _load_sql_entry_rows(proc_path) if row}
+    catalog['script_spells']={_sql_int(row[0]) for row in _load_sql_entry_rows(script_path) if row}
+    catalog['disenchant_ids']={_sql_int(row[0]) for row in _load_sql_entry_rows(disenchant_path) if row}
+
+    for fields in _load_sql_entry_rows(item_template_path):
+        meta=_stock_item_metadata(fields)
+        if meta is None:
+            continue
+        catalog['stock_items'][meta['entry']]=meta
+        for slot in range(5):
+            base=ITEM_TEMPLATE_SPELL_BASE+slot*ITEM_TEMPLATE_SPELL_WIDTH
+            spell_id=_sql_int(fields[base])
+            trigger=_sql_int(fields[base+1])
+            if not spell_id or trigger not in (0,1,2,5):
+                continue
+            spell=catalog['spells'].get(spell_id)
+            if spell is None or not any(spell[index] for index in (71,72,73)):
+                continue
+            script_backed=spell_id in catalog['script_spells']
+            if script_backed:
+                catalog['audit']['script_excluded']+=1
+                continue
+            proc_override=spell_id in catalog['proc_spells']
+            package={
+                'spell_id':spell_id,'trigger':trigger,'charges':_sql_int(fields[base+2]),
+                'ppm_rate':_sql_float(fields[base+3]),'cooldown':_sql_int(fields[base+4],-1),
+                'category':_sql_int(fields[base+5]),'category_cooldown':_sql_int(fields[base+6],-1),
+                'source_entry':meta['entry'],'source_item_level':meta['item_level'],'source_quality':meta['quality'],
+                'source_class':meta['class'],'source_subclass':meta['subclass'],'source_inventory_type':meta['inventory_type'],
+                'source_class_mask':meta['class_mask'],'source_role':meta['role'],'proc_override':proc_override,
+                'spell_effects':tuple(spell[index] for index in (71,72,73)),
+            }
+            catalog['effect_packages'].append(package)
+            catalog['audit']['effect_packages']+=1
+            catalog['audit']['proc_overrides']+=int(proc_override)
+
+        socket_id=meta['socket_bonus']
+        enchant=catalog['enchantments'].get(socket_id)
+        if socket_id and enchant and any(enchant[index] for index in (2,3,4,5,6,7,11,12,13)):
+            catalog['socket_bonuses'].append({
+                'enchantment_id':socket_id,'source_entry':meta['entry'],'source_item_level':meta['item_level'],
+                'source_quality':meta['quality'],'source_class_mask':meta['class_mask'],
+                'source_role':meta['role'],
+                'socket_count':sum(color>0 for color in meta['socket_colors']),
+                'effect_types':tuple(enchant[2:5]),'effect_amounts':tuple(enchant[5:8]),
+                'effect_spells':tuple(enchant[11:14]),'required_level':enchant[37],
+            })
+
+        disenchant_id=meta['disenchant_id']
+        if disenchant_id and disenchant_id in catalog['disenchant_ids']:
+            catalog['disenchant_pairs'].append({
+                'disenchant_id':disenchant_id,'required_skill':meta['required_disenchant_skill'],
+                'source_entry':meta['entry'],'source_item_level':meta['item_level'],'source_quality':meta['quality'],
+            })
+
+    catalog['audit']['socket_bonuses']=len(catalog['socket_bonuses'])
+    catalog['audit']['disenchant_pairs']=len(catalog['disenchant_pairs'])
+    for package in catalog['effect_packages']:
+        catalog['effect_index'][(package['trigger'],package['source_class'],package['source_quality'],package['source_item_level']//10)].append(package)
+    for bonus in catalog['socket_bonuses']:
+        catalog['socket_index'][(bonus['source_quality'],bonus['source_item_level']//10)].append(bonus)
+    for pair in catalog['disenchant_pairs']:
+        catalog['disenchant_index'][(pair['source_quality'],pair['source_item_level']//10)].append(pair)
+    for set_id,row in catalog['item_sets'].items():
+        bonuses=[]
+        for index in range(8):
+            spell_id=row[35+index]; threshold=row[43+index]
+            if spell_id and threshold and spell_id in catalog['spells']:
+                bonuses.append((threshold,spell_id))
+        visuals={}
+        members=[]
+        for item_id in row[18:28]:
+            if not item_id or item_id not in catalog['stock_items']:
+                continue
+            meta=catalog['stock_items'][item_id]
+            members.append(meta)
+            for slot,inventory_type in SET_SLOT_INVENTORY_TYPES.items():
+                if meta['inventory_type']==inventory_type and slot not in visuals:
+                    visuals[slot]=(meta['entry'],meta['displayid'],meta['item_level'],meta['quality'])
+        if not all(slot in visuals for slot in SET_SLOT_INVENTORY_TYPES) or not any(threshold==2 for threshold,_ in bonuses) or not any(threshold==4 for threshold,_ in bonuses):
+            continue
+        masks={meta['class_mask'] for meta in members if meta['class_mask'] not in (-1,0)}
+        class_mask=next(iter(masks)) if len(masks)==1 else -1
+        catalog.setdefault('set_templates',[]).append({
+            'source_set_id':set_id,'name':_dbc_string(catalog['item_set_strings'],row[1]),'bonuses':tuple(bonuses),
+            'visuals':visuals,'class_mask':class_mask,'item_level':round(sum(meta['item_level'] for meta in members)/len(members)),
+            'quality':max(meta['quality'] for meta in members),'members':tuple(meta['entry'] for meta in members),
+        })
+    catalog.setdefault('set_templates',[])
+    return catalog
 
 ITEM_DBC_HEADER=struct.Struct('<4s4I')
 ITEM_DBC_RECORD=struct.Struct('<Iiiiiiii')
@@ -1771,7 +2193,7 @@ def stat_count(req,entry,slot):
     if slot=='relic': rows=[(1,20),(2,50),(3,30)] if req<80 else [(2,35),(3,65)]
     return weighted(rows,entry,'stat_count')
 
-def make_stats(cname,role,req,ilvl,q,entry,budget_key,sockets,is_shield=False,force_count=None):
+def make_stats(cname,role,req,ilvl,q,entry,budget_key,sockets,is_shield=False,force_count=None,budget_multiplier=1.0):
     n=force_count if force_count is not None else stat_count(req,entry,budget_key)
     prim,sec=role_stats(cname,role,req,is_shield)
     picks=[]
@@ -1784,7 +2206,7 @@ def make_stats(cname,role,req,ilvl,q,entry,budget_key,sockets,is_shield=False,fo
     if n==1 and role=='tank' and len(prim)>1: picks=[prim[int(r01(entry,'tank_primary')*len(prim))]]
     slotmult=SLOT_BUDGET.get(budget_key,.8)
     curve=.28 + 1.20*((max(1,ilvl)/213.0)**.85)
-    budget=max(n, ilvl*slotmult*curve*QUALITY_POWER[q]*(1-0.035*sockets))
+    budget=max(n, ilvl*slotmult*curve*QUALITY_POWER[q]*(1-0.035*sockets)*budget_multiplier)
     weights=[]
     for i,p in enumerate(picks):
         base=1.16 if p in prim else 1.0
@@ -2061,6 +2483,239 @@ def expected_legendary_count(item_count):
     # Preserve the original rarity: three Legendaries per 100,000 generated items.
     return (item_count*3)//100000
 
+SET_SLOT_ORDER=('head','shoulder','chest','hands','legs','waist','feet','wrists','back','neck')
+
+def feature_enabled(name):
+    return name not in DISABLED_FEATURES
+
+def _class_bit(class_name):
+    return next(mask for cname,mask,_ in CLASSES if cname==class_name)
+
+def _class_mask_matches(mask,class_name):
+    return mask in (-1,0,0xFFFFFFFF) or bool(mask & _class_bit(class_name))
+
+def _nearby_candidates(rows,item,source_level_key='source_item_level'):
+    exact=[row for row in rows if _class_mask_matches(row.get('source_class_mask',-1),item['class_name']) and abs(row.get(source_level_key,0)-item['ItemLevel'])<=EFFECT_ILVL_WINDOW]
+    if exact:
+        return exact
+    return [row for row in rows if _class_mask_matches(row.get('source_class_mask',-1),item['class_name'])]
+
+def _indexed_candidates(index,quality,item_level):
+    bucket=item_level//10
+    rows=[]; seen=set()
+    for candidate_quality in range(max(0,quality-1),min(5,quality+1)+1):
+        for candidate_bucket in range(max(0,bucket-2),bucket+3):
+            for row in index.get((candidate_quality,candidate_bucket),[]):
+                marker=id(row)
+                if marker not in seen:
+                    seen.add(marker); rows.append(row)
+    return rows
+
+def _effect_candidates(item,feature):
+    trigger={'spell-effects':1,'chance-on-hit':2,'on-use':None}[feature]
+    rows=[]
+    triggers=(0,5) if trigger is None else (trigger,)
+    indexed=[]
+    for candidate_trigger in triggers:
+        for source_class in (item['item_class'],2,4):
+            for candidate_quality in range(max(0,item['Quality']-1),min(5,item['Quality']+1)+1):
+                for candidate_bucket in range(max(0,item['ItemLevel']//10-2),item['ItemLevel']//10+3):
+                    indexed.extend(FEATURE_CATALOG['effect_index'].get((candidate_trigger,source_class,candidate_quality,candidate_bucket),()))
+    seen=set()
+    for package in indexed:
+        marker=id(package)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        if feature=='chance-on-hit' and item['item_class']!=2:
+            continue
+        if not _class_mask_matches(package['source_class_mask'],item['class_name']):
+            continue
+        if abs(package['source_quality']-item['Quality'])>1:
+            continue
+        if abs(package['source_item_level']-item['ItemLevel'])<=EFFECT_ILVL_WINDOW:
+            rows.append(package)
+    if rows:
+        return rows
+    return [package for package in indexed if (
+        (feature!='chance-on-hit' or item['item_class']==2) and
+        _class_mask_matches(package['source_class_mask'],item['class_name'])
+    )]
+
+def _feature_chance(item,feature):
+    quality=item['Quality']
+    quality_base={2:0.002,3:0.01,4:0.04,5:1.0}.get(quality,0.0)
+    if feature=='spell-effects':
+        base=quality_base*(2.0 if item['kind']=='trinket' else 1.0)*SPELL_EFFECT_RATE_MULTIPLIER
+    elif feature=='chance-on-hit':
+        base=quality_base*(1.5 if item['item_class']==2 else 0.0)*PROC_RATE_MULTIPLIER
+    else:
+        base=quality_base*(8.0 if item['kind']=='trinket' else 0.25)*ON_USE_RATE_MULTIPLIER
+    return min(1.0,base)
+
+def _choose_effect_package(item,feature):
+    candidates=_effect_candidates(item,feature)
+    if not candidates:
+        return None
+    def slot_penalty(row):
+        if feature=='on-use':
+            return 0 if (item['kind']=='trinket' and row['source_inventory_type']==12) or row['source_inventory_type']==item['InventoryType'] else 1
+        if feature=='chance-on-hit':
+            return 0 if row['source_class']==2 else 1
+        return 0 if row['source_inventory_type']==item['InventoryType'] else 1
+    def role_penalty(row):
+        return 0 if not row.get('source_role') or item['role']==row.get('source_role') else 1
+    candidates=sorted(candidates,key=lambda row:(role_penalty(row),slot_penalty(row),abs(row['source_item_level']-item['ItemLevel']),abs(row['source_quality']-item['Quality']),row['source_entry'],row['spell_id']))
+    return candidates[h64(item['entry'],'effect-package',feature)%len(candidates)]
+
+def _assign_special_effect(item):
+    if MAX_SPECIAL_EFFECTS<=0 or item.get('itemset'):
+        return
+    choices=[]
+    for feature in ('spell-effects','chance-on-hit','on-use'):
+        if not feature_enabled(feature):
+            continue
+        package=_choose_effect_package(item,feature)
+        if package is None:
+            continue
+        if item['Quality']==5 or r01(item['entry'],'effect-roll',feature)<_feature_chance(item,feature):
+            choices.append((feature,package))
+    if not choices:
+        return
+    feature,package=choices[h64(item['entry'],'effect-feature')%len(choices)]
+    item['spell_slots']=[package]
+    item['special_effect_feature']=feature
+    item['effect_source_entry']=package['source_entry']
+    item['effect_source_spell']=package['spell_id']
+
+def _special_effect_budget_multiplier(item):
+    if not item.get('spell_slots'):
+        return 1.0
+    feature=item.get('special_effect_feature')
+    if feature=='on-use' and item['kind']=='trinket':
+        return 0.70 if item['Quality']>=4 else 0.80
+    if feature=='chance-on-hit':
+        return 0.85 if item['Quality']>=4 else 0.90
+    return 0.90 if item['Quality']>=4 else 0.95
+
+def _assign_socket_bonus(item):
+    if not feature_enabled('socket-bonuses') or not item['sockets'] or SOCKET_BONUS_RATE<=0:
+        return
+    if r01(item['entry'],'socket-bonus-roll')*100 >= SOCKET_BONUS_RATE:
+        return
+    candidates=_indexed_candidates(FEATURE_CATALOG['socket_index'],item['Quality'],item['ItemLevel'])
+    candidates=_nearby_candidates(candidates,item)
+    candidates=[row for row in candidates if row['socket_count']<=len(item['sockets']) or row['socket_count']==0]
+    if not candidates:
+        return
+    candidates=sorted(candidates,key=lambda row:(0 if not row.get('source_role') or row['source_role']==item['role'] else 1,abs(row['source_item_level']-item['ItemLevel']),abs(row['source_quality']-item['Quality']),row['source_entry'],row['enchantment_id']))
+    chosen=candidates[h64(item['entry'],'socket-bonus')%len(candidates)]
+    item['socketBonus']=chosen['enchantment_id']
+    item['socket_bonus_source_entry']=chosen['source_entry']
+    item['socket_bonus_effects']={
+        'types':chosen['effect_types'],'amounts':chosen['effect_amounts'],'spells':chosen['effect_spells'],
+    }
+
+def _assign_disenchant(item):
+    if not feature_enabled('disenchant') or item['Quality']<2 or DISENCHANT_RATE<=0:
+        return
+    if r01(item['entry'],'disenchant-roll')*100 >= DISENCHANT_RATE:
+        return
+    candidates=_indexed_candidates(FEATURE_CATALOG['disenchant_index'],item['Quality'],item['ItemLevel'])
+    candidates=_nearby_candidates(candidates,item)
+    candidates=[row for row in candidates if abs(row['source_quality']-item['Quality'])<=1]
+    if not candidates:
+        return
+    candidates=sorted(candidates,key=lambda row:(abs(row['source_item_level']-item['ItemLevel']),abs(row['source_quality']-item['Quality']),row['source_entry'],row['disenchant_id']))
+    chosen=candidates[h64(item['entry'],'disenchant')%len(candidates)]
+    item['RequiredDisenchantSkill']=chosen['required_skill']
+    item['DisenchantID']=chosen['disenchant_id']
+    item['disenchant_source_entry']=chosen['source_entry']
+
+def _choose_set_template(anchor):
+    templates=[]
+    for template in FEATURE_CATALOG.get('set_templates',[]):
+        if not _class_mask_matches(template['class_mask'],anchor['class_name']):
+            continue
+        if abs(template['item_level']-anchor['item_level'])>EFFECT_ILVL_WINDOW*2:
+            continue
+        if abs(template['quality']-anchor['quality'])>1:
+            continue
+        thresholds={threshold for threshold,_ in template['bonuses']}
+        if 2 not in thresholds or (SET_SIZE>=4 and 4 not in thresholds):
+            continue
+        templates.append(template)
+    if not templates:
+        templates=[template for template in FEATURE_CATALOG.get('set_templates',[]) if _class_mask_matches(template['class_mask'],anchor['class_name']) and 2 in {threshold for threshold,_ in template['bonuses']} and (SET_SIZE<4 or 4 in {threshold for threshold,_ in template['bonuses']})]
+    if not templates:
+        return None
+    templates.sort(key=lambda row:(abs(row['item_level']-anchor['item_level']),abs(row['quality']-anchor['quality']),row['source_set_id']))
+    return templates[h64(anchor['entry'],'set-template')%len(templates)]
+
+def _set_name(anchor):
+    theme=THEMES[h64(anchor['entry'],'set-theme')%len(THEMES)].title()
+    role={'strength_dps':'Might','agility_dps':'Feral','caster_dps':'Caster','hunter':'Hunt','healer':'Restoration','tank':'Guardian'}.get(anchor['role'],anchor['role'].title())
+    return f'{theme} {anchor["class_name"]} {role}'
+
+def assign_item_sets(skeletons):
+    if not feature_enabled('sets') or SET_RATE<=0 or SET_SIZE<1:
+        return []
+    if SET_SIZE>10:
+        raise ValueError('--set-size cannot exceed 10 for the current ItemSet.dbc layout')
+    target_pieces=(len(skeletons)*SET_RATE)//100
+    target_sets=target_pieces//SET_SIZE
+    if target_sets<=0:
+        return []
+    slots=SET_SLOT_ORDER[:SET_SIZE]
+    next_set_id=max(FEATURE_CATALOG['item_sets'],default=0)+1
+    used=set(); definitions=[]; used_set_names=set()
+    for anchor in sorted(skeletons,key=lambda row:h64(row['entry'],'set-anchor')):
+        if len(definitions)>=target_sets or anchor['entry'] in used or anchor['required_level']<SET_MIN_LEVEL or anchor['slot']!=slots[0]:
+            continue
+        candidates=[anchor]
+        for slot in slots[1:]:
+            matches=[row for row in skeletons if row['entry'] not in used and row['entry'] not in {item['entry'] for item in candidates}
+                     and row['class_name']==anchor['class_name'] and row['role']==anchor['role'] and row['quality']==anchor['quality']
+                     and row['slot']==slot and row['required_level']>=SET_MIN_LEVEL
+                     and abs(row['item_level']-anchor['item_level'])<=EFFECT_ILVL_WINDOW]
+            if not matches:
+                candidates=[]
+                break
+            matches.sort(key=lambda row:(abs(row['item_level']-anchor['item_level']),abs(row['required_level']-anchor['required_level']),row['entry']))
+            candidates.append(matches[0])
+        if len(candidates)!=SET_SIZE:
+            continue
+        template=_choose_set_template(anchor)
+        if template is None:
+            continue
+        set_id=next_set_id; next_set_id+=1
+        set_name=_set_name(anchor)
+        if set_name in used_set_names:
+            set_name=f'{set_name} {len(used_set_names)+1}'
+        used_set_names.add(set_name)
+        for member in candidates:
+            member['set_id']=set_id
+            member['set_name']=set_name
+            member['set_bonuses']=template['bonuses']
+            member['set_template_id']=template['source_set_id']
+            member['set_visual_ref']=template['visuals'].get(member['slot'])
+            used.add(member['entry'])
+        definitions.append({'set_id':set_id,'name':set_name,'bonuses':template['bonuses'],'items':tuple(member['entry'] for member in candidates),'template_id':template['source_set_id']})
+    return definitions
+
+def generated_item_set_rows(items):
+    grouped=defaultdict(list)
+    for item in items:
+        if item.get('itemset'):
+            grouped[item['itemset']].append(item)
+    rows=[]
+    for set_id,members in sorted(grouped.items()):
+        members.sort(key=lambda item:SET_SLOT_ORDER.index(item['slot']) if item['slot'] in SET_SLOT_ORDER else 99)
+        first=members[0]
+        bonuses=tuple((threshold,spell_id) for threshold,spell_id in first.get('set_bonuses',()) if threshold<=len(members))
+        rows.append(item_set_row(set_id,first.get('set_name','Generated Set'),[item['entry'] for item in members],bonuses))
+    return rows
+
 def build_skeletons():
     if ACTIVE_CLASSES is None or CLASS_ITEM_COUNTS is None or TARGET_ITEM_COUNT is None:
         raise RuntimeError('Runtime generation plan is not configured. Call configure_runtime() first.')
@@ -2093,6 +2748,7 @@ def build_skeletons():
         selected_ids={x['entry'] for x in selected}
         selected.extend(x for x in eligible if x['entry'] not in selected_ids and len(selected)<target)
     for x in selected: x['quality']=5
+    assign_item_sets(sk)
     return sk
 
 def finish_items(sk):
@@ -2106,7 +2762,7 @@ def finish_items(sk):
             ref,dmin,dmax,school,delay,dps=weapon_damage(weapon_kind,ilvl,q,entry)
             x['ref']=ref; displayid=ref[1]; armor=0; block=0
         else:
-            ref=x['ref']; displayid=ref[1]; dmin=dmax=0; school=0; delay=0; dps=0.0
+            ref=x.get('set_visual_ref') or x['ref']; displayid=ref[1]; dmin=dmax=0; school=0; delay=0; dps=0.0
             if x['kind']=='armor': armor=armor_formula(x['sub'],slot,ilvl,q,entry); block=0
             elif x['kind']=='back': armor=max(1,int(round(ilvl*.65*(.65+.35*min(1,ilvl/200))*QUALITY_POWER[q]))); block=0
             elif x['kind']=='shield':
@@ -2114,12 +2770,20 @@ def finish_items(sk):
                 block=max(3,int(round(ilvl*1.0*(.55+.45*min(1,ilvl/213))*QUALITY_POWER[q])))
             else: armor=0; block=0
         colors=socket_colors(req,ilvl,q,entry,slot,ref[3])
-        stats=make_stats(cname,role,req,ilvl,q,entry,x['budget_key'],len(colors),x['kind']=='shield',force_count=5 if q==5 else None)
+        effect_probe=dict(entry=entry,class_name=cname,class_mask=x['class_mask'],role=role,Quality=q,ItemLevel=ilvl,
+                          RequiredLevel=req,item_class=x['cls'],InventoryType=x['inv'],kind=x['kind'],itemset=x.get('set_id',0),
+                          spell_slots=[],special_effect_feature='',effect_source_entry=0,effect_source_spell=0)
+        _assign_special_effect(effect_probe)
+        stats=make_stats(cname,role,req,ilvl,q,entry,x['budget_key'],len(colors),x['kind']=='shield',
+                         force_count=5 if q==5 else None,budget_multiplier=_special_effect_budget_multiplier(effect_probe))
         # Name uniqueness over the entire generated collection.
         name=None
         armor_name_sub=x['sub'] if x['kind']=='armor' else None
-        for cand in make_name(entry,'shield' if x['kind']=='shield' else 'relic' if x['kind']=='relic' else slot,
-                              weapon_kind,q==5,armor_subclass=armor_name_sub):
+        set_piece_names={'head':'Crown','shoulder':'Mantle','chest':'Raiment','hands':'Gloves','legs':'Leggings','waist':'Belt','feet':'Boots','wrists':'Bracers','back':'Cloak','neck':'Pendant'}
+        name_candidates=([f"{set_piece_names.get(slot,slot.title())} of the {x['set_name']}"] if x.get('set_id') else
+                         make_name(entry,'shield' if x['kind']=='shield' else 'relic' if x['kind']=='relic' else slot,
+                                   weapon_kind,q==5,armor_subclass=armor_name_sub))
+        for cand in name_candidates:
             if cand not in names:
                 name=cand; break
         if name is None:
@@ -2134,12 +2798,18 @@ def finish_items(sk):
             desc=legendary_flavor(entry,x['kind'],weapon_kind)
         else:
             desc=FLAVOR[h64(entry,'flavor')%len(FLAVOR)] if r01(entry,'flavor_chance')<.24 else ''
-        item=dict(entry=entry,class_name=cname,class_mask=x['class_mask'],role=role,theme=theme,name=name,Quality=q,
+        item=dict(entry=entry,class_name=cname,class_mask=x['class_mask'],role=role,theme=theme,slot=slot,name=name,Quality=q,
                   ItemLevel=ilvl,RequiredLevel=req,item_class=x['cls'],subclass=x['sub'],InventoryType=x['inv'],displayid=displayid,
                   reference_entry=ref[0],reference_item_level=ref[2],reference_quality=ref[3],stats=stats,
                   dmg_min1=dmin,dmg_max1=dmax,dmg_type1=school,delay=delay,dps=round(dps,3),armor=armor,block=block,
                   sockets=colors,bonding=bonding,BuyPrice=buy,SellPrice=sell,Material=material,sheath=sheath,
-                  MaxDurability=maxdur,description=desc,kind=x['kind'],weapon_kind=weapon_kind or '')
+                  MaxDurability=maxdur,description=desc,kind=x['kind'],weapon_kind=weapon_kind or '',
+                  itemset=x.get('set_id',0),socketBonus=0,RequiredDisenchantSkill=-1,DisenchantID=0,
+                  special_effect_feature=effect_probe['special_effect_feature'],effect_source_entry=effect_probe['effect_source_entry'],
+                  effect_source_spell=effect_probe['effect_source_spell'],spell_slots=effect_probe['spell_slots'],
+                  set_name=x.get('set_name',''),set_bonuses=x.get('set_bonuses',()),set_template_id=x.get('set_template_id',0))
+        _assign_socket_bonus(item)
+        _assign_disenchant(item)
         items.append(item)
     return items
 
@@ -2192,6 +2862,17 @@ def validate(items):
         ids=[s[0] for s in x['stats']]
         if not (1<=len(ids)<=5) or len(ids)!=len(set(ids)) or 0 in ids: errors.append(f"{x['entry']} stats")
         if len(x['sockets'])>3 or any(c not in (1,2,4,8) for c in x['sockets']): errors.append(f"{x['entry']} sockets")
+        for package in x.get('spell_slots',[]):
+            if package['spell_id'] not in FEATURE_CATALOG['spells']:
+                errors.append(f"{x['entry']} unknown spell {package['spell_id']}")
+            if package['trigger'] not in (0,1,2,5):
+                errors.append(f"{x['entry']} invalid spell trigger {package['trigger']}")
+        if x.get('socketBonus') and x['socketBonus'] not in FEATURE_CATALOG['enchantments']:
+            errors.append(f"{x['entry']} unknown socket bonus {x['socketBonus']}")
+        if x.get('DisenchantID') and x['DisenchantID'] not in FEATURE_CATALOG['disenchant_ids']:
+            errors.append(f"{x['entry']} unknown disenchant {x['DisenchantID']}")
+        if x.get('itemset') and x.get('special_effect_feature'):
+            errors.append(f"{x['entry']} set piece has independent special effect")
         if x['item_class']==2:
             if not (x['dmg_min1']>0 and x['dmg_max1']>=x['dmg_min1'] and x['delay']>0 and x['armor']==0): errors.append(f"{x['entry']} weapon")
             calc=((x['dmg_min1']+x['dmg_max1'])/2)/(x['delay']/1000)
@@ -2208,7 +2889,9 @@ def validate(items):
 
 SQL_COLUMNS=['entry','class','subclass','SoundOverrideSubclass','name','displayid','Quality','Flags','FlagsExtra','BuyCount','BuyPrice','SellPrice','InventoryType','AllowableClass','AllowableRace','ItemLevel','RequiredLevel']
 for i in range(1,11): SQL_COLUMNS += [f'stat_type{i}',f'stat_value{i}']
-SQL_COLUMNS += ['dmg_min1','dmg_max1','dmg_type1','armor','delay','ammo_type','RangedModRange','bonding','description','Material','sheath','RandomProperty','RandomSuffix','block','MaxDurability','socketColor_1','socketContent_1','socketColor_2','socketContent_2','socketColor_3','socketContent_3','socketBonus','RequiredDisenchantSkill','DisenchantID','flagsCustom','VerifiedBuild']
+SQL_COLUMNS += ['dmg_min1','dmg_max1','dmg_type1','armor','delay','ammo_type','RangedModRange']
+for i in range(1,6): SQL_COLUMNS += [f'spellid_{i}',f'spelltrigger_{i}',f'spellcharges_{i}',f'spellppmRate_{i}',f'spellcooldown_{i}',f'spellcategory_{i}',f'spellcategorycooldown_{i}']
+SQL_COLUMNS += ['bonding','description','Material','sheath','RandomProperty','RandomSuffix','block','itemset','MaxDurability','socketColor_1','socketContent_1','socketColor_2','socketContent_2','socketColor_3','socketContent_3','socketBonus','RequiredDisenchantSkill','DisenchantID','flagsCustom','VerifiedBuild']
 LOOT_SQL_COLUMNS=['Entry','Item','Reference','Chance','QuestRequired','LootMode','GroupId','MinCount','MaxCount','Comment']
 
 def sql_values(x):
@@ -2217,9 +2900,17 @@ def sql_values(x):
     for sid,v,_ in ss: vals += [sid,v]
     ammo=2 if x['weapon_kind'] in ('bow','crossbow') else 3 if x['weapon_kind']=='gun' else 0
     rng=100 if x['weapon_kind'] in ('bow','crossbow','gun','wand') else 0
-    vals += [x['dmg_min1'],x['dmg_max1'],x['dmg_type1'],x['armor'],x['delay'],ammo,rng,x['bonding'],sqlq(x['description']),x['Material'],x['sheath'],0,0,x['block'],x['MaxDurability']]
+    vals += [x['dmg_min1'],x['dmg_max1'],x['dmg_type1'],x['armor'],x['delay'],ammo,rng]
+    spell_slots=x.get('spell_slots',[])
+    for index in range(5):
+        package=spell_slots[index] if index<len(spell_slots) else None
+        if package is None:
+            vals += [0,0,0,0,-1,0,-1]
+        else:
+            vals += [package['spell_id'],package['trigger'],package['charges'],package['ppm_rate'],package['cooldown'],package['category'],package['category_cooldown']]
+    vals += [x['bonding'],sqlq(x['description']),x['Material'],x['sheath'],0,0,x['block'],x.get('itemset',0),x['MaxDurability']]
     cs=x['sockets']+[0]*(3-len(x['sockets']))
-    vals += [cs[0],0,cs[1],0,cs[2],0,0,-1,0,0,12340]
+    vals += [cs[0],0,cs[1],0,cs[2],0,x.get('socketBonus',0),x.get('RequiredDisenchantSkill',-1),x.get('DisenchantID',0),0,12340]
     assert len(vals)==len(SQL_COLUMNS),(len(vals),len(SQL_COLUMNS),x['entry'])
     return vals
 
@@ -2261,11 +2952,12 @@ def _loot_sql_row(values):
 def write_outputs(items):
     if (OUT is None or SQLDIR is None or LOOT_CHANCE is None or WORLD_LOOT_SOURCE is None or
             REFERENCE_LOOT_SOURCE is None or ITEM_TEMPLATE_SOURCE is None or ITEM_DBC_SOURCES is None or
-            REFERENCE_CATALOG_AUDIT is None):
+            ITEM_SET_DBC_SOURCE is None or REFERENCE_CATALOG_AUDIT is None):
         raise RuntimeError('Runtime output directory is not configured. Call configure_runtime() first.')
     world_references=load_world_loot_references(WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE)
     loot=build_loot_records(items,world_references)
     item_dbc_rows=[item_dbc_row(x) for x in items]
+    item_set_rows=generated_item_set_rows(items) if feature_enabled('sets') else []
     for item_dbc_source in ITEM_DBC_SOURCES:
         try:
             item_dbc_source.relative_to(OUT)
@@ -2273,6 +2965,13 @@ def write_outputs(items):
             pass
         else:
             raise ValueError('item-dbc source cannot be inside the output directory being replaced')
+    for source_path in (ITEM_SET_DBC_SOURCE,SPELL_DBC_SOURCE,SPELL_ENCHANTMENT_DBC_SOURCE,DISENCHANT_SOURCE,SPELL_PROC_SOURCE,SPELL_SCRIPT_NAMES_SOURCE):
+        try:
+            source_path.relative_to(OUT)
+        except ValueError:
+            pass
+        else:
+            raise ValueError(f'feature source cannot be inside the output directory being replaced: {source_path}')
     if OUT.exists(): shutil.rmtree(OUT)
     SQLDIR.mkdir(parents=True)
     client_dir=OUT/'client'; client_dir.mkdir()
@@ -2290,11 +2989,19 @@ def write_outputs(items):
             w=csv.writer(f); w.writerow(ITEM_DBC_COLUMNS)
             w.writerows(merged_item_dbc_rows[entry] for entry in sorted(merged_item_dbc_rows))
         item_dbc_info['merged_manifest']='client/item_dbc_merged_rows.csv'
+    item_set_info=None
+    if feature_enabled('sets'):
+        item_set_info=merge_item_sets(ITEM_SET_DBC_SOURCE,item_set_rows,client_dir/'ItemSet.dbc')
+        with (client_dir/'item_set_rows.csv').open('w',encoding='utf-8',newline='') as f:
+            w=csv.writer(f); w.writerow(['ID','Name','ItemIDs','BonusThresholds','BonusSpellIDs','SourceTemplateID'])
+            for row in item_set_rows:
+                bonuses=[(row[43+i],row[35+i]) for i in range(8) if row[35+i] and row[43+i]]
+                w.writerow([row[0],getattr(row,'name',''),'|'.join(map(str,row[18:28])).strip('|'),bonuses and '|'.join(str(pair[0]) for pair in bonuses) or '',bonuses and '|'.join(str(pair[1]) for pair in bonuses) or '',next((item.get('set_template_id',0) for item in items if item.get('itemset')==row[0]),0)])
     with (OUT/'items.ndjson').open('w',encoding='utf-8') as f:
         for x in items:
             y=dict(x); y['stats']=[{'id':a,'value':b,'name':c} for a,b,c in x['stats']]
             f.write(json.dumps(y,ensure_ascii=False,separators=(',',':'))+'\n')
-    manifest_cols=['entry','class_name','name','Quality','RequiredLevel','ItemLevel','role','kind','weapon_kind','InventoryType','subclass','displayid','reference_entry','reference_item_level','armor','dps','sockets']
+    manifest_cols=['entry','class_name','name','Quality','RequiredLevel','ItemLevel','role','kind','weapon_kind','InventoryType','subclass','displayid','reference_entry','reference_item_level','armor','dps','sockets','itemset','special_effect_feature','effect_source_entry','effect_source_spell','socketBonus','DisenchantID']
     with (OUT/'manifest.csv').open('w',encoding='utf-8',newline='') as f:
         w=csv.writer(f); w.writerow(manifest_cols)
         for x in items: w.writerow([x[k] if k!='sockets' else '|'.join(map(str,x['sockets'])) for k in manifest_cols])
@@ -2410,6 +3117,14 @@ def write_outputs(items):
     item_dbc_report=dict(item_dbc_info)
     item_dbc_report['source']=str(ITEM_DBC_SOURCES[0]) if len(ITEM_DBC_SOURCES)==1 else None
     item_dbc_report['manifest']='client/item_dbc_rows.csv'
+    feature_counts={feature:sum(1 for x in items if (
+        (feature=='sets' and x.get('itemset')) or
+        (feature=='spell-effects' and x.get('special_effect_feature')=='spell-effects') or
+        (feature=='chance-on-hit' and x.get('special_effect_feature')=='chance-on-hit') or
+        (feature=='on-use' and x.get('special_effect_feature')=='on-use') or
+        (feature=='socket-bonuses' and x.get('socketBonus')) or
+        (feature=='disenchant' and x.get('DisenchantID'))
+    )) for feature in NEW_FEATURES}
     report={'seed':SEED,'requested_number':TARGET_ITEM_COUNT,'selected_classes':generated_class_names,
             'total_items':len(items),'entry_min':min(x['entry'] for x in items),'entry_max':max(x['entry'] for x in items),
             'unique_entries':len({x['entry'] for x in items}),'unique_names':len({x['name'] for x in items}),
@@ -2419,6 +3134,11 @@ def write_outputs(items):
             'loot_attachment_count':len(loot['attachments']),'loot_chance':LOOT_CHANCE,
             'world_loot_source':str(WORLD_LOOT_SOURCE),'reference_loot_source':str(REFERENCE_LOOT_SOURCE),
             'item_template_source':str(ITEM_TEMPLATE_SOURCE),
+            'feature_sources':{'item_set_dbc':str(ITEM_SET_DBC_SOURCE),'spell_dbc':str(SPELL_DBC_SOURCE),
+                               'spell_enchantment_dbc':str(SPELL_ENCHANTMENT_DBC_SOURCE),'disenchant':str(DISENCHANT_SOURCE),
+                               'spell_proc':str(SPELL_PROC_SOURCE),'spell_script_names':str(SPELL_SCRIPT_NAMES_SOURCE)},
+            'disabled_features':sorted(DISABLED_FEATURES),'feature_counts':feature_counts,
+            'feature_catalog_audit':FEATURE_CATALOG['audit'],'item_set':item_set_info,
             'item_dbc':item_dbc_report,
             'reference_catalog_count':REFERENCE_CATALOG_AUDIT['reference_count'],
             'reference_catalog_unique_displayids':REFERENCE_CATALOG_AUDIT.get('unique_displayids'),
@@ -2429,7 +3149,9 @@ def write_outputs(items):
             'world_loot_reference_count':len(world_references),'loot_bracket_distribution':loot_bracket_distribution,
             'world_loot_bracket_distribution':world_loot_bracket_distribution,
             'generated_loot_pool_ids':[pool['pool_id'] for pool in loot['pools']],
-            'random_effects_enabled':False,'socket_bonus_ids_generated':False,'disenchant_ids_generated':False,
+            'random_effects_enabled':feature_enabled('spell-effects'),'socket_bonus_ids_generated':feature_enabled('socket-bonuses'),
+            'disenchant_ids_generated':feature_enabled('disenchant'),'chance_on_hit_enabled':feature_enabled('chance-on-hit'),
+            'on_use_enabled':feature_enabled('on-use'),'sets_enabled':feature_enabled('sets'),
             'random_property_or_suffix_enabled':False,'validation_errors':0}
     (OUT/'validation_report.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
     digest=hashlib.sha256((OUT/'items.ndjson').read_bytes()).hexdigest()
@@ -2439,20 +3161,28 @@ def write_outputs(items):
     entry_summary='; '.join(f"{c}: {_format_entry_ranges([x for x in items if x['class_name']==c])}" for c in generated_class_names)
     readme=f"""# AzerothCore Random WotLK Item Pack
 
-Deterministic seed: `{SEED}`  
-Output directory: `generated-{SEED}`  
-Generated items: `{len(items)}`  
-Classes: `{class_summary}`  
-Generated entry ranges: `{entry_summary}`  
-Generated loot pools: `{len(loot['pools'])}` (`{len(loot['pool_rows'])}` item rows)  
-World-loot attachments: `{len(loot['attachments'])}` at `{LOOT_CHANCE}%`  
-World-loot source: `{WORLD_LOOT_SOURCE}`  
-Reference-loot source: `{REFERENCE_LOOT_SOURCE}`  
-Item-template source: `{ITEM_TEMPLATE_SOURCE}`  
-Client Item.dbc sources: `{', '.join(map(str, ITEM_DBC_SOURCES))}`  
-Harvested stock appearance references: `{REFERENCE_CATALOG_AUDIT['reference_count']}`  
-Harvested unique stock display IDs: `{REFERENCE_CATALOG_AUDIT.get('unique_displayids', 0)}`  
-Appearance fallback categories: `{len(REFERENCE_CATALOG_AUDIT.get('fallback_categories', []))}`  
+Deterministic seed: `{SEED}`<br>
+Output directory: `generated-{SEED}`<br>
+Generated items: `{len(items)}`<br>
+Classes: `{class_summary}`<br>
+Generated entry ranges: `{entry_summary}`<br>
+Generated loot pools: `{len(loot['pools'])}` (`{len(loot['pool_rows'])}` item rows)<br>
+World-loot attachments: `{len(loot['attachments'])}` at `{LOOT_CHANCE}%`<br>
+World-loot source: `{WORLD_LOOT_SOURCE}`<br>
+Reference-loot source: `{REFERENCE_LOOT_SOURCE}`<br>
+Item-template source: `{ITEM_TEMPLATE_SOURCE}`<br>
+Client Item.dbc sources: `{', '.join(map(str, ITEM_DBC_SOURCES))}`<br>
+ItemSet.dbc source: `{ITEM_SET_DBC_SOURCE}`<br>
+Spell.dbc source: `{SPELL_DBC_SOURCE}`<br>
+SpellItemEnchantment.dbc source: `{SPELL_ENCHANTMENT_DBC_SOURCE}`<br>
+Disenchant source: `{DISENCHANT_SOURCE}`<br>
+Spell proc source: `{SPELL_PROC_SOURCE}`<br>
+Spell script source: `{SPELL_SCRIPT_NAMES_SOURCE}`<br>
+Disabled new features: `{', '.join(sorted(DISABLED_FEATURES)) or 'none'}`<br>
+Feature counts: `{json.dumps(feature_counts,sort_keys=True)}`<br>
+Harvested stock appearance references: `{REFERENCE_CATALOG_AUDIT['reference_count']}`<br>
+Harvested unique stock display IDs: `{REFERENCE_CATALOG_AUDIT.get('unique_displayids', 0)}`<br>
+Appearance fallback categories: `{len(REFERENCE_CATALOG_AUDIT.get('fallback_categories', []))}`<br>
 Target: AzerothCore / WotLK 3.3.5a
 
 ## Generator CLI
@@ -2469,6 +3199,10 @@ Target: AzerothCore / WotLK 3.3.5a
 - `py generate_pack.py` - always uses the vanilla `Item.dbc`; `Item.custom.dbc` beside the generator is merged automatically only when it exists, then the merged copy is written under `client/`.
 - `py generate_pack.py --item-dbc-source PATH --item-dbc-source PATH` - merge every complete or additive WotLK `Item.dbc` source supplied; repeat the option for each client baseline.
 - Add `--item-dbc-overwrite` only when intentionally replacing conflicting generated-ID rows in that source DBC.
+- `py generate_pack.py --disable sets chance-on-hit` - disable selected new features; `effects` disables all three item spell triggers and `all-new` disables every new feature.
+- `--set-rate`, `--set-min-level`, `--set-size` - tune complete class/role five-piece set generation.
+- `--spell-effect-rate-multiplier`, `--proc-rate-multiplier`, `--on-use-rate-multiplier`, `--effect-ilvl-window`, `--max-special-effects` - tune stock effect-package selection.
+- `--socket-bonus-rate`, `--disenchant-rate` - tune validated stock socket and disenchant assignment.
 
 Flags can be combined in any order. The default remains 100,000 total and world-loot attachment chance defaults to 2%. Explicit `--number` is capped at 200,000 total and 20,000 per selected class.
 
@@ -2485,9 +3219,11 @@ Flags can be combined in any order. The default remains 100,000 total and world-
 - Legendaries use dedicated names, guaranteed flavor text, five stats, at least two sockets, and distinct source classes when possible.
 - Static stats are packed contiguously from stat slot 1.
 - `RandomProperty` and `RandomSuffix` are zero.
-- No random item spells/procs are generated.
-- No socket bonus ID is generated (`socketBonus = 0`).
-- No disenchant ID is invented (`DisenchantID = 0`, `RequiredDisenchantSkill = -1`).
+- Item spell effects are copied as complete stock packages and validated against `Spell.dbc`, `spell_proc.sql`, and `spell_script_names.sql`.
+- Generated sets use complete five-piece class/role groups, stock visual families where available, and stock 2/4-piece bonus spell archetypes in merged `client/ItemSet.dbc`.
+- Socket bonuses are resolved through `SpellItemEnchantment.dbc`; no enchantment ID is invented.
+- Disenchant pairs are copied from stock item rows only when their `DisenchantID` exists in `disenchant_loot_template.sql`.
+- Set pieces do not receive independent random special effects by default.
 - Every catalog `displayid`, class, subclass, and inventory type is checked against the selected `item_template.sql` before generation.
 - SQL uses explicit column lists and transactions.
 - Generated items are placed into up to six centralized `reference_loot_template` pools by required-level bracket.
@@ -2505,8 +3241,9 @@ Flags can be combined in any order. The default remains 100,000 total and world-
 4. Restart worldserver after import.
 5. With the client closed, clear `Cache/WDB/<locale>/itemcache.wdb` if item names/icons are stale, then retest.
 6. `client/item_dbc_rows.csv` contains only this run's generated rows; `client/item_dbc_merged_rows.csv` contains the complete final client table.
-7. All configured DBC sources are merged additively. Identical duplicate rows are accepted; conflicting rows stop generation instead of silently overwriting client data.
-8. Package only the final `client/Item.dbc` externally as `DBFilesClient\\Item.dbc` (for example with `var/pack_phase1_mpq.py`) and keep other custom client assets/DBC rows in the effective source set.
+7. When sets are enabled, package `client/ItemSet.dbc` as `DBFilesClient\\ItemSet.dbc` alongside `client/Item.dbc`.
+8. All configured DBC sources are merged additively. Identical duplicate rows are accepted; conflicting rows stop generation instead of silently overwriting client data.
+9. Package only the final `client/Item.dbc` and `client/ItemSet.dbc` externally and keep other custom client assets/DBC rows in the effective source set.
 
 `00_PREIMPORT_COLLISION_CHECK.sql` checks item IDs, reserved pool IDs, pool references, and attachment keys. `99_REMOVE_GENERATED_ITEMS.sql` removes this run's generated items, pools, and pool attachments.
 """

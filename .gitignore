@@ -3,3 +3,9 @@ Item.dbc
 item_template.sql
 reference_loot_template.sql
 creature_loot_template.sql
+disenchant_loot_template.sql
+ItemSet.dbc
+Spell.dbc
+spell_script_names.sql
+SpellItemEnchantment.dbc
+spell_proc.sql
