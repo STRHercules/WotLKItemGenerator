@@ -5,8 +5,10 @@
       "id": "example_normal",
       "instance": "Example Dungeon",
       "difficulty": "normal",
-      "item_level_min": 100,
-      "item_level_max": 110,
+      "map_id": 578,
+      "difficulty_id": 0,
+      "item_level_min": 180,
+      "item_level_max": 200,
       "additional_drop_chance": 15,
       "encounters": [
         {
@@ -15,7 +17,7 @@
           "requires": [],
           "weight": 1,
           "targets": [
-            {"type": "creature", "entry": 27470}
+            {"type": "creature", "entry": 27633}
           ]
         },
         {
@@ -24,7 +26,7 @@
           "requires": [],
           "weight": 3,
           "targets": [
-            {"type": "creature", "entry": 27483}
+            {"type": "creature", "entry": 27654}
           ]
         },
         {
@@ -34,7 +36,7 @@
           "weight": 5,
           "quantity": 1,
           "targets": [
-            {"type": "creature", "entry": 27447}
+            {"type": "creature", "entry": 27656}
           ]
         }
       ]
@@ -47,7 +49,7 @@
       "profile": "example_normal",
       "quality": 4,
       "required_level": [70, 80],
-      "item_level": [100, 110],
+      "item_level": [180, 200],
       "target_kind": "dungeon"
     },
     {

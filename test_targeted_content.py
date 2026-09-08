@@ -422,5 +422,40 @@ INSERT INTO `quest_template` VALUES
         self.assertEqual(slots[100]['choice'][0]['item'], 0)
 
 
+class SourceTests(unittest.TestCase):
+    def test_root_sources_build_map_creature_and_encounter_catalogs(self):
+        catalog = g.load_encounter_source_catalog(
+            pathlib.Path('Map.dbc'), pathlib.Path('MapDifficulty.dbc'), pathlib.Path('DungeonMap.dbc'),
+            pathlib.Path('creature.sql'), pathlib.Path('creature_template.sql'), pathlib.Path('instance_encounters.sql'),
+            pathlib.Path('creature_loot_template.sql'), pathlib.Path('reference_loot_template.sql'))
+
+        self.assertIn(533, catalog['maps'])
+        self.assertIn((533, 0), catalog['map_difficulties'])
+        self.assertIn(27483, catalog['creature_templates'])
+        self.assertTrue(catalog['creature_maps'][27483])
+        self.assertTrue(any(row['credit_entry'] == 27483 for row in catalog['instance_encounters'].values()))
+
+    def test_targeted_profile_requires_real_map_difficulty_spawn_and_boss_data(self):
+        catalog = {
+            'maps': {533: {'id': 533}},
+            'map_difficulties': {(533, 0): {'map_id': 533, 'difficulty_id': 0}},
+            'dungeon_maps': {533: (533,)},
+            'creature_templates': {15956: {'entry': 15956, 'name': "Anub'Rekhan", 'lootid': 15956}},
+            'creature_maps': {15956: {533}},
+            'instance_encounters': {673: {'credit_entry': 15956, 'comment': "Anub'Rekhan"}},
+            'creature_loot_entries': {15956},
+            'reference_loot_entries': set(),
+        }
+        manifest = {'profiles': [{
+            'id': 'naxx_10', 'map_id': 533, 'difficulty_id': 0,
+            'encounters': [{
+                'id': 'anub_rekhan', 'kind': 'boss', 'requires': [],
+                'targets': [{'type': 'creature', 'entry': 15956}],
+            }],
+        }]}
+
+        g.validate_targeted_source_membership(manifest, catalog)
+
+
 if __name__ == '__main__':
     unittest.main()

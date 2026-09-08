@@ -2141,6 +2141,8 @@ Pass `--content-manifest PATH` to enable targeted generation. The manifest is JS
 
 Dungeon and raid profiles are difficulty-specific. Each profile lists exact creature/reference loot targets and an encounter graph using `requires`. The generator resolves a deterministic order, assigns progression ranks, increases item-level bands through the instance, and gives the final boss the profile maximum. Encounter weights allocate exact generated items; each encounter receives its own additive pool and configurable additional-drop chance. One generated item is awarded per successful roll by default.
 
+When a profile includes `map_id` and `difficulty_id`, the generator also reads the root `Map.dbc`, `MapDifficulty.dbc`, `DungeonMap.dbc`, `creature.sql`, `creature_template.sql`, and `instance_encounters.sql` files. It verifies map/difficulty identity, creature spawn membership, creature names/loot IDs, boss credit entries, and existing creature/reference loot targets before writing SQL.
+
 Quest targets reference generated recipes and support both fixed and choice rewards. Provide `--quest-template-source PATH` when the manifest contains `quest_targets`. Existing quest rewards are preserved and empty slots are filled first. Generated quest SQL and cleanup SQL update only mapped fields.
 
 Example:

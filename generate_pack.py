@@ -40,6 +40,7 @@ CONTENT_MANIFEST = None
 TARGETED_PLAN = None
 QUEST_TEMPLATE_SOURCE = None
 QUEST_REWARD_ROWS = {}
+ENCOUNTER_SOURCE_CATALOG = None
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
@@ -62,6 +63,12 @@ DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE = ROOT / 'SpellItemEnchantment.dbc'
 DEFAULT_DISENCHANT_SOURCE = _default_world_sql_source('disenchant_loot_template.sql')
 DEFAULT_SPELL_PROC_SOURCE = _default_world_sql_source('spell_proc.sql')
 DEFAULT_SPELL_SCRIPT_NAMES_SOURCE = _default_world_sql_source('spell_script_names.sql')
+DEFAULT_MAP_DBC_SOURCE = ROOT / 'Map.dbc'
+DEFAULT_MAP_DIFFICULTY_DBC_SOURCE = ROOT / 'MapDifficulty.dbc'
+DEFAULT_DUNGEON_MAP_DBC_SOURCE = ROOT / 'DungeonMap.dbc'
+DEFAULT_CREATURE_SOURCE = ROOT / 'creature.sql'
+DEFAULT_CREATURE_TEMPLATE_SOURCE = ROOT / 'creature_template.sql'
+DEFAULT_INSTANCE_ENCOUNTERS_SOURCE = ROOT / 'instance_encounters.sql'
 
 NEW_FEATURES = (
     'sets', 'spell-effects', 'chance-on-hit', 'on-use', 'socket-bonuses', 'disenchant',
@@ -1668,18 +1675,27 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG
     args=parse_args(argv) if args is None else args
     content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
     if content_manifest is not None and (args.number is not None or args.class_name is not None):
         raise ValueError('--number and --class cannot be combined with --content-manifest; put counts and classes in the manifest')
     quest_template_source=Path(args.quest_template_source).expanduser().resolve() if args.quest_template_source else None
+    world_loot_source=Path(args.world_loot_source).expanduser().resolve()
+    reference_loot_source=Path(args.reference_loot_source).expanduser().resolve()
     quest_targets=content_manifest.get('quest_targets',()) if content_manifest else ()
     if quest_targets and quest_template_source is None:
         raise ValueError('--quest-template-source is required when the content manifest contains quest_targets')
     quest_reward_rows=load_quest_reward_slots(quest_template_source,{int(target['quest_id']) for target in quest_targets}) if quest_targets else {}
-    world_loot_source=Path(args.world_loot_source).expanduser().resolve()
-    reference_loot_source=Path(args.reference_loot_source).expanduser().resolve()
+    encounter_source_catalog=None
+    if content_manifest and any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',())):
+        encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
+                         DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
+                         world_loot_source,reference_loot_source)
+        missing=[str(path) for path in encounter_paths if not Path(path).is_file()]
+        if missing: raise FileNotFoundError('targeted encounter source file(s) not found: '+', '.join(missing))
+        encounter_source_catalog=load_encounter_source_catalog(*encounter_paths)
+        validate_targeted_source_membership(content_manifest,encounter_source_catalog)
     item_template_source=Path(args.item_template_source).expanduser().resolve()
     item_dbc_sources=[Path(path).expanduser().resolve() for path in (args.item_dbc_sources or _default_item_dbc_sources())]
     item_set_dbc_source=Path(args.item_set_dbc_source).expanduser().resolve()
@@ -1799,6 +1815,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     TARGETED_PLAN=targeted_plan
     QUEST_TEMPLATE_SOURCE=quest_template_source
     QUEST_REWARD_ROWS=quest_reward_rows
+    ENCOUNTER_SOURCE_CATALOG=encounter_source_catalog
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
     CLASS_ITEM_COUNTS=counts
@@ -1809,6 +1826,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         'class_name':args.class_name,'classes':[row[0] for row in ACTIVE_CLASSES],
         'content_manifest':CONTENT_MANIFEST,
         'quest_template_source':QUEST_TEMPLATE_SOURCE,
+        'encounter_source_catalog':ENCOUNTER_SOURCE_CATALOG,
         'class_counts':dict(CLASS_ITEM_COUNTS),'loot_chance':LOOT_CHANCE,
         'world_loot_source':WORLD_LOOT_SOURCE,'reference_loot_source':REFERENCE_LOOT_SOURCE,
         'item_template_source':ITEM_TEMPLATE_SOURCE,'item_dbc_sources':ITEM_DBC_SOURCES,
@@ -1974,6 +1992,90 @@ def _load_sql_entry_rows(path):
             if values is not None:
                 rows.append(values)
     return rows
+
+def _scan_sql_tuples(text):
+    rows=[]; start=None; depth=0; quoted=False; index=0
+    while index<len(text):
+        char=text[index]
+        if quoted:
+            if char=='\\': index+=2; continue
+            if char=="'":
+                if index+1<len(text) and text[index+1]=="'": index+=2; continue
+                quoted=False
+        elif char=="'": quoted=True
+        elif char=='(':
+            if depth==0: start=index
+            depth+=1
+        elif char==')' and depth:
+            depth-=1
+            if depth==0 and start is not None:
+                values=_split_sql_tuple(text[start:index+1])
+                if values is not None: rows.append(values)
+                start=None
+        index+=1
+    return rows
+
+def _load_sql_table_rows(path):
+    path=Path(path)
+    columns=[]; rows=[]; in_schema=False
+    with path.open(encoding='utf-8') as source:
+        for line in source:
+            if re.search(r'CREATE\s+TABLE',line,re.IGNORECASE): in_schema=True
+            elif in_schema and line.lstrip().startswith('`'):
+                columns.append(line.split('`')[1])
+            elif in_schema and 'ENGINE=' in line.upper():
+                in_schema=False
+            if line.lstrip().startswith('('):
+                values=_split_sql_tuple(line)
+                if values is not None: rows.append(values)
+    if not rows:
+        text=path.read_text(encoding='utf-8')
+        match=re.search(r'INSERT\s+INTO.*?\bVALUES\b',text,re.IGNORECASE|re.DOTALL)
+        if match: rows=_scan_sql_tuples(text[match.end():])
+    if not columns or not rows: raise ValueError(f'could not read SQL table rows from {path}')
+    if any(len(row)!=len(columns) for row in rows):
+        mismatched=next(len(row) for row in rows if len(row)!=len(columns))
+        raise ValueError(f'SQL table {path} row has {mismatched} values; schema has {len(columns)} columns')
+    return columns,rows
+
+def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,creature_path,creature_template_path,instance_encounters_path,creature_loot_path,reference_loot_path):
+    map_rows,map_strings,_,_=_read_wdbc_records(map_path,label='Map.dbc')
+    difficulty_rows,_,_,_=_read_wdbc_records(map_difficulty_path,label='MapDifficulty.dbc')
+    dungeon_rows,_,_,_=_read_wdbc_records(dungeon_map_path,label='DungeonMap.dbc')
+    maps={entry:{'id':entry,'directory':_dbc_string(map_strings,row[1]),'map_type':row[2],'instance_type':row[3]} for entry,row in map_rows.items()}
+    difficulties={(row[1],row[2]):{'id':row[0],'map_id':row[1],'difficulty_id':row[2],'max_players':row[21],'item_level':row[22]} for row in difficulty_rows.values() if len(row)>=23}
+    template_columns,template_rows=_load_sql_table_rows(creature_template_path); template_index={name:index for index,name in enumerate(template_columns)}
+    creature_templates={_sql_int(row[template_index['entry']]):{'entry':_sql_int(row[template_index['entry']]),'name':str(row[template_index['name']]).strip("'").replace("''","'"),'lootid':_sql_int(row[template_index['lootid']])} for row in template_rows}
+    creature_columns,creature_rows=_load_sql_table_rows(creature_path); creature_index={name:index for index,name in enumerate(creature_columns)}
+    creature_maps=defaultdict(set)
+    for row in creature_rows: creature_maps[_sql_int(row[creature_index['id']])].add(_sql_int(row[creature_index['map']]))
+    encounter_columns,encounter_rows=_load_sql_table_rows(instance_encounters_path); encounter_index={name:index for index,name in enumerate(encounter_columns)}
+    encounters={_sql_int(row[encounter_index['entry']]):{'credit_type':_sql_int(row[encounter_index['creditType']]),'credit_entry':_sql_int(row[encounter_index['creditEntry']]),'last_encounter_dungeon':_sql_int(row[encounter_index['lastEncounterDungeon']]),'comment':str(row[encounter_index['comment']]).strip("'").replace("''","'")} for row in encounter_rows}
+    _,creature_loot_rows=_load_sql_table_rows(creature_loot_path); _,reference_loot_rows=_load_sql_table_rows(reference_loot_path)
+    return {'maps':maps,'map_difficulties':difficulties,'dungeon_maps':dungeon_rows,'creature_templates':creature_templates,
+            'creature_maps':creature_maps,'instance_encounters':encounters,
+            'creature_loot_entries':{_sql_int(row[0]) for row in creature_loot_rows},
+            'reference_loot_entries':{_sql_int(row[0]) for row in reference_loot_rows}}
+
+def validate_targeted_source_membership(manifest,catalog):
+    for profile in manifest.get('profiles',()):
+        if profile.get('map_id') is None: continue
+        map_id=int(profile['map_id']); difficulty_id=profile.get('difficulty_id')
+        if map_id not in catalog['maps']: raise ValueError(f'profile {profile["id"]} references unknown map {map_id}')
+        if difficulty_id is not None and (map_id,int(difficulty_id)) not in catalog['map_difficulties']:
+            raise ValueError(f'profile {profile["id"]} references unknown map difficulty {map_id}:{difficulty_id}')
+        for encounter in profile.get('encounters',()):
+            for target in encounter.get('targets',()):
+                target_type=target['type']; entry=int(target['entry'])
+                if target_type=='reference':
+                    if entry not in catalog['reference_loot_entries']: raise ValueError(f'unknown reference loot target {entry} in profile {profile["id"]}')
+                    continue
+                if entry not in catalog['creature_templates'] or entry not in catalog['creature_loot_entries']:
+                    raise ValueError(f'creature loot target {entry} is missing creature or loot data')
+                if map_id not in catalog['creature_maps'].get(entry,set()):
+                    raise ValueError(f'creature {entry} is not spawned on map {map_id} for profile {profile["id"]}')
+                if encounter.get('kind')=='boss' and not any(row['credit_entry']==entry for row in catalog['instance_encounters'].values()):
+                    raise ValueError(f'boss target {entry} is not present in instance_encounters.sql')
 
 def _stock_item_metadata(fields):
     if len(fields)<=ITEM_TEMPLATE_DISENCHANT_INDEX:
@@ -2642,8 +2744,8 @@ def build_encounter_loot_records(items,profile,source_rows,pool_base=GENERATED_E
                                  'band':band,'chance':chance,'quantity':quantity,'targets':encounter['targets']}
     return {'profile_id':profile.get('id'),'order':resolved,'encounters':result,'pool_rows':pool_rows,'attachments':attachments}
 
-def build_manifest_encounter_loot_records(items,manifest,world_path,reference_path):
-    source_rows={'creature':load_loot_entry_ids(world_path),'reference':load_loot_entry_ids(reference_path)}
+def build_manifest_encounter_loot_records(items,manifest,world_path,reference_path,source_catalog=None):
+    source_rows={'creature':source_catalog['creature_loot_entries'],'reference':source_catalog['reference_loot_entries']} if source_catalog else {'creature':load_loot_entry_ids(world_path),'reference':load_loot_entry_ids(reference_path)}
     records=[]
     for index,profile in enumerate(manifest.get('profiles',())):
         record=build_encounter_loot_records(items,profile,source_rows,
@@ -4149,7 +4251,7 @@ def write_outputs(items,ui=None,name_changes=()):
         if ui: ui.status('Mapping targeted dungeon and raid encounters')
         world_references={}
         loot={'pools':[],'pool_rows':[],'attachments':[]}
-        encounter_loot_records=build_manifest_encounter_loot_records(items,CONTENT_MANIFEST,WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE)
+        encounter_loot_records=build_manifest_encounter_loot_records(items,CONTENT_MANIFEST,WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE,ENCOUNTER_SOURCE_CATALOG)
     if ui: ui.progress(2,10,current='Generated loot pools built')
     item_dbc_rows=[item_dbc_row(x) for x in items]
     item_set_rows=generated_item_set_rows(items) if feature_enabled('sets') else []
@@ -4403,6 +4505,11 @@ def write_outputs(items,ui=None,name_changes=()):
                                        'pool_row_count':len(record['pool_rows']),'attachment_count':len(record['attachments'])}
                                       for record in encounter_loot_records],
             'generated_encounter_pool_ids':encounter_pool_ids,
+            'encounter_source_audit':None if ENCOUNTER_SOURCE_CATALOG is None else {
+                'map_count':len(ENCOUNTER_SOURCE_CATALOG['maps']),'map_difficulty_count':len(ENCOUNTER_SOURCE_CATALOG['map_difficulties']),
+                'creature_template_count':len(ENCOUNTER_SOURCE_CATALOG['creature_templates']),'spawn_creature_count':len(ENCOUNTER_SOURCE_CATALOG['creature_maps']),
+                'instance_encounter_count':len(ENCOUNTER_SOURCE_CATALOG['instance_encounters']),
+            },
             'quest_reward_count':len(quest_records),'quest_rewards':quest_records,
             'random_effects_enabled':feature_enabled('spell-effects'),'socket_bonus_ids_generated':feature_enabled('socket-bonuses'),
             'disenchant_ids_generated':feature_enabled('disenchant'),'chance_on_hit_enabled':feature_enabled('chance-on-hit'),
