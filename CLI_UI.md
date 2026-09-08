@@ -27,6 +27,7 @@ If Rich is unavailable, `--ui auto` and even an explicit `--ui fancy` gracefully
 
 - source SQL/DBC checks
 - seed, item count, selected classes, enabled features, and output path
+- targeted manifest encounter/quest assignment mode when `--content-manifest` is used
 - true overall progress through skeleton generation and item finalization
 - per-class progress bars
 - current class, level, quality, and item name
@@ -34,7 +35,7 @@ If Rich is unavailable, `--ui auto` and even an explicit `--ui fancy` gracefully
 - complete generated set callouts
 - proc, On Use, and Equip-effect discoveries
 - validation progress and result
-- output-writing progress for loot pools, SQL, Item.dbc, ItemSet.dbc, manifests, checksums, and README
+- output-writing progress for loot pools, encounter/quest SQL, Item.dbc, ItemSet.dbc, manifests, checksums, and README
 - final quality and feature counts plus elapsed time
 
 The live discovery panel is bounded, so long runs do not flood the terminal. Plain/redirected output stays intentionally quieter; `--show-items` expands it when desired.

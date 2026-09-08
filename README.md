@@ -19,6 +19,9 @@ The current generator also supports:
 - additive, conflict-safe merging of multiple `Item.dbc` baselines
 - generated `ItemSet.dbc` output for both the client and AzerothCore worldserver
 - an optional Rich terminal dashboard with plain, quiet, and no-animation modes
+- manifest-driven disjoint recipes for exact counts, independent required/item-level ranges, weapons, qualities, and sets
+- explicit dungeon/raid encounter graphs for trash and boss ordering, weighted allocation, progression item levels, and additive encounter loot
+- safe fixed and choice quest-reward assignment that fills empty slots and emits reversible SQL
 
 See [CLI_UI.md](CLI_UI.md) for the dashboard behavior and inspect each generated `validation_report.json` for feature counts and source-audit results.
 
@@ -310,6 +313,8 @@ data/sql/base/db_world/spell_proc.sql
 data/sql/base/db_world/spell_script_names.sql
 ```
 
+Targeted quest rewards additionally require an explicit `--quest-template-source PATH`.
+
 These are used for:
 
 - world-loot level mapping
@@ -370,7 +375,9 @@ WotLKItemGenerator/
 ├─ item_template.sql
 ├─ disenchant_loot_template.sql
 ├─ spell_proc.sql
-└─ spell_script_names.sql
+├─ spell_script_names.sql
+├─ quest_template.sql             # required only for mapped quest rewards
+└─ content_manifest.example.json  # optional targeted-generation example
 ```
 
 With this layout, the normal command works without any path arguments:
@@ -441,6 +448,8 @@ At a high level, each run follows this pipeline:
 ```text
 Parse command-line arguments
         ↓
+Load optional targeted-content manifest
+        ↓
 Resolve source paths
         ↓
 Verify required source files
@@ -476,6 +485,8 @@ Generate stats
 Generate sockets
         ↓
 Assign effects, socket bonuses, disenchant data, and item sets
+        ↓
+Resolve encounter order, weighted targets, and quest assignments
         ↓
 Generate damage / armor / block
         ↓
@@ -2124,6 +2135,27 @@ The generator validates that the resulting value fits within an unsigned 32-bit 
 
 ---
 
+# Targeted Dungeon, Raid, and Quest Content
+
+Pass `--content-manifest PATH` to enable targeted generation. The manifest is JSON and keeps recipe counts disjoint by default. Required level and item level ranges are independent; set recipes use `set_count` and `set_size`.
+
+Dungeon and raid profiles are difficulty-specific. Each profile lists exact creature/reference loot targets and an encounter graph using `requires`. The generator resolves a deterministic order, assigns progression ranks, increases item-level bands through the instance, and gives the final boss the profile maximum. Encounter weights allocate exact generated items; each encounter receives its own additive pool and configurable additional-drop chance. One generated item is awarded per successful roll by default.
+
+Quest targets reference generated recipes and support both fixed and choice rewards. Provide `--quest-template-source PATH` when the manifest contains `quest_targets`. Existing quest rewards are preserved and empty slots are filled first. Generated quest SQL and cleanup SQL update only mapped fields.
+
+Example:
+
+```powershell
+py .\generate_pack.py `
+  --content-manifest .\content_manifest.example.json `
+  --quest-template-source "PATH\quest_template.sql" `
+  --seed 424242
+```
+
+The generated report records resolved encounter order, rank, item-level band, weights, chances, quantities, and quest assignments.
+
+---
+
 # Validation and Safety Rules
 
 The final item set is checked before SQL output is written.
@@ -2260,6 +2292,8 @@ Available arguments:
 --seed SEED
 --number NUMBER
 --class CLASS_NAME
+--content-manifest PATH
+--quest-template-source PATH
 --loot-chance PERCENT
 --world-loot-source PATH
 --reference-loot-source PATH
@@ -2400,6 +2434,30 @@ py .\generate_pack.py --class "Death Knight"
 py .\generate_pack.py --class death-knight
 py .\generate_pack.py --class dk
 ```
+
+---
+
+## --content-manifest PATH
+
+Loads a JSON targeted-content manifest. It is mutually exclusive with `--number` and `--class`; recipe counts and class constraints belong in the manifest.
+
+The manifest supports:
+
+- disjoint exact-count recipes
+- independent `required_level` and `item_level` ranges
+- weapon and set recipes
+- separate Normal, Heroic, 10-player, and 25-player profiles
+- prerequisite-based boss ordering and weighted encounter allocation
+- additive dungeon/raid pools with profile or encounter chances and quantities
+- fixed and choice quest rewards
+
+Use [content_manifest.example.json](content_manifest.example.json) as the smallest working example.
+
+---
+
+## --quest-template-source PATH
+
+Supplies the AzerothCore `quest_template.sql` source used to verify mapped quest IDs, inspect existing fixed/choice reward slots, and generate reversible updates. It is required only when the manifest contains `quest_targets`.
 
 ---
 
@@ -2614,6 +2672,19 @@ Unknown class values are rejected before generation.
 
 # Usage Examples
 
+## Targeted dungeon/raid and quest generation
+
+```powershell
+py .\generate_pack.py `
+  --content-manifest .\content_manifest.example.json `
+  --quest-template-source "PATH\quest_template.sql" `
+  --seed 424242
+```
+
+This writes separate encounter loot pools, additive creature-loot attachments, quest reward updates, cleanup SQL, `encounter_loot.csv`, `quest_rewards.csv`, and the resolved assignments in `validation_report.json`.
+
+---
+
 ## Default 100,000-item pack
 
 ```powershell
@@ -2780,6 +2851,8 @@ generated-<seed>/
 ├─ reference_catalog_used.csv
 ├─ loot_pools.csv
 ├─ loot_attachments.csv
+├─ encounter_loot.csv                # targeted manifests only
+├─ quest_rewards.csv                 # targeted manifests only
 │
 ├─ 00_SCHEMA_CHECK.sql
 ├─ 00_PREIMPORT_COLLISION_CHECK.sql
@@ -2828,13 +2901,17 @@ generated-<seed>/
    │
    └─ loot/
       ├─ 00_generated_loot_cleanup.sql
+      ├─ 00_generated_encounter_loot_cleanup.sql  # targeted manifests only
       ├─ 01-19_pool.sql
       ├─ 20-39_pool.sql
       ├─ 40-59_pool.sql
       ├─ 60-69_pool.sql
       ├─ 70-79_pool.sql
       ├─ 80_pool.sql
-      └─ world_loot_attachments.sql
+      ├─ world_loot_attachments.sql
+      └─ dungeon_raid_encounter_loot.sql          # targeted manifests only
+   ├─ 00_generated_quest_rewards_cleanup.sql      # targeted manifests only
+   └─ quest_rewards.sql                           # targeted manifests only
 ```
 
 Only classes and level brackets present in the requested generation are emitted.
@@ -2896,6 +2973,8 @@ Includes:
 - fallback categories
 - world-loot bracket distribution
 - generated pool IDs
+- resolved encounter order, ranks, item-level bands, weights, chances, and quantities
+- quest reward assignments and preserved source values
 - feature-policy flags
 - validation error count
 
