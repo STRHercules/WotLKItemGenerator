@@ -8,6 +8,22 @@ It is designed for large content packs, not just one-off items. The default run 
 
 > **Important:** The generator does not connect to your live database. It writes files for you to inspect and import. Always run the generated collision checks before importing anything.
 
+## Current Feature Highlights
+
+The current generator also supports:
+
+- generated five-piece class/role item sets with stock two-piece and four-piece bonuses
+- stock On Equip, Chance on Hit, and On Use effect packages validated against WotLK DBC and SQL sources
+- stock socket bonuses resolved through `SpellItemEnchantment.dbc`
+- validated stock `DisenchantID` assignments
+- additive, conflict-safe merging of multiple `Item.dbc` baselines
+- generated `ItemSet.dbc` output for both the client and AzerothCore worldserver
+- an optional Rich terminal dashboard with plain, quiet, and no-animation modes
+
+See [CLI_UI.md](CLI_UI.md) for the dashboard behavior and inspect each generated `validation_report.json` for feature counts and source-audit results.
+
+![WotLK Item Generator terminal dashboard](Screenshots/WindowsTerminal_2sx2re5oF7.png)
+
 ---
 
 ## Table of Contents
@@ -80,9 +96,13 @@ A normal generated item may include:
 - armor or weapon subclass
 - inventory slot
 - one to five static stats
+- an optional stock-derived spell effect, proc, or On Use package
 - weapon damage and speed where applicable
 - armor and block values where applicable
 - zero to three sockets
+- a stock socket bonus when eligible
+- a validated disenchant entry when eligible
+- membership in a generated item set when selected
 - vendor prices
 - durability
 - binding rules
@@ -180,19 +200,16 @@ Last Warden's Warden Wargrips
 Titan Queen's Hauberk of the Titan Forge
 ```
 
-## 5. Do not silently invent unsupported effects
+## 5. Reuse verified stock effects and metadata
 
-The current generator intentionally does **not** generate:
+The generator copies only compatible stock data instead of inventing IDs:
 
-- random item spells
-- chance-on-hit procs
-- on-use spells
-- random properties
-- random suffixes
-- socket bonus IDs
-- disenchant IDs
+- On Equip, Chance on Hit, and On Use spell packages are validated against `Spell.dbc`, `spell_proc.sql`, and `spell_script_names.sql`.
+- Generated sets use `ItemSet.dbc` templates and are emitted for both client and server use.
+- Socket bonuses are resolved through `SpellItemEnchantment.dbc`.
+- Disenchant data is copied only when the source `DisenchantID` exists in `disenchant_loot_template.sql`.
 
-Those systems are left disabled rather than populated with unverified IDs.
+`RandomProperty` and `RandomSuffix` remain zero, and the generator still does not create custom models or write directly to a live database.
 
 ---
 
@@ -232,6 +249,14 @@ For a Warrior-only test:
 ```powershell
 py .\generate_pack.py --class warrior --number 100
 ```
+
+For the live terminal dashboard when Rich is installed:
+
+```powershell
+py .\generate_pack.py --ui fancy
+```
+
+The default `--ui auto` mode uses the dashboard only in an interactive terminal and falls back to the standard-library UI otherwise.
 
 ## Linux / macOS
 
@@ -280,6 +305,9 @@ By default, the generator expects access to the following AzerothCore world data
 data/sql/base/db_world/creature_loot_template.sql
 data/sql/base/db_world/reference_loot_template.sql
 data/sql/base/db_world/item_template.sql
+data/sql/base/db_world/disenchant_loot_template.sql
+data/sql/base/db_world/spell_proc.sql
+data/sql/base/db_world/spell_script_names.sql
 ```
 
 These are used for:
@@ -288,10 +316,19 @@ These are used for:
 - reference-loot verification
 - appearance harvesting
 - weapon reference harvesting
+- stock spell-effect and proc validation
+- validated disenchant assignments
 
-## Client Item.dbc
+## Client and feature DBCs
 
-The generator requires a valid WotLK `Item.dbc`.
+The generator requires valid WotLK copies of:
+
+```text
+Item.dbc
+ItemSet.dbc
+Spell.dbc
+SpellItemEnchantment.dbc
+```
 
 By default it looks for:
 
@@ -311,6 +348,8 @@ it is automatically merged as an additional baseline.
 
 `Item.custom.dbc` is optional.
 
+`ItemSet.dbc`, `Spell.dbc`, and `SpellItemEnchantment.dbc` are required by the default feature set. Their paths can be overridden with the corresponding command-line options.
+
 ---
 
 # Expected Project Layout
@@ -323,9 +362,15 @@ WotLKItemGenerator/
 ├─ README.md
 ├─ Item.dbc
 ├─ Item.custom.dbc                # optional
+├─ ItemSet.dbc
+├─ Spell.dbc
+├─ SpellItemEnchantment.dbc
 ├─ creature_loot_template.sql
 ├─ reference_loot_template.sql
-└─ item_template.sql
+├─ item_template.sql
+├─ disenchant_loot_template.sql
+├─ spell_proc.sql
+└─ spell_script_names.sql
 ```
 
 With this layout, the normal command works without any path arguments:
@@ -334,7 +379,7 @@ With this layout, the normal command works without any path arguments:
 py .\generate_pack.py
 ```
 
-For each of the three SQL inputs, the generator resolves its default path independently:
+For each SQL input, the generator resolves its default path independently:
 
 ```text
 1. Look beside generate_pack.py.
@@ -356,10 +401,13 @@ EsteriaWoW/
 │
 └─ CustomModules/
    └─ Item Generator/
-      └─ v2.6.2/
+      └─ <generator-version>/
          ├─ generate_pack.py
          ├─ Item.dbc
-         └─ Item.custom.dbc        # optional
+         ├─ Item.custom.dbc        # optional
+         ├─ ItemSet.dbc
+         ├─ Spell.dbc
+         └─ SpellItemEnchantment.dbc
 ```
 
 In the nested layout, when a same-named SQL file is not present beside the generator, the fallback is:
@@ -374,6 +422,12 @@ You can override any automatic path explicitly with:
 --world-loot-source
 --reference-loot-source
 --item-template-source
+--disenchant-source
+--spell-proc-source
+--spell-script-names-source
+--item-set-dbc-source
+--spell-dbc-source
+--spell-enchantment-dbc-source
 ```
 
 Explicit command-line paths always take precedence over the automatic defaults.
@@ -390,6 +444,8 @@ Parse command-line arguments
 Resolve source paths
         ↓
 Verify required source files
+        ↓
+Load stock spell, set, socket, proc, and disenchant catalogs
         ↓
 Harvest stock armor/weapon appearances
         ↓
@@ -419,6 +475,8 @@ Generate stats
         ↓
 Generate sockets
         ↓
+Assign effects, socket bonuses, disenchant data, and item sets
+        ↓
 Generate damage / armor / block
         ↓
 Generate name and flavor
@@ -431,7 +489,9 @@ Build world-loot pools
         ↓
 Merge client Item.dbc
         ↓
-Write SQL, CSV, JSON, commands, reports, checks
+Merge and stage client/server ItemSet.dbc
+        ↓
+Write SQL, CSV, JSON, commands, reports, checks, and README
 ```
 
 The generator uses deterministic hash-based random selection throughout the process.
@@ -1447,12 +1507,18 @@ with a 35% chance to receive three.
 
 ## Socket bonuses
 
-The generator deliberately does not invent a socket bonus ID.
+Eligible socketed items can receive a compatible stock socket bonus. The bonus is selected from `SpellItemEnchantment.dbc` and is never invented.
 
-Generated SQL uses:
+The default assignment rate is 100% of eligible items and can be changed with:
 
 ```text
-socketBonus = 0
+--socket-bonus-rate PERCENT
+```
+
+Disable the feature entirely with:
+
+```text
+--disable socket-bonuses
 ```
 
 ---
@@ -1953,6 +2019,18 @@ The generator will not allow the generated output `Item.dbc` to overwrite its ow
 
 A DBC source also cannot live inside the generated output directory that is about to be replaced.
 
+## ItemSet.dbc generation and staging
+
+When sets are enabled, the generator reads stock set templates and writes:
+
+```text
+client/ItemSet.dbc
+server/dbc/ItemSet.dbc
+client/item_set_rows.csv
+```
+
+The client copy belongs in `DBFilesClient\ItemSet.dbc`. The server copy belongs in the AzerothCore worldserver DBC directory. Set pieces use the generated set ID in SQL and do not receive an independent random special effect.
+
 ---
 
 # World Loot Integration
@@ -2106,6 +2184,20 @@ Validation includes:
 
 - maximum three sockets
 - only supported socket color values
+- socket bonuses must exist in `SpellItemEnchantment.dbc`
+
+## Effect checks
+
+- effect spells must exist in `Spell.dbc`
+- proc and scripted spell sources are audited when applicable
+- source quality and item-level windows cannot exceed the generated item
+- role compatibility is enforced for copied effect packages
+
+## Set and disenchant checks
+
+- generated set members and bonus thresholds must match the emitted `ItemSet.dbc`
+- `DisenchantID` must exist in `disenchant_loot_template.sql`
+- negative source disenchant skill values are rejected
 
 ## Weapon checks
 
@@ -2174,6 +2266,27 @@ Available arguments:
 --item-template-source PATH
 --item-dbc-source PATH
 --item-dbc-overwrite
+--item-set-dbc-source PATH
+--spell-dbc-source PATH
+--spell-enchantment-dbc-source PATH
+--disenchant-source PATH
+--spell-proc-source PATH
+--spell-script-names-source PATH
+--disable FEATURE [FEATURE ...]
+--set-rate PERCENT
+--set-min-level LEVEL
+--set-size COUNT
+--spell-effect-rate-multiplier MULTIPLIER
+--proc-rate-multiplier MULTIPLIER
+--on-use-rate-multiplier MULTIPLIER
+--effect-ilvl-window ILVL
+--socket-bonus-rate PERCENT
+--disenchant-rate PERCENT
+--max-special-effects COUNT
+--ui {auto,fancy,plain}
+--no-animations
+--show-items
+--quiet
 ```
 
 ---
@@ -2437,6 +2550,44 @@ This flag affects the generated **client DBC merge**. It does not bypass or reso
 
 ---
 
+## Feature controls and terminal UI
+
+New feature families are enabled by default and can be disabled independently:
+
+```powershell
+py .\generate_pack.py --disable sets chance-on-hit
+py .\generate_pack.py --disable effects
+py .\generate_pack.py --disable all-new
+```
+
+The `effects` alias disables On Equip, Chance on Hit, and On Use packages. `all-new` disables sets, effects, socket bonuses, and disenchant assignments.
+
+Set generation defaults to five pieces and a 0.20% item reservation rate. Tune it with `--set-rate`, `--set-min-level`, and `--set-size`.
+
+Effect selection is controlled by `--spell-effect-rate-multiplier`, `--proc-rate-multiplier`, `--on-use-rate-multiplier`, `--effect-ilvl-window`, and `--max-special-effects`. Leveling items retain tighter 5/10/15 item-level matching windows.
+
+Use `--socket-bonus-rate` and `--disenchant-rate` to reduce validated stock assignments without inventing replacement IDs.
+
+The presentation-only terminal UI supports:
+
+```powershell
+py .\generate_pack.py --ui auto
+py .\generate_pack.py --ui fancy --no-animations
+py .\generate_pack.py --ui plain
+py .\generate_pack.py --show-items
+py .\generate_pack.py --quiet
+```
+
+`Rich` is optional. Install it for the full dashboard:
+
+```powershell
+py -m pip install rich
+```
+
+If Rich is unavailable, `auto` and `fancy` fall back to the plain standard-library UI.
+
+---
+
 # Class Names and Aliases
 
 Accepted class values include:
@@ -2636,8 +2787,14 @@ generated-<seed>/
 │
 ├─ client/
 │  ├─ Item.dbc
+│  ├─ ItemSet.dbc                 # when sets are enabled
 │  ├─ item_dbc_rows.csv
-│  └─ item_dbc_merged_rows.csv
+│  ├─ item_dbc_merged_rows.csv
+│  └─ item_set_rows.csv           # when sets are enabled
+│
+├─ server/
+│  └─ dbc/
+│     └─ ItemSet.dbc              # when sets are enabled
 │
 ├─ additem_commands/
 │  ├─ warrior.txt
@@ -2698,6 +2855,8 @@ A per-generation summary containing:
 - source file paths
 - appearance-harvest counts
 - fallback-category count
+- enabled/disabled feature families and feature counts
+- Item.dbc and ItemSet.dbc merge reports
 - CLI notes
 - safety policy
 - import instructions
@@ -2793,6 +2952,9 @@ Contains the richest item representation, including:
 - flavor text
 - generated kind
 - weapon kind
+- item-set membership and set bonuses
+- special-effect source metadata
+- socket bonus and disenchant IDs
 
 This is ideal for programmatic auditing.
 
@@ -2822,6 +2984,12 @@ reference_item_level
 armor
 dps
 sockets
+itemset
+special_effect_feature
+effect_source_entry
+effect_source_spell
+socketBonus
+DisenchantID
 ```
 
 ---
@@ -2874,6 +3042,16 @@ DBFilesClient\Item.dbc
 
 inside the effective MPQ patch.
 
+## client/ItemSet.dbc
+
+The merged client set-definition table. Package it as:
+
+```text
+DBFilesClient\ItemSet.dbc
+```
+
+when sets are enabled.
+
 ---
 
 ## additem_commands/
@@ -2925,6 +3103,12 @@ Contains:
 The authoritative import sequence.
 
 Import SQL files in exactly this order.
+
+The generated `ItemSet.dbc` files are not SQL and are installed separately on the client and worldserver.
+
+## server/dbc/ItemSet.dbc
+
+The server-side copy of the generated set definitions. Copy it into the AzerothCore worldserver DBC directory when sets are enabled.
 
 ---
 
@@ -3015,7 +3199,17 @@ reference_loot_template
 
 so make sure the active database is `acore_world` when importing.
 
-## 5. Install the client Item.dbc
+## 5. Install the server ItemSet.dbc
+
+When sets are enabled, copy:
+
+```text
+generated-<seed>/server/dbc/ItemSet.dbc
+```
+
+into the AzerothCore worldserver DBC directory.
+
+## 6. Install the client DBCs
 
 Package:
 
@@ -3031,13 +3225,25 @@ DBFilesClient\Item.dbc
 
 Only the final merged `Item.dbc` should be packaged from the generated client folder.
 
+When sets are enabled, also package:
+
+```text
+generated-<seed>/client/ItemSet.dbc
+```
+
+as:
+
+```text
+DBFilesClient\ItemSet.dbc
+```
+
 The CSV files are diagnostics and do not belong in the MPQ.
 
-## 6. Close the WoW client
+## 7. Close the WoW client
 
 Do not replace client DBC files while WoW is running.
 
-## 7. Clear stale client item cache if needed
+## 8. Clear stale client item cache if needed
 
 If names or icons appear stale, remove:
 
@@ -3051,11 +3257,11 @@ For an English US client, this is typically:
 Cache/WDB/enUS/itemcache.wdb
 ```
 
-## 8. Restart worldserver
+## 9. Restart worldserver
 
 Restart AzerothCore after the SQL import.
 
-## 9. Test a few items with GM commands
+## 10. Test a few items with GM commands
 
 Use the generated files in:
 
@@ -3081,10 +3287,13 @@ Check:
 - weapon damage
 - armor
 - sockets
+- set membership and set bonuses
+- special effects, if enabled
+- disenchant behavior, if enabled
 - binding
 - vendor value
 
-## 10. Test natural drops
+## 11. Test natural drops
 
 Kill mobs that use normal shared world-loot references and verify generated items appear at the expected approximate configured rate.
 
@@ -3407,13 +3616,7 @@ can be used to compare `items.ndjson` between runs.
 
 # Intentional Non-Features
 
-The generator deliberately leaves several systems disabled.
-
-## No random spells or procs
-
-Generated item spell slots are not populated.
-
-This avoids inventing or misusing spell IDs.
+The generator uses validated stock data for supported effects, sets, socket bonuses, and disenchant assignments. It still deliberately leaves these systems outside its scope.
 
 ## No RandomProperty
 
@@ -3429,19 +3632,6 @@ Generated SQL uses:
 
 ```text
 RandomSuffix = 0
-```
-
-## No generated socket bonus ID
-
-```text
-socketBonus = 0
-```
-
-## No invented disenchant ID
-
-```text
-RequiredDisenchantSkill = -1
-DisenchantID = 0
 ```
 
 ## No new custom model files
@@ -3511,11 +3701,13 @@ BuyCount         = 1
 AllowableRace    = -1
 RandomProperty   = 0
 RandomSuffix     = 0
-socketBonus      = 0
-DisenchantID     = 0
+socketBonus      = validated stock ID or 0
+DisenchantID     = validated stock ID or 0
 flagsCustom      = 0
 VerifiedBuild    = 12340
 ```
+
+When no compatible stock assignment is selected, socket and disenchant fields remain zero. `RequiredDisenchantSkill` is copied only from a valid non-negative stock source.
 
 Static stats occupy consecutive stat slots beginning with stat slot 1.
 
@@ -3762,6 +3954,20 @@ The SQL and DBC serve different sides of the server/client system.
 
 ---
 
+## Does it generate spell effects, socket bonuses, and disenchant data?
+
+Yes, using compatible stock sources. On Equip, Chance on Hit, and On Use packages are validated against the supplied spell sources; socket bonuses come from `SpellItemEnchantment.dbc`; and disenchant IDs are copied only when present in `disenchant_loot_template.sql`.
+
+Use `--disable` or the rate/multiplier options to reduce or disable these feature families.
+
+---
+
+## Why are there two ItemSet.dbc files?
+
+The client needs `client/ItemSet.dbc` under `DBFilesClient`. AzerothCore also needs the matching `server/dbc/ItemSet.dbc` in the worldserver DBC directory. They are generated from the same merged set table.
+
+---
+
 ## What should I inspect after a run?
 
 At minimum:
@@ -3771,7 +3977,8 @@ At minimum:
 3. `00_PREIMPORT_COLLISION_CHECK.sql`
 4. `sql/IMPORT_ORDER.txt`
 5. `client/item_dbc_merged_rows.csv`
-6. generated `README.md`
+6. `client/item_set_rows.csv` when sets are enabled
+7. generated `README.md`
 
 For deeper auditing:
 
@@ -3836,12 +4043,16 @@ material-aware names
 shared compatible class masks
 verified WotLK appearances
 merged client Item.dbc
+generated client/server ItemSet.dbc
+stock-validated effects and procs
+stock socket bonuses and disenchant data
 level-bracket world-loot pools
 2% default pool attachment chance
 collision checks
 rollback SQL
 GM spawn commands
 validation reports
+optional Rich terminal dashboard
 ```
 
 It is intentionally conservative where unverified IDs would be dangerous and aggressive where procedural generation is safe.

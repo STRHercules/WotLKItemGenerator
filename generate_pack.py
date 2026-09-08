@@ -2687,6 +2687,7 @@ def has_duplicate_name_root(name):
 
 def valid_item_name(name):
     return (len(name) <= MAX_NAME_CHARS and len(name.split()) <= MAX_NAME_WORDS
+            and not name.startswith('Generated Item ')
             and not has_duplicate_name_root(name))
 
 def _short_name_candidates(name):
@@ -2706,6 +2707,8 @@ def repair_item_names(items):
     changes=[]
     for item in items:
         old_name=item['name']
+        if item.get('itemset'):
+            continue
         if valid_item_name(old_name):
             continue
         used.discard(old_name)
@@ -3040,6 +3043,8 @@ def _feature_chance(item,feature):
 
 def _choose_effect_package(item,feature):
     candidates=_effect_candidates(item,feature)
+    if feature=='on-use' and item['kind']=='trinket':
+        candidates=[row for row in candidates if row['source_inventory_type']==12]
     if not candidates:
         return None
     def slot_penalty(row):
@@ -3162,16 +3167,31 @@ SET_THEME_TITLES = (
     "Quel'Thalas Spires",'Khaz Modan Forge','Icecrown Citadel','Ulduar Watch','Dragonblight Vanguard','Wintergrasp Guard','Wyrmrest Accord',
 )
 SET_STYLE_BY_ROLE = {
-    'strength_dps': ('Battlegear','Warplate','Harness'),
+    'strength_dps': ('Battlegear','Warplate','Battleplate'),
     'agility_dps': ('Battlegear','Harness','Raiment'),
     'hunter': ('Battlegear','Harness','Raiment'),
     'caster_dps': ('Regalia','Raiment','Vestments'),
     'healer': ('Vestments','Raiment','Regalia'),
-    'tank': ('Warplate','Battlegear','Harness'),
+    'tank': ('Warplate','Battlegear','Battleplate'),
 }
 
+SET_STYLE_BY_ARMOR = {
+    1: ('Regalia','Vestments','Raiment'),
+    2: ('Harness','Battlegear','Raiment'),
+    3: ('Battlegear','Harness','Regalia'),
+    4: ('Battlegear','Warplate','Battleplate'),
+}
+
+def _set_styles(anchor):
+    role_styles=SET_STYLE_BY_ROLE.get(anchor['role'],())
+    armor_styles=SET_STYLE_BY_ARMOR.get(anchor.get('sub'))
+    if not armor_styles:
+        return role_styles or ('Battlegear','Regalia','Raiment')
+    preferred=tuple(style for style in role_styles if style in armor_styles)
+    return preferred or armor_styles
+
 def _set_name(anchor,attempt=0):
-    styles=SET_STYLE_BY_ROLE.get(anchor['role'],('Battlegear','Regalia','Raiment'))
+    styles=_set_styles(anchor)
     theme=SET_THEME_TITLES[h64(anchor['entry'],'set-theme',attempt)%len(SET_THEME_TITLES)]
     style=styles[h64(anchor['entry'],'set-style',attempt)%len(styles)]
     return f'{style} of the {theme}'
@@ -3193,6 +3213,7 @@ SET_PIECE_NAMES_BY_STYLE={
     'Raiment': {'head':'Cowl','shoulder':'Mantle','chest':'Robes','hands':'Gloves','legs':'Leggings','waist':'Cord','feet':'Boots','wrists':'Cuffs','back':'Cloak','neck':'Pendant'},
     'Vestments': {'head':'Cowl','shoulder':'Mantle','chest':'Robes','hands':'Gloves','legs':'Leggings','waist':'Cord','feet':'Slippers','wrists':'Cuffs','back':'Cloak','neck':'Pendant'},
 }
+SET_PIECE_NAMES_BY_STYLE['Battleplate']=SET_PIECE_NAMES_BY_STYLE['Warplate']
 
 def _set_piece_name(slot,set_name):
     if ' of the ' in set_name:
@@ -3201,6 +3222,12 @@ def _set_piece_name(slot,set_name):
         style,theme='',set_name
     piece_names=SET_PIECE_NAMES_BY_STYLE.get(style,SET_PIECE_NAMES_BY_STYLE['Battlegear'])
     return f"{piece_names.get(slot,slot.title())} of the {theme}"
+
+def _set_piece_names(candidates,set_name):
+    names=tuple(_set_piece_name(member['slot'],set_name) for member in candidates)
+    if len(names)!=len(set(names)) or any(not valid_item_name(name) for name in names):
+        return None
+    return names
 
 def assign_item_sets(skeletons):
     if not feature_enabled('sets') or SET_RATE<=0 or SET_SIZE<1:
@@ -3213,7 +3240,7 @@ def assign_item_sets(skeletons):
         return []
     slots=SET_SLOT_ORDER[:SET_SIZE]
     next_set_id=max(FEATURE_CATALOG['item_sets'],default=0)+1
-    used=set(); definitions=[]; used_set_names=set()
+    used=set(); definitions=[]; used_set_names=set(); used_set_piece_names=set()
     for anchor in sorted(skeletons,key=lambda row:h64(row['entry'],'set-anchor')):
         if len(definitions)>=target_sets or anchor['entry'] in used or anchor['required_level']<SET_MIN_LEVEL or anchor['slot']!=slots[0]:
             continue
@@ -3221,7 +3248,7 @@ def assign_item_sets(skeletons):
         for slot in slots[1:]:
             matches=[row for row in skeletons if row['entry'] not in used and row['entry'] not in {item['entry'] for item in candidates}
                      and row['class_name']==anchor['class_name'] and row['role']==anchor['role'] and row['quality']==anchor['quality']
-                     and row['slot']==slot and row['required_level']>=SET_MIN_LEVEL
+                     and row['slot']==slot and row['sub']==anchor['sub'] and row['required_level']>=SET_MIN_LEVEL
                      and abs(row['item_level']-anchor['item_level'])<=EFFECT_ILVL_WINDOW]
             if not matches:
                 candidates=[]
@@ -3239,14 +3266,21 @@ def assign_item_sets(skeletons):
         set_id=next_set_id; next_set_id+=1
         for name_attempt in range(len(SET_THEME_TITLES)*4):
             set_name=_set_name(anchor,name_attempt)
-            if set_name not in used_set_names:
+            piece_names=_set_piece_names(candidates,set_name)
+            if (set_name not in used_set_names and piece_names is not None
+                    and not used_set_piece_names.intersection(piece_names)):
                 break
         else:
             continue
         used_set_names.add(set_name)
-        for member in candidates:
+        used_set_piece_names.update(piece_names)
+        for member,piece_name in zip(candidates,piece_names):
+            member['item_level']=anchor['item_level']
+            member['required_level']=anchor['required_level']
+            member['class_mask']=CLASS_MASK_BY_NAME[anchor['class_name']]
             member['set_id']=set_id
             member['set_name']=set_name
+            member['set_piece_name']=piece_name
             member['set_bonuses']=final_bonuses
             member['set_template_id']=template['source_set_id']
             member['set_visual_ref']=template['visuals'].get(member['slot'])
@@ -3310,6 +3344,7 @@ def build_skeletons(ui=None):
 
 def finish_items(sk,ui=None):
     names=set(); items=[]; ui_class_completed=Counter()
+    reserved_set_names={x['set_piece_name'] for x in sk if x.get('set_id') and x.get('set_piece_name')}
     for idx,x in enumerate(sk):
         entry=x['entry']; q=x['quality']; ilvl=x['item_level']; req=x['required_level']; cname=x['class_name']; role=x['role']; slot=x['slot']
         theme=qpick(entry)
@@ -3336,12 +3371,16 @@ def finish_items(sk,ui=None):
         # Name uniqueness over the entire generated collection.
         name=None
         armor_name_sub=x['sub'] if x['kind']=='armor' else None
-        name_candidates=([_set_piece_name(slot,x['set_name'])] if x.get('set_id') else
-                         make_name(entry,'shield' if x['kind']=='shield' else 'relic' if x['kind']=='relic' else slot,
-                                   weapon_kind,q==5,armor_subclass=armor_name_sub))
-        for cand in name_candidates:
-            if cand not in names:
-                name=cand; break
+        if x.get('set_id'):
+            name=x['set_piece_name']
+            if name in names:
+                raise ValueError(f'duplicate generated set piece name: {name}')
+        else:
+            name_candidates=make_name(entry,'shield' if x['kind']=='shield' else 'relic' if x['kind']=='relic' else slot,
+                                      weapon_kind,q==5,armor_subclass=armor_name_sub)
+            for cand in name_candidates:
+                if cand not in names and cand not in reserved_set_names:
+                    name=cand; break
         if name is None:
             name=f'Generated Item {entry}'
         names.add(name)
@@ -3391,7 +3430,9 @@ def validate(items,ui=None):
     if len(set(entries))!=len(entries): errors.append('duplicate entries')
     if len(set(names))!=len(names): errors.append('duplicate names')
     for x in items:
-        if not valid_item_name(x['name']):
+        if x['name'].startswith('Generated Item '):
+            errors.append(f"{x['entry']} generated placeholder name: {x['name']}")
+        elif not valid_item_name(x['name']):
             errors.append(f"{x['entry']} name too long: {x['name']}")
 
     class_counts=Counter(x['class_name'] for x in items)
@@ -3420,6 +3461,12 @@ def validate(items,ui=None):
         if x['ItemLevel']>226 and x['Quality']==3: errors.append(f"{x['entry']} blue above ilvl 226")
         if camel_name_re.search(x['name']): errors.append(f"{x['entry']} internal CamelCase name: {x['name']}")
         if x['class_mask']<=0: errors.append(f"{x['entry']} empty class mask")
+        if x.get('itemset'):
+            expected_name=_set_piece_name(x['slot'],x.get('set_name',''))
+            if x['name']!=expected_name:
+                errors.append(f"{x['entry']} set piece name does not match its set title")
+            if x['class_mask']!=CLASS_MASK_BY_NAME.get(x['class_name'],0):
+                errors.append(f"{x['entry']} set piece class mask is not exact")
         if x['class_name']=='Death Knight' and x['RequiredLevel']<55: errors.append(f"{x['entry']} Death Knight below 55")
         if x['displayid']<=0 or x['reference_entry']<=0: errors.append(f"{x['entry']} display/ref")
         ids=[s[0] for s in x['stats']]
@@ -3463,6 +3510,17 @@ def validate(items,ui=None):
             if x['subclass']!=expected: errors.append(f"{x['entry']} armor compatibility")
         if ui and (validation_index==1 or validation_index==len(items) or validation_index%100==0):
             ui.progress(validation_index,len(items),current=f"{x['class_name']} • {x['name']}")
+    set_groups=defaultdict(list)
+    for item in items:
+        if item.get('itemset'):
+            set_groups[item['itemset']].append(item)
+    for set_id,members in set_groups.items():
+        if len({item['name'] for item in members})!=len(members):
+            errors.append(f'{set_id} set piece names are not unique')
+        if len({item['ItemLevel'] for item in members})!=1:
+            errors.append(f'{set_id} set item levels are not cohesive')
+        if len({item['RequiredLevel'] for item in members})!=1:
+            errors.append(f'{set_id} set required levels are not cohesive')
     ordinary_names=[x['name'] for x in items if x['Quality']!=5]
     if _oath_name_rate_excessive(ordinary_names):
         errors.append('ordinary naming pool overuses Oath (>=4%)')
