@@ -168,6 +168,18 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(item['target_kind'], 'dungeon')
         self.assertEqual(item['content_target'], 'boss')
 
+    def test_quest_recipe_assigns_generated_item_to_mapped_quest(self):
+        manifest = {
+            'version': 1, 'profiles': [],
+            'recipes': [{'id': 'quest_item', 'count': 1, 'class': 'Warrior', 'target_kind': 'quest'}],
+            'quest_targets': [{'quest_id': 100, 'mode': 'fixed', 'recipe': 'quest_item'}],
+        }
+
+        plan = g.build_generation_plan(manifest, g.CLASSES)
+
+        self.assertEqual(plan[0]['quest_id'], 100)
+        self.assertEqual(plan[0]['quest_mode'], 'fixed')
+
     def test_set_recipe_expands_to_cohesive_piece_groups(self):
         manifest = {'version': 1, 'profiles': [], 'quest_targets': [],
                     'recipes': [{'id': 'rogue_sets', 'set_count': 2, 'set_size': 5,
@@ -209,21 +221,34 @@ class PlannerTests(unittest.TestCase):
 
 
 class RuntimeTests(unittest.TestCase):
-    def test_manifest_runtime_uses_manifest_count(self):
-        runtime = g.configure_runtime([
+    def _configure_example(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = pathlib.Path(directory.name) / 'quest_template.sql'
+        path.write_text("""CREATE TABLE `quest_template` (
+  `ID` int unsigned NOT NULL,
+  `RewardItem1` int unsigned NOT NULL,
+  `RewardAmount1` smallint unsigned NOT NULL,
+  `RewardChoiceItemID1` int unsigned NOT NULL,
+  `RewardChoiceItemQuantity1` smallint unsigned NOT NULL
+) ENGINE=InnoDB;
+INSERT INTO `quest_template` VALUES
+(2,0,0,0,0);
+""", encoding='utf-8')
+        return g.configure_runtime([
             '--seed', '424242', '--content-manifest', 'content_manifest.example.json',
-            '--disable', 'all-new', '--ui', 'plain',
+            '--quest-template-source', str(path), '--disable', 'all-new', '--ui', 'plain',
         ])
 
-        self.assertEqual(runtime['number'], 10)
+    def test_manifest_runtime_uses_manifest_count(self):
+        runtime = self._configure_example()
+
+        self.assertEqual(runtime['number'], 11)
         self.assertEqual(runtime['content_manifest']['profiles'][0]['id'], 'example_normal')
-        self.assertEqual(len(g.build_runtime_skeletons()), 10)
+        self.assertEqual(len(g.build_runtime_skeletons()), 11)
 
     def test_targeted_validation_accepts_interleaved_class_entries(self):
-        g.configure_runtime([
-            '--seed', '424242', '--content-manifest', 'content_manifest.example.json',
-            '--disable', 'all-new', '--ui', 'plain',
-        ])
+        self._configure_example()
         items = g.finish_items(g.build_runtime_skeletons())
 
         self.assertEqual(g.validate(items), [])
@@ -327,6 +352,74 @@ class LootTests(unittest.TestCase):
             entries = g.load_loot_entry_ids(path)
 
         self.assertEqual(entries, {9001, 9002})
+
+
+class QuestTests(unittest.TestCase):
+    def test_quest_rewards_fill_empty_fixed_and_choice_slots_only(self):
+        source = {
+            100: {
+                'fixed': [
+                    {'item_column': 'RewardItem1', 'quantity_column': 'RewardAmount1', 'item': 0, 'quantity': 0},
+                    {'item_column': 'RewardItem2', 'quantity_column': 'RewardAmount2', 'item': 900, 'quantity': 1},
+                ],
+                'choice': [
+                    {'item_column': 'RewardChoiceItemID1', 'quantity_column': 'RewardChoiceItemQuantity1', 'item': 0, 'quantity': 0},
+                    {'item_column': 'RewardChoiceItemID2', 'quantity_column': 'RewardChoiceItemQuantity2', 'item': 0, 'quantity': 0},
+                ],
+            },
+        }
+        targets = [{'quest_id': 100, 'mode': 'fixed'}, {'quest_id': 100, 'mode': 'choice'}]
+        items = [
+            {'entry': 7001, 'quest_id': 100, 'quest_mode': 'fixed'},
+            {'entry': 7002, 'quest_id': 100, 'quest_mode': 'choice'},
+        ]
+
+        records = g.build_quest_reward_records(items, targets, source)
+
+        self.assertEqual(records[0]['column'], 'RewardItem1')
+        self.assertEqual(records[1]['column'], 'RewardChoiceItemID1')
+        self.assertEqual(records[0]['old_item'], 0)
+        self.assertEqual(records[1]['old_item'], 0)
+
+    def test_quest_rewards_reject_occupied_slots_by_default(self):
+        source = {100: {'fixed': [
+            {'item_column': 'RewardItem1', 'quantity_column': 'RewardAmount1', 'item': 900, 'quantity': 1},
+        ], 'choice': []}}
+        items = [{'entry': 7001, 'quest_id': 100, 'quest_mode': 'fixed'}]
+
+        with self.assertRaises(ValueError):
+            g.build_quest_reward_records(items, [{'quest_id': 100, 'mode': 'fixed'}], source)
+
+    def test_quest_reward_sql_updates_only_mapped_fields(self):
+        records = [{'quest_id': 100, 'column': 'RewardItem1', 'quantity_column': 'RewardAmount1',
+                    'old_item': 0, 'old_quantity': 0, 'new_item': 7001, 'new_quantity': 1}]
+
+        sql, cleanup = g.render_quest_reward_sql(records)
+
+        self.assertIn('UPDATE `quest_template`', sql)
+        self.assertIn('`RewardItem1` = 7001', sql)
+        self.assertIn('`RewardAmount1` = 1', sql)
+        self.assertIn('`RewardItem1` = 0', cleanup)
+
+    def test_load_quest_reward_slots_parses_requested_quests(self):
+        sql = """CREATE TABLE `quest_template` (
+  `ID` int unsigned NOT NULL,
+  `RewardItem1` int unsigned NOT NULL,
+  `RewardAmount1` smallint unsigned NOT NULL,
+  `RewardChoiceItemID1` int unsigned NOT NULL,
+  `RewardChoiceItemQuantity1` smallint unsigned NOT NULL
+) ENGINE=InnoDB;
+INSERT INTO `quest_template` VALUES
+(100,0,0,0,0),
+(101,900,1,901,1);
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'quest_template.sql'
+            path.write_text(sql, encoding='utf-8')
+            slots = g.load_quest_reward_slots(path, {100})
+
+        self.assertEqual(slots[100]['fixed'][0]['item'], 0)
+        self.assertEqual(slots[100]['choice'][0]['item'], 0)
 
 
 if __name__ == '__main__':

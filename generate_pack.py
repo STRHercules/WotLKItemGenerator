@@ -38,6 +38,8 @@ MAX_SPECIAL_EFFECTS = None
 REFERENCE_CATALOG_AUDIT = None
 CONTENT_MANIFEST = None
 TARGETED_PLAN = None
+QUEST_TEMPLATE_SOURCE = None
+QUEST_REWARD_ROWS = {}
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
@@ -1608,6 +1610,7 @@ def parse_args(argv=None):
     parser.add_argument('--number',type=_number_arg,help=f'Generate exactly this many items (max {MAX_TOTAL_ITEMS:,} total; max {MAX_ITEMS_PER_CLASS:,} per class).')
     parser.add_argument('--class',dest='class_name',type=_class_arg,help='Generate items for only this class (case-insensitive).')
     parser.add_argument('--content-manifest',type=Path,default=None,metavar='PATH',help='JSON manifest for targeted recipes, dungeon/raid loot, and quest rewards.')
+    parser.add_argument('--quest-template-source',type=Path,default=None,metavar='PATH',help='quest_template.sql used to validate and preserve mapped quest rewards.')
     parser.add_argument('--loot-chance',type=_loot_chance_arg,default=2.0,metavar='PERCENT',help='Independent generated-item roll on each existing world-loot reference (default: 2).')
     parser.add_argument('--world-loot-source',type=Path,default=DEFAULT_WORLD_LOOT_SOURCE,metavar='PATH',help=f'creature_loot_template.sql to map world-loot levels (default: {DEFAULT_WORLD_LOOT_SOURCE}).')
     parser.add_argument('--reference-loot-source',type=Path,default=DEFAULT_REFERENCE_LOOT_SOURCE,metavar='PATH',help=f'reference_loot_template.sql used to verify shared references (default: {DEFAULT_REFERENCE_LOOT_SOURCE}).')
@@ -1665,11 +1668,16 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS
     args=parse_args(argv) if args is None else args
     content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
     if content_manifest is not None and (args.number is not None or args.class_name is not None):
         raise ValueError('--number and --class cannot be combined with --content-manifest; put counts and classes in the manifest')
+    quest_template_source=Path(args.quest_template_source).expanduser().resolve() if args.quest_template_source else None
+    quest_targets=content_manifest.get('quest_targets',()) if content_manifest else ()
+    if quest_targets and quest_template_source is None:
+        raise ValueError('--quest-template-source is required when the content manifest contains quest_targets')
+    quest_reward_rows=load_quest_reward_slots(quest_template_source,{int(target['quest_id']) for target in quest_targets}) if quest_targets else {}
     world_loot_source=Path(args.world_loot_source).expanduser().resolve()
     reference_loot_source=Path(args.reference_loot_source).expanduser().resolve()
     item_template_source=Path(args.item_template_source).expanduser().resolve()
@@ -1789,6 +1797,8 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     REFERENCE_CATALOG_AUDIT=catalog_audit
     CONTENT_MANIFEST=content_manifest
     TARGETED_PLAN=targeted_plan
+    QUEST_TEMPLATE_SOURCE=quest_template_source
+    QUEST_REWARD_ROWS=quest_reward_rows
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
     CLASS_ITEM_COUNTS=counts
@@ -1798,6 +1808,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         'seed':SEED,'source':source,'output_dir':OUT,'number':TARGET_ITEM_COUNT,
         'class_name':args.class_name,'classes':[row[0] for row in ACTIVE_CLASSES],
         'content_manifest':CONTENT_MANIFEST,
+        'quest_template_source':QUEST_TEMPLATE_SOURCE,
         'class_counts':dict(CLASS_ITEM_COUNTS),'loot_chance':LOOT_CHANCE,
         'world_loot_source':WORLD_LOOT_SOURCE,'reference_loot_source':REFERENCE_LOOT_SOURCE,
         'item_template_source':ITEM_TEMPLATE_SOURCE,'item_dbc_sources':ITEM_DBC_SOURCES,
@@ -2677,6 +2688,16 @@ def assign_plan_encounters(plan,profiles):
             if row.get('item_level_max') is not None: hi=min(hi,row['item_level_max'])
             if lo>hi: raise ValueError(f'recipe {row["recipe_id"]} cannot satisfy encounter {row["content_target"]} item-level band')
             row['item_level_min']=lo; row['item_level_max']=hi
+    return plan
+
+def assign_plan_quests(plan,targets):
+    for target in targets:
+        recipe_id=str(target.get('recipe','')); quest_id=int(target['quest_id']); mode=target.get('mode','fixed')
+        candidates=[row for row in plan if row.get('recipe_id')==recipe_id and row.get('target_kind')=='quest' and row.get('quest_id') is None]
+        count=int(target.get('count',1))
+        if count<1 or len(candidates)<count: raise ValueError(f'quest {quest_id} recipe {recipe_id} does not have enough generated items')
+        for row in sorted(candidates,key=lambda item:item['index'])[:count]:
+            row['quest_id']=quest_id; row['quest_mode']=mode; row['quest_slot']=target.get('slot'); row['quest_quantity']=target.get('quantity')
     return plan
 
 def h64(*parts):
@@ -3679,10 +3700,12 @@ def build_generation_plan(manifest,available_classes):
                      weapon_kind=recipe.get('weapon_kind'),content_profile=recipe.get('profile'),
                      target_kind=recipe.get('target_kind','general'),content_target=recipe.get('target'),
                      set_request_index=set_index,set_piece_index=index%set_size if set_count else None,
-                     set_size=set_size or None,set_slot=SET_SLOT_ORDER[index%set_size] if set_count else None)
+                     set_size=set_size or None,set_slot=SET_SLOT_ORDER[index%set_size] if set_count else None,
+                     quest_id=None,quest_mode=None,quest_slot=None,quest_quantity=None)
             plan.append(row)
     if not plan: raise ValueError('content manifest must contain at least one recipe item')
     assign_plan_encounters(plan,profiles)
+    assign_plan_quests(plan,manifest.get('quest_targets',()))
     return plan
 
 def choose_recipe_level(recipe,index):
@@ -3715,7 +3738,8 @@ def build_targeted_skeletons(plan,ui=None):
         skeletons.append(dict(entry=entry,class_name=cname,class_mask=class_mask,required_level=req,item_level=ilvl,quality=q,role=role,
                               recipe_id=recipe['recipe_id'],content_profile=recipe.get('content_profile'),target_kind=recipe.get('target_kind'),
                               content_target=recipe.get('content_target'),set_request_index=recipe.get('set_request_index'),
-                              set_piece_index=recipe.get('set_piece_index'),set_size=recipe.get('set_size'),**st))
+                              set_piece_index=recipe.get('set_piece_index'),set_size=recipe.get('set_size'),quest_id=recipe.get('quest_id'),
+                              quest_mode=recipe.get('quest_mode'),quest_slot=recipe.get('quest_slot'),quest_quantity=recipe.get('quest_quantity'),**st))
         if ui and (completed==1 or completed==len(plan) or completed%25==0):
             ui.progress(completed,len(plan),current=f'{cname} • Level {req} • {QUALITY_NAME[q]}')
     return skeletons
@@ -3829,7 +3853,8 @@ def finish_items(sk,ui=None):
                   effect_source_spell=effect_probe['effect_source_spell'],spell_slots=effect_probe['spell_slots'],
                   set_name=x.get('set_name',''),set_bonuses=x.get('set_bonuses',()),set_template_id=x.get('set_template_id',0),
                   recipe_id=x.get('recipe_id',''),content_profile=x.get('content_profile'),target_kind=x.get('target_kind','general'),
-                  content_target=x.get('content_target'),set_request_index=x.get('set_request_index'))
+                  content_target=x.get('content_target'),set_request_index=x.get('set_request_index'),quest_id=x.get('quest_id'),
+                  quest_mode=x.get('quest_mode'),quest_slot=x.get('quest_slot'),quantity=x.get('quest_quantity'))
         _assign_socket_bonus(item)
         _assign_disenchant(item)
         items.append(item)
@@ -4044,6 +4069,71 @@ def render_encounter_loot_sql(records):
     cleanup.append('COMMIT;')
     return '\n\n'.join(sql)+'\n', '\n'.join(cleanup)+'\n'
 
+def build_quest_reward_records(items,targets,source_rows):
+    records=[]
+    for target in targets:
+        quest_id=int(target['quest_id']); mode=target.get('mode','fixed'); source=source_rows.get(quest_id)
+        if source is None: raise ValueError(f'quest {quest_id} was not found in the supplied quest_template source')
+        candidates=[item for item in items if int(item.get('quest_id') or 0)==quest_id and item.get('quest_mode',mode)==mode]
+        if not candidates: raise ValueError(f'quest {quest_id} has no generated items assigned to its {mode} rewards')
+        slots=[dict(slot) for slot in source.get('fixed' if mode=='fixed' else 'choice',())]
+        used=set()
+        for item in candidates:
+            requested=target.get('slot')
+            slot_index=int(requested)-1 if requested is not None else next((index for index,slot in enumerate(slots) if index not in used and not slot['item']),None)
+            if slot_index is None or not 0<=slot_index<len(slots): raise ValueError(f'quest {quest_id} has no available {mode} reward slot')
+            slot=slots[slot_index]
+            if slot['item'] and not target.get('overwrite',False): raise ValueError(f'quest {quest_id} {mode} reward slot {slot_index+1} is already occupied')
+            used.add(slot_index)
+            records.append({'quest_id':quest_id,'mode':mode,'column':slot['item_column'],'quantity_column':slot['quantity_column'],
+                            'old_item':int(slot['item']),'old_quantity':int(slot['quantity']),'new_item':int(item['entry']),
+                            'new_quantity':int(target.get('quantity') or item.get('quantity') or 1)})
+    return records
+
+def render_quest_reward_sql(records):
+    sql=['-- Generated quest rewards; existing unmapped reward fields remain unchanged.','START TRANSACTION;']
+    cleanup=['-- Restores only quest reward fields changed by this generation.','START TRANSACTION;']
+    for record in records:
+        sql.append(f'UPDATE `quest_template` SET `{record["column"]}` = {record["new_item"]}, `{record["quantity_column"]}` = {record["new_quantity"]} WHERE `ID` = {record["quest_id"]};')
+        cleanup.append(f'UPDATE `quest_template` SET `{record["column"]}` = {record["old_item"]}, `{record["quantity_column"]}` = {record["old_quantity"]} WHERE `ID` = {record["quest_id"]};')
+    sql.append('COMMIT;'); cleanup.append('COMMIT;')
+    return '\n'.join(sql)+'\n', '\n'.join(cleanup)+'\n'
+
+def load_quest_reward_slots(path,quest_ids):
+    path=Path(path); text=path.read_text(encoding='utf-8')
+    schema_match=re.search(r'CREATE\s+TABLE\s+`?quest_template`?\s*\((.*?)\)\s*ENGINE',text,re.IGNORECASE|re.DOTALL)
+    if not schema_match: raise ValueError(f'quest_template schema not found in {path}')
+    quote=chr(96)
+    columns=[line.split(quote)[1] for line in schema_match.group(1).splitlines() if line.lstrip().startswith(quote)]
+    indexes={name:index for index,name in enumerate(columns)}
+    if 'ID' not in indexes: raise ValueError(f'quest_template schema has no ID column: {path}')
+    insert_match=re.search(r'INSERT\s+INTO\s+`?quest_template`?\s+VALUES\s*',text,re.IGNORECASE)
+    if not insert_match: raise ValueError(f'quest_template data insert not found in {path}')
+    wanted={int(value) for value in quest_ids}; found={}
+    for line in text[insert_match.end():].splitlines():
+        values=_split_sql_tuple(line)
+        if values is None: continue
+        if len(values)!=len(columns): raise ValueError(f'quest_template row has {len(values)} values; schema has {len(columns)} columns')
+        quest_id=int(values[indexes['ID']]);
+        if quest_id not in wanted: continue
+        def number(column):
+            raw=values[indexes[column]].strip().strip("'") if column in indexes else '0'
+            return 0 if raw.upper() in ('','NULL') else int(float(raw))
+        fixed=[]; choice=[]
+        for index in range(1,5):
+            item_column=f'RewardItem{index}'; quantity_column=f'RewardAmount{index}'
+            if item_column in indexes and quantity_column in indexes:
+                fixed.append({'item_column':item_column,'quantity_column':quantity_column,'item':number(item_column),'quantity':number(quantity_column)})
+        for index in range(1,7):
+            item_column=f'RewardChoiceItemID{index}'; quantity_column=f'RewardChoiceItemQuantity{index}'
+            if item_column in indexes and quantity_column in indexes:
+                choice.append({'item_column':item_column,'quantity_column':quantity_column,'item':number(item_column),'quantity':number(quantity_column)})
+        found[quest_id]={'fixed':fixed,'choice':choice}
+        if found.keys()>=wanted: break
+    missing=sorted(wanted-set(found))
+    if missing: raise ValueError(f'quests missing from {path}: {missing[:10]}')
+    return found
+
 def write_outputs(items,ui=None,name_changes=()):
     if (OUT is None or SQLDIR is None or LOOT_CHANCE is None or WORLD_LOOT_SOURCE is None or
             REFERENCE_LOOT_SOURCE is None or ITEM_TEMPLATE_SOURCE is None or ITEM_DBC_SOURCES is None or
@@ -4202,6 +4292,15 @@ def write_outputs(items,ui=None,name_changes=()):
                     for target in info['targets']:
                         w.writerow([record['profile_id'],encounter_id,info['rank'],info['pool_id'],info['item_count'],info['chance'],info['quantity'],info['band'][0],info['band'][1],target['type'],target['entry']])
 
+    quest_records=build_quest_reward_records(items,CONTENT_MANIFEST.get('quest_targets',()),QUEST_REWARD_ROWS) if CONTENT_MANIFEST and CONTENT_MANIFEST.get('quest_targets') else []
+    if quest_records:
+        quest_sql,quest_cleanup=render_quest_reward_sql(quest_records)
+        quest_cleanup_path=SQLDIR/'00_generated_quest_rewards_cleanup.sql'; import_order.append(quest_cleanup_path.relative_to(OUT).as_posix()); quest_cleanup_path.write_text(quest_cleanup,encoding='utf-8')
+        quest_path=SQLDIR/'quest_rewards.sql'; import_order.append(quest_path.relative_to(OUT).as_posix()); quest_path.write_text(quest_sql,encoding='utf-8')
+        with (OUT/'quest_rewards.csv').open('w',encoding='utf-8',newline='') as f:
+            w=csv.writer(f); w.writerow(['quest_id','mode','column','quantity_column','old_item','old_quantity','new_item','new_quantity'])
+            for row in quest_records: w.writerow([row['quest_id'],row['mode'],row['column'],row['quantity_column'],row['old_item'],row['old_quantity'],row['new_item'],row['new_quantity']])
+
     with (OUT/'loot_pools.csv').open('w',encoding='utf-8',newline='') as f:
         w=csv.writer(f); w.writerow(['pool_id','bracket','level_min','level_max','item_count','chance','group_id'])
         for pool in loot['pools']: w.writerow([pool['pool_id'],pool['bracket'],pool['level_min'],pool['level_max'],pool['item_count'],0,1])
@@ -4225,6 +4324,7 @@ def write_outputs(items,ui=None,name_changes=()):
     encounter_pool_reference_filter=f'`Reference` IN ({encounter_pool_id_list})'
     encounter_creature_conditions=' OR '.join(f'(`Entry` = {row["parent_entry"]} AND `Item` = 1 AND `Reference` = {row["pool_id"]})' for record in encounter_loot_records for row in record['attachments'] if row['parent_type']=='creature') or '1 = 0'
     encounter_reference_conditions=' OR '.join(f'(`Entry` = {row["parent_entry"]} AND `Item` = 1 AND `Reference` = {row["pool_id"]})' for record in encounter_loot_records for row in record['attachments'] if row['parent_type']=='reference') or '1 = 0'
+    quest_restore_sql=''.join(f'UPDATE `quest_template` SET `{row["column"]}` = {row["old_item"]}, `{row["quantity_column"]}` = {row["old_quantity"]} WHERE `ID` = {row["quest_id"]};\n' for row in quest_records)
     pool_filter=f'`Entry` IN ({pool_id_list})'
     pool_reference_filter=f'`Reference` IN ({pool_id_list})'
     (OUT/'00_PREIMPORT_COLLISION_CHECK.sql').write_text(
@@ -4246,12 +4346,14 @@ def write_outputs(items,ui=None,name_changes=()):
         f'DELETE FROM `reference_loot_template` WHERE `Entry` IN ({pool_id_list}) OR `Reference` IN ({pool_id_list}) OR `Entry` IN ({encounter_pool_id_list}) OR `Reference` IN ({encounter_pool_id_list});\n'
         'DELETE FROM `creature_loot_template` WHERE '+encounter_creature_conditions+';\n'
         'DELETE FROM `reference_loot_template` WHERE '+encounter_reference_conditions+';\n'
-        'DELETE FROM `item_template` WHERE '+entry_filter+';\n'
+        +quest_restore_sql
+        + 'DELETE FROM `item_template` WHERE '+entry_filter+';\n'
         'COMMIT;\n',encoding='utf-8')
     (OUT/'00_SCHEMA_CHECK.sql').write_text(
         "SHOW COLUMNS FROM `acore_world`.`item_template`;\n"
         "SHOW COLUMNS FROM `acore_world`.`reference_loot_template`;\n"
-        "SHOW COLUMNS FROM `acore_world`.`creature_loot_template`;\n",encoding='utf-8')
+        "SHOW COLUMNS FROM `acore_world`.`creature_loot_template`;\n"
+        +("SHOW COLUMNS FROM `acore_world`.`quest_template`;\n" if quest_records else ''),encoding='utf-8')
 
     q=Counter(QUALITY_NAME[x['Quality']] for x in items); roles=Counter(x['role'] for x in items); kinds=Counter(x['kind'] for x in items)
     loot_bracket_distribution={label:next((pool['item_count'] for pool in loot['pools'] if pool['bracket']==label),0) for label,_,_ in LOOT_BRACKETS}
@@ -4301,6 +4403,7 @@ def write_outputs(items,ui=None,name_changes=()):
                                        'pool_row_count':len(record['pool_rows']),'attachment_count':len(record['attachments'])}
                                       for record in encounter_loot_records],
             'generated_encounter_pool_ids':encounter_pool_ids,
+            'quest_reward_count':len(quest_records),'quest_rewards':quest_records,
             'random_effects_enabled':feature_enabled('spell-effects'),'socket_bonus_ids_generated':feature_enabled('socket-bonuses'),
             'disenchant_ids_generated':feature_enabled('disenchant'),'chance_on_hit_enabled':feature_enabled('chance-on-hit'),
             'on_use_enabled':feature_enabled('on-use'),'sets_enabled':feature_enabled('sets'),
