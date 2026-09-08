@@ -2422,6 +2422,125 @@ def build_loot_records(items,world_references):
         raise RuntimeError('generated loot attachments contain duplicate keys')
     return {'pools':pools,'pool_rows':pool_rows,'attachments':attachments}
 
+def resolve_encounter_order(profile):
+    encounters=list(profile.get('encounters',()))
+    nodes={str(row.get('id','')):dict(row) for row in encounters}
+    if len(nodes)!=len(encounters) or '' in nodes:
+        raise ValueError(f'profile {profile.get("id", "<unknown>")} has duplicate or missing encounter IDs')
+    requires={node_id:[str(value) for value in node.get('requires',())] for node_id,node in nodes.items()}
+    for node_id,parents in requires.items():
+        if node_id in parents or any(parent not in nodes for parent in parents):
+            raise ValueError(f'encounter {node_id} has an invalid prerequisite')
+
+    indegree={node_id:len(parents) for node_id,parents in requires.items()}
+    children=defaultdict(list)
+    for node_id,parents in requires.items():
+        for parent in parents: children[parent].append(node_id)
+    ready=sorted(node_id for node_id,count in indegree.items() if count==0)
+    ranks={node_id:0 for node_id in ready}
+    resolved=[]
+    while ready:
+        current=ready
+        ready=[]
+        for node_id in current:
+            row=dict(nodes[node_id]); row['rank']=ranks[node_id]; resolved.append(row)
+            for child in sorted(children[node_id]):
+                ranks[child]=max(ranks.get(child,0),ranks[node_id]+1)
+                indegree[child]-=1
+                if indegree[child]==0: ready.append(child)
+        ready.sort()
+    if len(resolved)!=len(nodes):
+        raise ValueError(f'profile {profile.get("id", "<unknown>")} has a cycle in encounter prerequisites')
+    return resolved
+
+def load_content_manifest(path):
+    path=Path(path).expanduser().resolve()
+    try:
+        manifest=json.loads(path.read_text(encoding='utf-8'))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f'invalid content manifest JSON: {path}: {exc.msg}') from exc
+    validate_content_manifest(manifest)
+    return manifest
+
+def validate_content_manifest(manifest):
+    if not isinstance(manifest,dict) or manifest.get('version')!=1:
+        raise ValueError('content manifest must be an object with version 1')
+    profiles=manifest.get('profiles',[])
+    recipes=manifest.get('recipes',[])
+    quests=manifest.get('quest_targets',[])
+    if not all(isinstance(rows,list) for rows in (profiles,recipes,quests)):
+        raise ValueError('content manifest profiles, recipes, and quest_targets must be lists')
+    profile_ids=[]; target_keys=set()
+    for profile in profiles:
+        if not isinstance(profile,dict) or not str(profile.get('id','')).strip():
+            raise ValueError('content profiles need non-empty IDs')
+        profile_id=str(profile['id'])
+        if profile_id in profile_ids: raise ValueError(f'duplicate content profile: {profile_id}')
+        profile_ids.append(profile_id)
+        lo=int(profile.get('item_level_min',0)); hi=int(profile.get('item_level_max',0))
+        if lo<0 or hi<lo: raise ValueError(f'invalid item-level range for profile {profile_id}')
+        chance=float(profile.get('additional_drop_chance',0))
+        if not 0<=chance<=100: raise ValueError(f'invalid additional-drop chance for profile {profile_id}')
+        for encounter in profile.get('encounters',[]):
+            if not isinstance(encounter,dict) or not str(encounter.get('id','')).strip():
+                raise ValueError(f'profile {profile_id} has an encounter without an ID')
+            if encounter.get('kind') not in ('boss','trash'):
+                raise ValueError(f'encounter {encounter.get("id")} must be boss or trash')
+            weight=float(encounter.get('weight',1))
+            if weight<=0: raise ValueError(f'encounter {encounter.get("id")} must have a positive weight')
+            quantity=int(encounter.get('quantity',1))
+            if quantity<1: raise ValueError(f'encounter {encounter.get("id")} must have a positive quantity')
+            for target in encounter.get('targets',[]):
+                target_type=target.get('type') if isinstance(target,dict) else None
+                entry=int(target.get('entry',0)) if isinstance(target,dict) else 0
+                if target_type not in ('creature','reference') or entry<=0:
+                    raise ValueError(f'encounter {encounter.get("id")} has an invalid loot target')
+                key=(target_type,entry)
+                if key in target_keys: raise ValueError(f'duplicate loot target: {target_type}:{entry}')
+                target_keys.add(key)
+        resolve_encounter_order(profile)
+    recipe_ids=[]
+    for recipe in recipes:
+        if not isinstance(recipe,dict) or not str(recipe.get('id','')).strip():
+            raise ValueError('content recipes need non-empty IDs')
+        recipe_id=str(recipe['id'])
+        if recipe_id in recipe_ids: raise ValueError(f'duplicate content recipe: {recipe_id}')
+        recipe_ids.append(recipe_id)
+        if int(recipe.get('count',0))<1: raise ValueError(f'recipe {recipe_id} needs a positive count')
+        if recipe.get('profile') is not None and str(recipe['profile']) not in profile_ids:
+            raise ValueError(f'recipe {recipe_id} references unknown profile {recipe["profile"]}')
+    for target in quests:
+        if not isinstance(target,dict) or int(target.get('quest_id',0))<=0:
+            raise ValueError('quest targets need positive quest_id values')
+        if target.get('mode','fixed') not in ('fixed','choice'):
+            raise ValueError(f'quest {target.get("quest_id")} mode must be fixed or choice')
+        recipe_id=target.get('recipe')
+        if recipe_id is not None and str(recipe_id) not in recipe_ids:
+            raise ValueError(f'quest target references unknown recipe: {recipe_id}')
+    return manifest
+
+def allocate_weighted_counts(total,targets):
+    total=int(total)
+    if total<0: raise ValueError(f'weighted allocation total must be nonnegative: {total}')
+    rows=[(str(row.get('id','')),float(row.get('weight',1))) for row in targets]
+    if len({row[0] for row in rows})!=len(rows) or any(not row[0] for row in rows):
+        raise ValueError('weighted allocation targets must have unique non-empty IDs')
+    active=[row for row in rows if row[1]>0]
+    if total and not active: raise ValueError('weighted allocation needs a positive target weight')
+    if not total: return {row[0]:0 for row in rows}
+    weight_total=sum(weight for _,weight in active)
+    counts={target:0 for target,_ in rows}
+    remainders=[]
+    for target,weight in active:
+        raw=total*weight/weight_total
+        count=math.floor(raw)
+        counts[target]=count
+        remainders.append((raw-count,target))
+    remaining=total-sum(counts.values())
+    for _,target in sorted(remainders,key=lambda row:(-row[0],row[1]))[:remaining]:
+        counts[target]+=1
+    return counts
+
 def h64(*parts):
     if SEED is None:
         raise RuntimeError('Runtime seed is not configured. Call configure_runtime() first.')
