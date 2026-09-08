@@ -219,6 +219,115 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(runtime['content_manifest']['profiles'][0]['id'], 'example_normal')
         self.assertEqual(len(g.build_runtime_skeletons()), 10)
 
+    def test_targeted_validation_accepts_interleaved_class_entries(self):
+        g.configure_runtime([
+            '--seed', '424242', '--content-manifest', 'content_manifest.example.json',
+            '--disable', 'all-new', '--ui', 'plain',
+        ])
+        items = g.finish_items(g.build_runtime_skeletons())
+
+        self.assertEqual(g.validate(items), [])
+
+
+class LootTests(unittest.TestCase):
+    def setUp(self):
+        g.SEED = 424242
+
+    def test_encounter_progression_ends_at_profile_maximum(self):
+        profile = {
+            'id': 'sample',
+            'item_level_min': 200,
+            'item_level_max': 240,
+            'encounters': [
+                {'id': 'first', 'kind': 'boss', 'requires': []},
+                {'id': 'last', 'kind': 'boss', 'requires': ['first']},
+            ],
+        }
+
+        resolved = g.resolve_encounter_order(profile)
+
+        self.assertEqual(g.encounter_item_level_band(profile, resolved[0], resolved)[0], 200)
+        self.assertEqual(g.encounter_item_level_band(profile, resolved[-1], resolved)[1], 240)
+
+    def test_generation_plan_assigns_weighted_encounters_and_bands(self):
+        manifest = {
+            'version': 1,
+            'profiles': [{
+                'id': 'sample',
+                'item_level_min': 200,
+                'item_level_max': 240,
+                'encounters': [
+                    {'id': 'trash', 'kind': 'trash', 'requires': [], 'weight': 1,
+                     'targets': [{'type': 'creature', 'entry': 9001}]},
+                    {'id': 'final', 'kind': 'boss', 'requires': [], 'weight': 3,
+                     'targets': [{'type': 'creature', 'entry': 9002}]},
+                ],
+            }],
+            'recipes': [{'id': 'items', 'count': 4, 'profile': 'sample', 'target_kind': 'dungeon'}],
+            'quest_targets': [],
+        }
+
+        plan = g.build_generation_plan(manifest, g.CLASSES)
+
+        self.assertEqual(sum(row['content_target'] == 'trash' for row in plan), 1)
+        self.assertEqual(sum(row['content_target'] == 'final' for row in plan), 3)
+        final_rows = [row for row in plan if row['content_target'] == 'final']
+        self.assertTrue(all(row['item_level_max'] == 240 for row in final_rows))
+
+    def test_encounter_loot_validates_targets_and_defaults_to_one_drop(self):
+        profile = {
+            'id': 'sample',
+            'item_level_min': 200,
+            'item_level_max': 240,
+            'additional_drop_chance': 12.5,
+            'encounters': [{
+                'id': 'boss', 'kind': 'boss', 'requires': [], 'weight': 3,
+                'targets': [{'type': 'creature', 'entry': 9001}],
+            }],
+        }
+        items = [
+            {'entry': 1, 'content_profile': 'sample'},
+            {'entry': 2, 'content_profile': 'sample'},
+        ]
+
+        records = g.build_encounter_loot_records(items, profile,
+                                                  {'creature': {9001}, 'reference': set()})
+
+        self.assertEqual(records['encounters']['boss']['quantity'], 1)
+        self.assertEqual(records['encounters']['boss']['chance'], 12.5)
+        self.assertEqual(len(records['pool_rows']), 2)
+
+    def test_encounter_loot_sql_is_additive_and_independent(self):
+        profile = {
+            'id': 'sample', 'item_level_min': 200, 'item_level_max': 240,
+            'additional_drop_chance': 12.5,
+            'encounters': [{
+                'id': 'boss', 'kind': 'boss', 'requires': [], 'weight': 1,
+                'targets': [{'type': 'creature', 'entry': 9001}, {'type': 'reference', 'entry': 9002}],
+            }],
+        }
+        records = g.build_encounter_loot_records(
+            [{'entry': 7001, 'content_profile': 'sample', 'content_target': 'boss', 'name': 'Generated'}],
+            profile, {'creature': {9001}, 'reference': {9002}}, pool_base=3_100_000)
+
+        sql, cleanup = g.render_encounter_loot_sql(records)
+
+        self.assertIn('INSERT INTO `creature_loot_template`', sql)
+        self.assertIn('INSERT INTO `reference_loot_template`', sql)
+        self.assertIn('12.5', sql)
+        self.assertIn('MinCount', sql)
+        self.assertIn('DELETE FROM `creature_loot_template`', cleanup)
+        self.assertIn('DELETE FROM `reference_loot_template`', cleanup)
+
+    def test_load_loot_entry_ids_reads_sql_entries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'loot.sql'
+            path.write_text('(9001,1,0,1,0,1,0,1,1,\'one\'),\n(9002,1,0,1,0,1,0,1,1,\'two\'),\n', encoding='utf-8')
+
+            entries = g.load_loot_entry_ids(path)
+
+        self.assertEqual(entries, {9001, 9002})
+
 
 if __name__ == '__main__':
     unittest.main()

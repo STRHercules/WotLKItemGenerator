@@ -15,7 +15,7 @@
           "requires": [],
           "weight": 1,
           "targets": [
-            {"type": "creature", "entry": 10001}
+            {"type": "creature", "entry": 27470}
           ]
         },
         {
@@ -24,7 +24,7 @@
           "requires": [],
           "weight": 3,
           "targets": [
-            {"type": "creature", "entry": 10002}
+            {"type": "creature", "entry": 27483}
           ]
         },
         {
@@ -34,7 +34,7 @@
           "weight": 5,
           "quantity": 1,
           "targets": [
-            {"type": "creature", "entry": 10003}
+            {"type": "creature", "entry": 27447}
           ]
         }
       ]
