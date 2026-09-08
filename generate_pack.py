@@ -36,6 +36,8 @@ SOCKET_BONUS_RATE = None
 DISENCHANT_RATE = None
 MAX_SPECIAL_EFFECTS = None
 REFERENCE_CATALOG_AUDIT = None
+CONTENT_MANIFEST = None
+TARGETED_PLAN = None
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
@@ -1604,6 +1606,7 @@ def parse_args(argv=None):
     parser.add_argument('--seed',type=_seed_arg,help='Use this exact numeric seed instead of generating one automatically.')
     parser.add_argument('--number',type=_number_arg,help=f'Generate exactly this many items (max {MAX_TOTAL_ITEMS:,} total; max {MAX_ITEMS_PER_CLASS:,} per class).')
     parser.add_argument('--class',dest='class_name',type=_class_arg,help='Generate items for only this class (case-insensitive).')
+    parser.add_argument('--content-manifest',type=Path,default=None,metavar='PATH',help='JSON manifest for targeted recipes, dungeon/raid loot, and quest rewards.')
     parser.add_argument('--loot-chance',type=_loot_chance_arg,default=2.0,metavar='PERCENT',help='Independent generated-item roll on each existing world-loot reference (default: 2).')
     parser.add_argument('--world-loot-source',type=Path,default=DEFAULT_WORLD_LOOT_SOURCE,metavar='PATH',help=f'creature_loot_template.sql to map world-loot levels (default: {DEFAULT_WORLD_LOOT_SOURCE}).')
     parser.add_argument('--reference-loot-source',type=Path,default=DEFAULT_REFERENCE_LOOT_SOURCE,metavar='PATH',help=f'reference_loot_template.sql used to verify shared references (default: {DEFAULT_REFERENCE_LOOT_SOURCE}).')
@@ -1661,8 +1664,11 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN
     args=parse_args(argv) if args is None else args
+    content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
+    if content_manifest is not None and (args.number is not None or args.class_name is not None):
+        raise ValueError('--number and --class cannot be combined with --content-manifest; put counts and classes in the manifest')
     world_loot_source=Path(args.world_loot_source).expanduser().resolve()
     reference_loot_source=Path(args.reference_loot_source).expanduser().resolve()
     item_template_source=Path(args.item_template_source).expanduser().resolve()
@@ -1724,7 +1730,14 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         seed=derive_auto_seed(user_guid,now)
         source='automatic'
 
-    if args.class_name is not None:
+    SEED=seed
+    targeted_plan=None
+    if content_manifest is not None:
+        targeted_plan=build_generation_plan(content_manifest,CLASSES)
+        counts=Counter(row['class_name'] for row in targeted_plan)
+        selected=[row for row in CLASSES if counts.get(row[0],0)>0]
+        number=len(targeted_plan)
+    elif args.class_name is not None:
         selected=[row for row in CLASSES if row[0]==args.class_name]
         number=args.number if args.number is not None else DEFAULT_ITEMS_PER_CLASS
         if number > MAX_ITEMS_PER_CLASS:
@@ -1741,7 +1754,6 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         counts={cname:base+(1 if i<remainder else 0) for i,(cname,_,_) in enumerate(CLASSES)}
         selected=[row for row in selected if counts[row[0]]>0]
 
-    SEED=seed
     LOOT_CHANCE=args.loot_chance
     WORLD_LOOT_SOURCE=world_loot_source
     REFERENCE_LOOT_SOURCE=reference_loot_source
@@ -1774,6 +1786,8 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         ui.progress(2,2,current='Feature catalogs ready')
         ui.phase_done('Harvesting stock WotLK data')
     REFERENCE_CATALOG_AUDIT=catalog_audit
+    CONTENT_MANIFEST=content_manifest
+    TARGETED_PLAN=targeted_plan
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
     CLASS_ITEM_COUNTS=counts
@@ -1782,6 +1796,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     return {
         'seed':SEED,'source':source,'output_dir':OUT,'number':TARGET_ITEM_COUNT,
         'class_name':args.class_name,'classes':[row[0] for row in ACTIVE_CLASSES],
+        'content_manifest':CONTENT_MANIFEST,
         'class_counts':dict(CLASS_ITEM_COUNTS),'loot_chance':LOOT_CHANCE,
         'world_loot_source':WORLD_LOOT_SOURCE,'reference_loot_source':REFERENCE_LOOT_SOURCE,
         'item_template_source':ITEM_TEMPLATE_SOURCE,'item_dbc_sources':ITEM_DBC_SOURCES,
@@ -2506,7 +2521,11 @@ def validate_content_manifest(manifest):
         recipe_id=str(recipe['id'])
         if recipe_id in recipe_ids: raise ValueError(f'duplicate content recipe: {recipe_id}')
         recipe_ids.append(recipe_id)
-        if int(recipe.get('count',0))<1: raise ValueError(f'recipe {recipe_id} needs a positive count')
+        if recipe.get('set_count') is not None:
+            if int(recipe.get('set_count',0))<1 or not 1<=int(recipe.get('set_size',5))<=10:
+                raise ValueError(f'recipe {recipe_id} needs a positive set_count and set_size between 1 and 10')
+        elif int(recipe.get('count',0))<1:
+            raise ValueError(f'recipe {recipe_id} needs a positive count')
         if recipe.get('profile') is not None and str(recipe['profile']) not in profile_ids:
             raise ValueError(f'recipe {recipe_id} references unknown profile {recipe["profile"]}')
     for target in quests:
@@ -3067,6 +3086,35 @@ def choose_structure(cname,role,req,ilvl,q,entry):
     ref=choose_ref(A[('armor',sub,inv)],ilvl,q,entry,'armor_ref')
     return dict(slot=slot,cls=4,sub=sub,inv=inv,kind='armor',budget_key=slot,ref=ref)
 
+def choose_weapon_structure(cname,role,req,ilvl,q,entry,requested_kind=None):
+    allowed={kind for kind,_weight in weapon_choices(cname,role)}
+    kind=requested_kind or weighted(weapon_choices(cname,role),entry,'targeted_weapon_kind')
+    if kind not in allowed: raise ValueError(f'{kind} is not a valid {cname} weapon choice')
+    sub,inv,budget_key=WEAPON_META[kind]
+    return dict(slot='weapon',cls=2,sub=sub,inv=inv,kind=kind,budget_key=budget_key,ref=None)
+
+def choose_structure_for_slot(cname,role,req,ilvl,q,entry,slot):
+    if slot=='weapon': return choose_weapon_structure(cname,role,req,ilvl,q,entry)
+    if slot=='relic':
+        sub={'Paladin':7,'Druid':8,'Shaman':9,'Death Knight':10}[cname]
+        ref=choose_ref(A[('relic',sub,28)],ilvl,q,entry,'targeted_relic_ref')
+        return dict(slot=slot,cls=4,sub=sub,inv=28,kind='relic',budget_key='relic',ref=ref)
+    if slot=='back':
+        ref=choose_ref(A[('misc',1,16)],ilvl,q,entry,'targeted_back_ref')
+        return dict(slot=slot,cls=4,sub=1,inv=16,kind='back',budget_key='back',ref=ref)
+    if slot in ('neck','finger','trinket'):
+        inv={'neck':2,'finger':11,'trinket':12}[slot]
+        ref=choose_ref(A[('misc',0,inv)],ilvl,q,entry,'targeted_'+slot+'_ref')
+        return dict(slot=slot,cls=4,sub=0,inv=inv,kind=slot,budget_key=slot,ref=ref)
+    sub=armor_subclass(cname,req)
+    if slot=='chest':
+        available=[inv for inv in (5,20) if A.get(('armor',sub,inv))]
+        if not available: raise ValueError(f'no harvested chest appearances for armor subclass {sub}')
+        inv=weighted([(candidate,len(A[('armor',sub,candidate)])) for candidate in available],entry,'targeted_chest_inventory')
+    else: inv=INV[slot]
+    ref=choose_ref(A[('armor',sub,inv)],ilvl,q,entry,'targeted_'+slot+'_ref')
+    return dict(slot=slot,cls=4,sub=sub,inv=inv,kind='armor',budget_key=slot,ref=ref)
+
 def expected_legendary_count(item_count):
     # Preserve the original rarity: three Legendaries per 100,000 generated items.
     return (item_count*3)//100000
@@ -3253,7 +3301,7 @@ def _assign_disenchant(item):
     item['DisenchantID']=chosen['disenchant_id']
     item['disenchant_source_entry']=chosen['source_entry']
 
-def _choose_set_template(anchor):
+def _choose_set_template(anchor,set_size=None):
     templates=[]
     set_window=_effect_ilvl_window(anchor['item_level'])*2
     for template in FEATURE_CATALOG.get('set_templates',[]):
@@ -3267,7 +3315,8 @@ def _choose_set_template(anchor):
         if abs(template['item_level']-anchor['item_level'])>set_window:
             continue
         thresholds={threshold for threshold,_ in template['bonuses']}
-        if 2 not in thresholds or (SET_SIZE>=4 and 4 not in thresholds):
+        wanted_size=SET_SIZE if set_size is None else set_size
+        if 2 not in thresholds or (wanted_size>=4 and 4 not in thresholds):
             continue
         templates.append(template)
     if not templates:
@@ -3407,6 +3456,44 @@ def assign_item_sets(skeletons):
         definitions.append({'set_id':set_id,'name':set_name,'bonuses':final_bonuses,'items':tuple(member['entry'] for member in candidates),'template_id':template['source_set_id']})
     return definitions
 
+def assign_targeted_sets(skeletons):
+    groups=defaultdict(list)
+    for item in skeletons:
+        if item.get('set_request_index') is not None:
+            groups[(item['recipe_id'],item['set_request_index'])].append(item)
+    if not groups: return []
+    if not feature_enabled('sets'):
+        raise ValueError('targeted set recipes require the sets feature to be enabled')
+    definitions=[]; used_set_names=set(); used_piece_names=set()
+    next_set_id=max(FEATURE_CATALOG.get('item_sets',()),default=0)+1
+    for _group_key,members in sorted(groups.items()):
+        members.sort(key=lambda item:item['set_piece_index'])
+        set_size=members[0].get('set_size') or len(members)
+        if len(members)!=set_size: raise ValueError(f'targeted set has {len(members)} pieces, expected {set_size}')
+        anchor=members[0]
+        template=_choose_set_template(anchor,set_size)
+        if template is None: raise ValueError(f'no compatible stock set template for targeted set {anchor["recipe_id"]}')
+        final_bonuses=_normalize_set_bonuses(template['bonuses'],set_size)
+        thresholds={threshold for threshold,_ in final_bonuses}
+        if 2 not in thresholds or (set_size>=4 and 4 not in thresholds):
+            raise ValueError(f'targeted set {anchor["recipe_id"]} lacks required stock bonuses')
+        for attempt in range(len(SET_THEME_TITLES)*4):
+            set_name=_set_name(anchor,attempt)
+            piece_names=_set_piece_names(members,set_name)
+            if set_name not in used_set_names and piece_names is not None and not used_piece_names.intersection(piece_names): break
+        else: raise ValueError(f'could not create a unique name for targeted set {anchor["recipe_id"]}')
+        used_set_names.add(set_name); used_piece_names.update(piece_names)
+        set_id=next_set_id; next_set_id+=1
+        for member,piece_name in zip(members,piece_names):
+            member['item_level']=anchor['item_level']; member['required_level']=anchor['required_level']
+            member['class_mask']=CLASS_MASK_BY_NAME[anchor['class_name']]
+            member['set_id']=set_id; member['set_name']=set_name; member['set_piece_name']=piece_name
+            member['set_bonuses']=final_bonuses; member['set_template_id']=template['source_set_id']
+            member['set_visual_ref']=template['visuals'].get(member['slot'])
+        definitions.append({'set_id':set_id,'name':set_name,'bonuses':final_bonuses,
+                            'items':tuple(member['entry'] for member in members),'template_id':template['source_set_id']})
+    return definitions
+
 def generated_item_set_rows(items):
     grouped=defaultdict(list)
     for item in items:
@@ -3419,6 +3506,105 @@ def generated_item_set_rows(items):
         bonuses=_normalize_set_bonuses(first.get('set_bonuses',()),len(members))
         rows.append(item_set_row(set_id,first.get('set_name','Generated Set'),[item['entry'] for item in members],bonuses))
     return rows
+
+def _recipe_range(recipe,profile,key,default_lo,default_hi):
+    value=recipe.get(key)
+    if value is None and profile is not None:
+        value=profile.get(key)
+    if value is None:
+        if default_lo is None and default_hi is None and f'{key}_min' not in recipe and f'{key}_max' not in recipe and not profile:
+            return None,None
+        lo=recipe.get(f'{key}_min',profile.get(f'{key}_min',default_lo) if profile else default_lo)
+        hi=recipe.get(f'{key}_max',profile.get(f'{key}_max',default_hi) if profile else default_hi)
+    else:
+        if not isinstance(value,(list,tuple)) or len(value)!=2:
+            raise ValueError(f'{key} range must contain exactly two values')
+        lo,hi=value
+    lo=int(lo); hi=int(hi)
+    if (default_lo is not None and lo<default_lo) or (default_hi is not None and hi>default_hi) or lo>hi:
+        raise ValueError(f'invalid {key} range: {lo}-{hi}')
+    return lo,hi
+
+def build_generation_plan(manifest,available_classes):
+    validate_content_manifest(manifest)
+    profiles={str(row['id']):row for row in manifest.get('profiles',())}
+    class_names=[row[0] for row in available_classes]
+    class_counts=Counter()
+    plan=[]
+    for recipe in manifest.get('recipes',()):
+        recipe_id=str(recipe['id']); profile=profiles.get(str(recipe.get('profile'))) if recipe.get('profile') else None
+        classes=recipe.get('classes') or ([recipe['class']] if recipe.get('class') else class_names)
+        normalized=[]
+        for class_name in classes:
+            key=''.join(ch for ch in str(class_name).lower() if ch.isalnum())
+            normalized_name=CLASS_ALIASES.get(key)
+            if normalized_name not in class_names: raise ValueError(f'recipe {recipe_id} references unknown class: {class_name}')
+            normalized.append(normalized_name)
+        required_min,required_max=_recipe_range(recipe,profile,'required_level',1,80)
+        item_min,item_max=_recipe_range(recipe,profile,'item_level',None,None)
+        set_count=int(recipe.get('set_count',0)); set_size=int(recipe.get('set_size',5)) if set_count else 0
+        total_count=set_count*set_size if set_count else int(recipe['count'])
+        set_classes={}
+        for index in range(total_count):
+            set_index=index//set_size if set_count else None
+            if set_count and set_index not in set_classes:
+                set_classes[set_index]=normalized[set_index%len(normalized)] if len(normalized)==1 else weighted([(name,1) for name in normalized],recipe_id,set_index,'set_class')
+            class_name=set_classes[set_index] if set_count else (normalized[index%len(normalized)] if len(normalized)==1 else weighted([(name,1) for name in normalized],recipe_id,index,'class'))
+            local_index=class_counts[class_name]
+            if local_index>=MAX_ITEMS_PER_CLASS: raise ValueError(f'targeted generation exceeds the per-class cap for {class_name}')
+            class_counts[class_name]+=1
+            row=dict(recipe_id=recipe_id,index=index,class_name=class_name,class_index=local_index,
+                     required_level_min=required_min,required_level_max=required_max,
+                     item_level_min=item_min,item_level_max=item_max,
+                     quality=recipe.get('quality'),role=recipe.get('role'),kind=recipe.get('kind'),
+                     weapon_kind=recipe.get('weapon_kind'),content_profile=recipe.get('profile'),
+                     target_kind=recipe.get('target_kind','general'),content_target=recipe.get('target'),
+                     set_request_index=set_index,set_piece_index=index%set_size if set_count else None,
+                     set_size=set_size or None,set_slot=SET_SLOT_ORDER[index%set_size] if set_count else None)
+            plan.append(row)
+    if not plan: raise ValueError('content manifest must contain at least one recipe item')
+    return plan
+
+def choose_recipe_level(recipe,index):
+    lo=int(recipe['required_level_min']); hi=int(recipe['required_level_max'])
+    return lo if lo==hi else lo+int(r01(recipe['recipe_id'],index,'required_level')*(hi-lo+1))
+
+def choose_recipe_item_level(recipe,required_level,index):
+    if recipe.get('item_level_min') is None or recipe.get('item_level_max') is None:
+        return item_level(required_level,entry_for_class(recipe['class_name'],recipe['class_index']))
+    lo=int(recipe['item_level_min']); hi=int(recipe['item_level_max'])
+    if lo==hi: return lo
+    return lo+int(r01(recipe['recipe_id'],index,'item_level',required_level)*(hi-lo+1))
+
+def build_targeted_skeletons(plan,ui=None):
+    skeletons=[]
+    for completed,recipe in enumerate(plan,1):
+        cname=recipe['class_name']; entry=entry_for_class(cname,recipe['class_index'])
+        req=choose_recipe_level(recipe,recipe['index']); ilvl=choose_recipe_item_level(recipe,req,recipe['index'])
+        q=int(recipe['quality']) if recipe.get('quality') is not None else quality(req,ilvl,entry)
+        role=recipe.get('role') or weighted(ROLE_WEIGHTS[cname],entry,'targeted_role',recipe['recipe_id'])
+        if recipe.get('set_slot'):
+            st=choose_structure_for_slot(cname,role,req,ilvl,q,entry,recipe['set_slot'])
+        elif recipe.get('kind')=='weapon':
+            st=choose_weapon_structure(cname,role,req,ilvl,q,entry,recipe.get('weapon_kind'))
+        else:
+            st=choose_structure(cname,role,req,ilvl,q,entry)
+        mask_kind='weapon' if st['cls']==2 else st['kind']
+        weapon_kind=st['kind'] if st['cls']==2 else None
+        class_mask=compatible_class_mask(cname,role,req,mask_kind,armor_subclass=st['sub'],weapon_kind=weapon_kind)
+        skeletons.append(dict(entry=entry,class_name=cname,class_mask=class_mask,required_level=req,item_level=ilvl,quality=q,role=role,
+                              recipe_id=recipe['recipe_id'],content_profile=recipe.get('content_profile'),target_kind=recipe.get('target_kind'),
+                              content_target=recipe.get('content_target'),set_request_index=recipe.get('set_request_index'),
+                              set_piece_index=recipe.get('set_piece_index'),set_size=recipe.get('set_size'),**st))
+        if ui and (completed==1 or completed==len(plan) or completed%25==0):
+            ui.progress(completed,len(plan),current=f'{cname} • Level {req} • {QUALITY_NAME[q]}')
+    return skeletons
+
+def build_runtime_skeletons(ui=None):
+    if TARGETED_PLAN is None: return build_skeletons(ui=ui)
+    skeletons=build_targeted_skeletons(TARGETED_PLAN,ui=ui)
+    assign_targeted_sets(skeletons)
+    return skeletons
 
 def build_skeletons(ui=None):
     if ACTIVE_CLASSES is None or CLASS_ITEM_COUNTS is None or TARGET_ITEM_COUNT is None:
@@ -3521,7 +3707,9 @@ def finish_items(sk,ui=None):
                   itemset=x.get('set_id',0),socketBonus=0,RequiredDisenchantSkill=-1,DisenchantID=0,
                   special_effect_feature=effect_probe['special_effect_feature'],effect_source_entry=effect_probe['effect_source_entry'],
                   effect_source_spell=effect_probe['effect_source_spell'],spell_slots=effect_probe['spell_slots'],
-                  set_name=x.get('set_name',''),set_bonuses=x.get('set_bonuses',()),set_template_id=x.get('set_template_id',0))
+                  set_name=x.get('set_name',''),set_bonuses=x.get('set_bonuses',()),set_template_id=x.get('set_template_id',0),
+                  recipe_id=x.get('recipe_id',''),content_profile=x.get('content_profile'),target_kind=x.get('target_kind','general'),
+                  content_target=x.get('content_target'),set_request_index=x.get('set_request_index'))
         _assign_socket_bonus(item)
         _assign_disenchant(item)
         items.append(item)
@@ -4046,7 +4234,7 @@ def main(argv=None):
         ui.configure(runtime)
 
         ui.phase('Generating item skeletons',total=runtime['number'],detail='Levels, item levels, quality, roles, slots, and class compatibility')
-        sk=build_skeletons(ui=ui)
+        sk=build_runtime_skeletons(ui=ui)
         ui.phase_done('Generating item skeletons',f'{len(sk):,} skeletons ready')
 
         ui.phase('Finalizing generated items',total=len(sk),detail='Stats, appearances, effects, sockets, disenchant data, and names')
