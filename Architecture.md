@@ -23,11 +23,6 @@ The current generator also supports:
 
 See [Docs/CLI_UI.md](Docs/CLI_UI.md) for the dashboard behavior and inspect each generated `validation_report.json` for feature counts and source-audit results.
 
-![WotLK Item Generator terminal dashboard](Screenshots/Stage1.png)
-![WotLK Item Generator terminal dashboard](Screenshots/Stage2.png)
-![WotLK Item Generator terminal dashboard](Screenshots/Stage3.png)
-![WotLK Item Generator terminal dashboard](Screenshots/Stage4.png)
-
 ---
 
 ## Table of Contents
