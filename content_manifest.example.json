@@ -1,3 +1,102 @@
+// WotLK ITEM GENERATOR - MANIFEST GUIDE
+//
+// This file intentionally uses JSON-with-comments. The generator strips // and
+// /* ... */ comments before parsing, so these instructions can stay here.
+// A strict JSON parser will reject comments; remove the comments first if you
+// need to use this file in another tool.
+// Do not add trailing commas: after comments are removed, the remaining text
+// must still be ordinary JSON.
+//
+// QUICK START
+// 1. Keep the source files beside generate_pack.py, or pass the source paths
+//    supported by the CLI. Map/creature/encounter source files are validated.
+// 2. Edit the active JSON below, or copy one of the examples after the JSON
+//    into the matching profiles/recipes/quest_targets array.
+// 3. Run from this directory:
+//
+//      py .\generate_pack.py --content-manifest .\content_manifest.example.json --seed 424242
+//
+//    Do not combine --content-manifest with --number or --class. Put all item
+//    counts and class constraints in recipes instead.
+// 4. The generator validates every recipe before writing SQL. It emits item
+//    SQL, world loot, dungeon/raid loot, cleanup SQL, and placement reports.
+//
+// ACTIVE EXAMPLE
+// The active example is deliberately small and runnable without a quest SQL
+// source. It creates ten epic items for the example dungeon profile below.
+// Set quest_targets to a non-empty list only after adding --quest-template-source.
+//
+// TOP-LEVEL FIELDS
+// - version: must be 1.
+// - profiles: explicit dungeon/raid profiles. Each profile has encounters.
+// - recipes: exact item-generation requests. Counts are disjoint by default.
+// - quest_targets: optional fixed/choice quest reward assignments.
+//
+// PROFILE FIELDS
+// - id: unique stable profile ID used by recipes.profile.
+// - instance: human-readable name shown in reports.
+// - map_id/difficulty_id: source-validated map and difficulty identifiers.
+// - map_type: 1 for dungeon, 2 for raid; used for placement reporting.
+// - item_level_min/item_level_max: profile-wide item-level limits.
+// - loot_mode: optional AzerothCore LootMode bit. If omitted for a mapped
+//   difficulty, the generator uses 1 << difficulty_id.
+// - additional_drop_chance: chance for the generated encounter pool to roll.
+// - encounters: ordered by requires, not by JSON order or creature ID.
+//
+// ENCOUNTER FIELDS
+// - id: unique inside the profile. Use "trash" for a trash group if desired.
+// - kind: exactly "trash" or "boss".
+// - requires: prerequisite encounter IDs; branches can share a rank.
+// - weight: generated-item allocation weight. Bosses commonly use 3-5,
+//   trash commonly uses 1.
+// - item_level: optional two-value encounter range; it overrides the profile
+//   range for that encounter.
+// - quantity: generated item quantity per successful pool roll; default 1.
+// - loot_mode: optional per-encounter override.
+// - targets: exact source targets. creature entries are creature loot-table
+//   Entry values; reference entries are reference_loot_template Entry values.
+//   Add creature_entry when a creature's lootid differs from the target Entry.
+//
+// RECIPE FIELDS
+// - id: unique recipe name.
+// - count: exact number of ordinary items.
+// - class or classes: one class, or a deterministic choice among listed classes.
+// - required_level: independent player required-level range [min, max].
+// - item_level: independent item-level range [min, max]. Omit it to use the
+//   generator's normal required-level progression curve.
+// - quality: 2 uncommon, 3 rare, 4 epic, 5 legendary.
+// - kind: use "weapon" to restrict the recipe to weapons.
+// - weapon_kind: optional value such as "1h_sword", "bow", or "staff".
+// - role: optional role constraint such as tank, healer, caster, or melee.
+// - profile: attach the recipe to a dungeon/raid profile.
+// - target_kind: "general", "dungeon", "raid", or "quest".
+// - target: optional encounter ID. Omit it to allocate across profile
+//   encounters by their weights.
+// - set_count/set_size: creates set_count complete sets, each set_size pieces.
+//   For example, 20 Rogue sets with five pieces each means 100 generated items.
+//
+// RECIPE MIXING
+// Every recipe contributes an exact, non-overlapping quota unless the future
+// overlap option is explicitly enabled. A mixed manifest can therefore hold
+// leveling gear, targeted raid gear, weapons, and sets together. The final
+// item count is the sum of ordinary count values plus set_count * set_size.
+//
+// PLACEMENT OUTPUTS
+// - world_item_placements.csv: one row per generated item, world pool/bracket,
+//   exact world reference entries, covered world levels, and chance.
+// - dungeon_raid_item_placements.csv: one row per placed item, instance,
+//   difficulty, boss/trash encounter, LootMode, item-level band, and targets.
+// - validation_report.json records the report paths and aggregate counts.
+//
+// SAFETY NOTES
+// - A mapped profile must use IDs present in the supplied DBC/SQL snapshot.
+// - Required level and item level are different constraints; do not use one
+//   to stand in for the other.
+// - Existing loot rows remain additive. Generated cleanup files remove only
+//   generated pool/attachment rows.
+// - A 20-item legendary recipe is shown in the examples as a planned request,
+//   but the current validator still enforces the original approximately
+//   3-per-100k legendary policy. Do not uncomment it yet.
 {
   "version": 1,
   "profiles": [
@@ -51,22 +150,285 @@
       "required_level": [70, 80],
       "item_level": [180, 200],
       "target_kind": "dungeon"
-    },
-    {
-      "id": "example_quest_reward",
-      "count": 1,
-      "class": "Warrior",
-      "quality": 4,
-      "required_level": [30, 50],
-      "item_level": [50, 50],
-      "target_kind": "quest"
     }
   ],
-  "quest_targets": [
-    {
-      "quest_id": 2,
-      "mode": "fixed",
-      "recipe": "example_quest_reward"
-    }
+  "quest_targets": []
+}
+
+/*
+==========================================================================
+COPY/PASTE EXAMPLES - KEEP THESE COMMENTED UNTIL YOU WANT TO USE THEM
+==========================================================================
+
+The snippets below are examples, not additional active configuration. Copy a
+profile object into the top-level profiles array and a recipe object into the
+recipes array. Add a comma after the previous active array item when needed.
+The Naxx boss IDs below were read from the repository's current source snapshot.
+
+--------------------------------------------------------------------------
+1) LEVELS 30-50, USING THE NORMAL ITEM-LEVEL CURVE
+--------------------------------------------------------------------------
+
+{
+  "id": "level_30_50",
+  "count": 100,
+  "required_level": [30, 50],
+  "target_kind": "general"
+}
+
+Notes:
+- This constrains RequiredLevel only.
+- Add "item_level": [50, 90] if the item-level window must also be fixed.
+- RequiredLevel and ItemLevel are validated independently.
+
+--------------------------------------------------------------------------
+2) LEVELS 30-50 WITH EPIC QUALITY AND A FIXED ITEM-LEVEL WINDOW
+--------------------------------------------------------------------------
+
+{
+  "id": "level_30_50_epics",
+  "count": 50,
+  "quality": 4,
+  "required_level": [30, 50],
+  "item_level": [50, 75],
+  "target_kind": "general"
+}
+
+Notes:
+- Quality 4 means Epic.
+- A fixed item-level range can make a recipe impossible if it conflicts with
+  class, slot, or profile restrictions; validation fails before output.
+
+--------------------------------------------------------------------------
+3) SOURCE-BACKED NAXXRAMAS 10-PLAYER NORMAL PROFILE
+--------------------------------------------------------------------------
+
+{
+  "id": "naxx_10_normal",
+  "instance": "Naxxramas",
+  "difficulty": "10-player normal",
+  "map_id": 533,
+  "difficulty_id": 0,
+  "map_type": 2,
+  "loot_mode": 1,
+  "item_level_min": 187,
+  "item_level_max": 284,
+  "additional_drop_chance": 5,
+  "encounters": [
+    {"id": "anub_rekhan", "kind": "boss", "requires": [], "weight": 3,
+     "targets": [{"type": "creature", "entry": 15956}]},
+    {"id": "grand_widow_faerlina", "kind": "boss", "requires": ["anub_rekhan"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 15953}]},
+    {"id": "maexxna", "kind": "boss", "requires": ["grand_widow_faerlina"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 15952}]},
+    {"id": "noth_the_plaguebringer", "kind": "boss", "requires": ["maexxna"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 15954}]},
+    {"id": "heigan_the_unclean", "kind": "boss", "requires": ["noth_the_plaguebringer"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 15936}]},
+    {"id": "loatheb", "kind": "boss", "requires": ["heigan_the_unclean"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 16011}]},
+    {"id": "instructor_razuvious", "kind": "boss", "requires": ["loatheb"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 16061}]},
+    {"id": "gothik_the_harvester", "kind": "boss", "requires": ["instructor_razuvious"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 16060}]},
+    {"id": "patchwerk", "kind": "boss", "requires": ["gothik_the_harvester"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 16028}]},
+    {"id": "grobbulus", "kind": "boss", "requires": ["patchwerk"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 15931}]},
+    {"id": "gluth", "kind": "boss", "requires": ["grobbulus"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 15932}]},
+    {"id": "thaddius", "kind": "boss", "requires": ["gluth"], "weight": 3,
+     "targets": [{"type": "creature", "entry": 15928}]},
+    {"id": "sapphiron", "kind": "boss", "requires": ["thaddius"], "weight": 4,
+     "targets": [{"type": "creature", "entry": 15989}]},
+    {"id": "kelthuzad", "kind": "boss", "requires": ["sapphiron"], "weight": 5,
+     "targets": [{"type": "creature", "entry": 15990}]}
   ]
 }
+
+Notes:
+- map_type 2 marks this as a raid in placement CSVs.
+- difficulty_id 0 maps to LootMode 1. In this core's raid enum, 1 is
+  25-player normal, 2 is 10-player heroic, and 3 is 25-player heroic.
+- Four Horsemen (creature 16064) is intentionally absent because the current
+  source snapshot has no creature lootid for that credit entry.
+- Add a separate trash encounter using exact source creature loot entries if
+  you want Naxx trash separated from boss pools.
+- A recipe using profile naxx_10_normal is weighted across these bosses unless
+  it sets "target" to one encounter ID.
+
+To make a 25-player normal profile, copy this object and change:
+  "id": "naxx_25_normal",
+  "difficulty": "25-player normal",
+  "difficulty_id": 1,
+  "loot_mode": 2
+
+--------------------------------------------------------------------------
+4) NAXXRAMAS EPICS
+--------------------------------------------------------------------------
+
+{
+  "id": "naxx_epics",
+  "count": 200,
+  "profile": "naxx_10_normal",
+  "quality": 4,
+  "required_level": [80, 80],
+  "item_level": [187, 213],
+  "target_kind": "raid"
+}
+
+Notes:
+- Item-level constraints are intersected with each encounter's band.
+- To put all items on Kel'Thuzad only, add "target": "kelthuzad".
+
+--------------------------------------------------------------------------
+5) 2,000 EPIC ITEMS
+--------------------------------------------------------------------------
+
+{
+  "id": "two_thousand_epics",
+  "count": 2000,
+  "quality": 4,
+  "required_level": [40, 80],
+  "item_level": [80, 284],
+  "target_kind": "general"
+}
+
+--------------------------------------------------------------------------
+6) 250 WARRIOR WEAPONS
+--------------------------------------------------------------------------
+
+{
+  "id": "warrior_weapons",
+  "count": 250,
+  "class": "Warrior",
+  "kind": "weapon",
+  "weapon_kind": "1h_sword",
+  "required_level": [30, 80],
+  "quality": 4,
+  "target_kind": "general"
+}
+
+Notes:
+- Remove weapon_kind to let the existing Warrior weapon distribution choose
+  among compatible weapon types.
+- Other valid weapon_kind examples include 2h_sword, 1h_axe, polearm, bow,
+  gun, crossbow, dagger, staff, fist, and wand.
+
+--------------------------------------------------------------------------
+7) 20 COMPLETE ROGUE SETS
+--------------------------------------------------------------------------
+
+{
+  "id": "rogue_sets",
+  "set_count": 20,
+  "set_size": 5,
+  "class": "Rogue",
+  "quality": 4,
+  "required_level": [20, 80],
+  "item_level": [50, 284],
+  "target_kind": "general"
+}
+
+Notes:
+- This reserves 20 * 5 = 100 items, not 20 total items.
+- Each set gets five compatible slots and one cohesive ItemSet definition.
+- For 20 total Rogue set pieces, use set_count 4 and set_size 5.
+
+--------------------------------------------------------------------------
+8) PLANNED 20 LEGENDARIES - CURRENTLY BLOCKED BY GLOBAL POLICY
+--------------------------------------------------------------------------
+
+{
+  "id": "twenty_legendaries",
+  "count": 20,
+  "quality": 5,
+  "required_level": [80, 80],
+  "item_level": [264, 284],
+  "target_kind": "general"
+}
+
+The current validator intentionally expects approximately three legendary
+items per 100,000 generated items. Because the generator caps a run at
+200,000 items, this exact 20-item recipe cannot pass yet. It needs an explicit
+manifest legendary-quota policy before being uncommented.
+
+--------------------------------------------------------------------------
+9) MIXED RECIPE MANIFEST
+--------------------------------------------------------------------------
+
+Add all of these objects to the same recipes array to mix the requests. Their
+quotas remain disjoint, and the total generated item count is 2,370 items:
+
+[
+  {
+    "id": "leveling_30_50",
+    "count": 100,
+    "required_level": [30, 50],
+    "item_level": [50, 90],
+    "target_kind": "general"
+  },
+  {
+    "id": "naxx_raid_epics",
+    "count": 20,
+    "profile": "naxx_10_normal",
+    "quality": 4,
+    "required_level": [80, 80],
+    "item_level": [187, 213],
+    "target_kind": "raid"
+  },
+  {
+    "id": "mixed_epics",
+    "count": 2000,
+    "quality": 4,
+    "required_level": [40, 80],
+    "item_level": [80, 284],
+    "target_kind": "general"
+  },
+  {
+    "id": "mixed_warrior_weapons",
+    "count": 250,
+    "class": "Warrior",
+    "kind": "weapon",
+    "required_level": [30, 80],
+    "target_kind": "general"
+  }
+]
+
+The active example's ten-item recipe must be removed or its count adjusted if
+you paste this entire list and want exactly 2,370 items.
+
+--------------------------------------------------------------------------
+10) FIXED AND CHOICE QUEST REWARDS
+--------------------------------------------------------------------------
+
+Recipe:
+
+{
+  "id": "quest_reward_item",
+  "count": 2,
+  "class": "Warrior",
+  "quality": 4,
+  "required_level": [30, 50],
+  "item_level": [50, 75],
+  "target_kind": "quest"
+}
+
+Quest targets:
+
+[
+  {"quest_id": 1000, "mode": "fixed", "recipe": "quest_reward_item"},
+  {"quest_id": 1001, "mode": "choice", "recipe": "quest_reward_item"}
+]
+
+Run with the matching source:
+
+py .\generate_pack.py --content-manifest .\content_manifest.example.json --quest-template-source .\quest_template.sql
+
+Existing quest values are preserved. Empty fixed/choice slots are filled first,
+and cleanup SQL restores the exact previous values.
+
+==========================================================================
+END OF EXAMPLES
+==========================================================================
+*/

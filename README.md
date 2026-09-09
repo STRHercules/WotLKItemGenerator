@@ -2448,6 +2448,8 @@ py .\generate_pack.py --class dk
 
 Loads a JSON targeted-content manifest. It is mutually exclusive with `--number` and `--class`; recipe counts and class constraints belong in the manifest.
 
+The bundled `content_manifest.example.json` is JSON-with-comments. The generator accepts its `//` and block comments, so the file doubles as an editing guide; remove comments if another tool requires strict JSON.
+
 The manifest supports:
 
 - disjoint exact-count recipes

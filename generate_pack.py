@@ -2739,10 +2739,33 @@ def resolve_encounter_order(profile):
         raise ValueError(f'profile {profile.get("id", "<unknown>")} has a cycle in encounter prerequisites')
     return resolved
 
+def _strip_json_comments(text):
+    output=[]; index=0; quoted=False; escaped=False; line_comment=False; block_comment=False
+    while index<len(text):
+        char=text[index]
+        if line_comment:
+            if char in '\r\n': line_comment=False; output.append(char)
+            else: output.append(' ')
+        elif block_comment:
+            if text.startswith('*/',index): block_comment=False; output.extend((' ',' ')); index+=1
+            else: output.append(char if char in '\r\n' else ' ')
+        elif quoted:
+            output.append(char)
+            if escaped: escaped=False
+            elif char=='\\': escaped=True
+            elif char=='"': quoted=False
+        elif char=='"': quoted=True; output.append(char)
+        elif text.startswith('//',index): line_comment=True; output.extend((' ',' ')); index+=1
+        elif text.startswith('/*',index): block_comment=True; output.extend((' ',' ')); index+=1
+        else: output.append(char)
+        index+=1
+    if block_comment: raise ValueError('unterminated content manifest block comment')
+    return ''.join(output)
+
 def load_content_manifest(path):
     path=Path(path).expanduser().resolve()
     try:
-        manifest=json.loads(path.read_text(encoding='utf-8'))
+        manifest=json.loads(_strip_json_comments(path.read_text(encoding='utf-8')))
     except json.JSONDecodeError as exc:
         raise ValueError(f'invalid content manifest JSON: {path}: {exc.msg}') from exc
     validate_content_manifest(manifest)

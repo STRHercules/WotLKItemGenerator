@@ -17,6 +17,23 @@ class ManifestTests(unittest.TestCase):
 
         self.assertEqual(args.content_manifest, pathlib.Path('content_manifest.json'))
 
+    def test_load_content_manifest_accepts_json_comments(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'manifest.json'
+            path.write_text("""// Copy this file and edit the recipes.
+{
+  /* Comments are accepted by the manifest loader. */
+  "version": 1,
+  "profiles": [],
+  "recipes": [],
+  "quest_targets": []
+}
+""", encoding='utf-8')
+
+            manifest = g.load_content_manifest(path)
+
+        self.assertEqual(manifest['version'], 1)
+
     def test_load_content_manifest_validates_profile_targets(self):
         payload = {
             'version': 1,
@@ -243,9 +260,9 @@ INSERT INTO `quest_template` VALUES
     def test_manifest_runtime_uses_manifest_count(self):
         runtime = self._configure_example()
 
-        self.assertEqual(runtime['number'], 11)
+        self.assertEqual(runtime['number'], 10)
         self.assertEqual(runtime['content_manifest']['profiles'][0]['id'], 'example_normal')
-        self.assertEqual(len(g.build_runtime_skeletons()), 11)
+        self.assertEqual(len(g.build_runtime_skeletons()), 10)
 
     def test_targeted_validation_accepts_interleaved_class_entries(self):
         self._configure_example()
