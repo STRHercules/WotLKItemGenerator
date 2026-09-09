@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-REPO_ROOT = ROOT.parents[2] if len(ROOT.parents) > 2 else ROOT
+DATA_DIR = ROOT / 'Data'
 USER_GUID_FILE = Path.home() / '.azerothcore-item-generator-guid'
 SEED = None
 OUT = None
@@ -48,29 +48,26 @@ DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
 MAX_ITEMS_PER_CLASS = 20_000
 MAX_TOTAL_ITEMS = 200_000
-def _default_world_sql_source(filename):
-    local_source = ROOT / filename
-    if local_source.is_file():
-        return local_source
-    return REPO_ROOT / 'data' / 'sql' / 'base' / 'db_world' / filename
+def _default_data_source(filename):
+    return DATA_DIR / filename
 
-DEFAULT_WORLD_LOOT_SOURCE = _default_world_sql_source('creature_loot_template.sql')
-DEFAULT_REFERENCE_LOOT_SOURCE = _default_world_sql_source('reference_loot_template.sql')
-DEFAULT_ITEM_TEMPLATE_SOURCE = _default_world_sql_source('item_template.sql')
-DEFAULT_ITEM_DBC_SOURCE = ROOT / 'Item.dbc'
-DEFAULT_ITEM_DBC_CUSTOM_SOURCE = ROOT / 'Item.custom.dbc'
-DEFAULT_ITEM_SET_DBC_SOURCE = ROOT / 'ItemSet.dbc'
-DEFAULT_SPELL_DBC_SOURCE = ROOT / 'Spell.dbc'
-DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE = ROOT / 'SpellItemEnchantment.dbc'
-DEFAULT_DISENCHANT_SOURCE = _default_world_sql_source('disenchant_loot_template.sql')
-DEFAULT_SPELL_PROC_SOURCE = _default_world_sql_source('spell_proc.sql')
-DEFAULT_SPELL_SCRIPT_NAMES_SOURCE = _default_world_sql_source('spell_script_names.sql')
-DEFAULT_MAP_DBC_SOURCE = ROOT / 'Map.dbc'
-DEFAULT_MAP_DIFFICULTY_DBC_SOURCE = ROOT / 'MapDifficulty.dbc'
-DEFAULT_DUNGEON_MAP_DBC_SOURCE = ROOT / 'DungeonMap.dbc'
-DEFAULT_CREATURE_SOURCE = ROOT / 'creature.sql'
-DEFAULT_CREATURE_TEMPLATE_SOURCE = ROOT / 'creature_template.sql'
-DEFAULT_INSTANCE_ENCOUNTERS_SOURCE = ROOT / 'instance_encounters.sql'
+DEFAULT_WORLD_LOOT_SOURCE = _default_data_source('creature_loot_template.sql')
+DEFAULT_REFERENCE_LOOT_SOURCE = _default_data_source('reference_loot_template.sql')
+DEFAULT_ITEM_TEMPLATE_SOURCE = _default_data_source('item_template.sql')
+DEFAULT_ITEM_DBC_SOURCE = _default_data_source('Item.dbc')
+DEFAULT_ITEM_DBC_CUSTOM_SOURCE = _default_data_source('Item.custom.dbc')
+DEFAULT_ITEM_SET_DBC_SOURCE = _default_data_source('ItemSet.dbc')
+DEFAULT_SPELL_DBC_SOURCE = _default_data_source('Spell.dbc')
+DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE = _default_data_source('SpellItemEnchantment.dbc')
+DEFAULT_DISENCHANT_SOURCE = _default_data_source('disenchant_loot_template.sql')
+DEFAULT_SPELL_PROC_SOURCE = _default_data_source('spell_proc.sql')
+DEFAULT_SPELL_SCRIPT_NAMES_SOURCE = _default_data_source('spell_script_names.sql')
+DEFAULT_MAP_DBC_SOURCE = _default_data_source('Map.dbc')
+DEFAULT_MAP_DIFFICULTY_DBC_SOURCE = _default_data_source('MapDifficulty.dbc')
+DEFAULT_DUNGEON_MAP_DBC_SOURCE = _default_data_source('DungeonMap.dbc')
+DEFAULT_CREATURE_SOURCE = _default_data_source('creature.sql')
+DEFAULT_CREATURE_TEMPLATE_SOURCE = _default_data_source('creature_template.sql')
+DEFAULT_INSTANCE_ENCOUNTERS_SOURCE = _default_data_source('instance_encounters.sql')
 
 NEW_FEATURES = (
     'sets', 'spell-effects', 'chance-on-hit', 'on-use', 'socket-bonuses', 'disenchant',

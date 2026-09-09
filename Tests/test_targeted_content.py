@@ -6,7 +6,7 @@ import unittest
 
 
 HERE = pathlib.Path(__file__).resolve().parent
-SPEC = importlib.util.spec_from_file_location('generator', HERE / 'generate_pack.py')
+SPEC = importlib.util.spec_from_file_location('generator', HERE.parent / 'generate_pack.py')
 g = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(g)
 
@@ -253,7 +253,7 @@ INSERT INTO `quest_template` VALUES
 (2,0,0,0,0);
 """, encoding='utf-8')
         return g.configure_runtime([
-            '--seed', '424242', '--content-manifest', 'content_manifest.example.json',
+            '--seed', '424242', '--content-manifest', str(g.ROOT / 'Docs' / 'content_manifest.example.json'),
             '--quest-template-source', str(path), '--disable', 'all-new', '--ui', 'plain',
         ])
 
@@ -611,9 +611,9 @@ class SourceTests(unittest.TestCase):
 
     def test_root_sources_build_map_creature_and_encounter_catalogs(self):
         catalog = g.load_encounter_source_catalog(
-            pathlib.Path('Map.dbc'), pathlib.Path('MapDifficulty.dbc'), pathlib.Path('DungeonMap.dbc'),
-            pathlib.Path('creature.sql'), pathlib.Path('creature_template.sql'), pathlib.Path('instance_encounters.sql'),
-            pathlib.Path('creature_loot_template.sql'), pathlib.Path('reference_loot_template.sql'))
+            g.DATA_DIR / 'Map.dbc', g.DATA_DIR / 'MapDifficulty.dbc', g.DATA_DIR / 'DungeonMap.dbc',
+            g.DATA_DIR / 'creature.sql', g.DATA_DIR / 'creature_template.sql', g.DATA_DIR / 'instance_encounters.sql',
+            g.DATA_DIR / 'creature_loot_template.sql', g.DATA_DIR / 'reference_loot_template.sql')
 
         self.assertIn(533, catalog['maps'])
         self.assertIn((533, 0), catalog['map_difficulties'])

@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 HERE = pathlib.Path(__file__).resolve().parent
-spec = importlib.util.spec_from_file_location('generator', HERE / 'generate_pack.py')
+spec = importlib.util.spec_from_file_location('generator', HERE.parent / 'generate_pack.py')
 g = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(g)
 
