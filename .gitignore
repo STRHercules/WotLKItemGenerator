@@ -2,3 +2,4 @@
 *.sql
 /__pycache__
 /Tests/__pycache__
+Docs/superowers/
