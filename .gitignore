@@ -10,3 +10,9 @@ spell_script_names.sql
 SpellItemEnchantment.dbc
 spell_proc.sql
 /__pycache__
+creature.sql
+creature_template.sql
+DungeonMap.dbc
+instance_encounters.sql
+MapDifficulty.dbc
+Map.dbc

@@ -36,13 +36,6 @@ SOCKET_BONUS_RATE = None
 DISENCHANT_RATE = None
 MAX_SPECIAL_EFFECTS = None
 REFERENCE_CATALOG_AUDIT = None
-CONTENT_MANIFEST = None
-TARGETED_PLAN = None
-QUEST_TEMPLATE_SOURCE = None
-QUEST_REWARD_ROWS = {}
-ENCOUNTER_SOURCE_CATALOG = None
-DEFAULT_ENCOUNTER_MANIFEST = None
-ENCOUNTER_SOURCE_PATHS = None
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
@@ -65,12 +58,6 @@ DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE = ROOT / 'SpellItemEnchantment.dbc'
 DEFAULT_DISENCHANT_SOURCE = _default_world_sql_source('disenchant_loot_template.sql')
 DEFAULT_SPELL_PROC_SOURCE = _default_world_sql_source('spell_proc.sql')
 DEFAULT_SPELL_SCRIPT_NAMES_SOURCE = _default_world_sql_source('spell_script_names.sql')
-DEFAULT_MAP_DBC_SOURCE = ROOT / 'Map.dbc'
-DEFAULT_MAP_DIFFICULTY_DBC_SOURCE = ROOT / 'MapDifficulty.dbc'
-DEFAULT_DUNGEON_MAP_DBC_SOURCE = ROOT / 'DungeonMap.dbc'
-DEFAULT_CREATURE_SOURCE = ROOT / 'creature.sql'
-DEFAULT_CREATURE_TEMPLATE_SOURCE = ROOT / 'creature_template.sql'
-DEFAULT_INSTANCE_ENCOUNTERS_SOURCE = ROOT / 'instance_encounters.sql'
 
 NEW_FEATURES = (
     'sets', 'spell-effects', 'chance-on-hit', 'on-use', 'socket-bonuses', 'disenchant',
@@ -174,8 +161,6 @@ class PlainTerminalUI:
         self._write(f"Seed: {runtime['seed']} ({runtime['source']})")
         self._write(f"Items: {runtime['number']:,} | Classes: {', '.join(runtime['classes'])}")
         self._write(f"Features: {features}")
-        if runtime.get('default_encounter_profile_count'):
-            self._write(f"Loot placement: world + dungeon/raid ({runtime['default_encounter_profile_count']} profiles)")
         self._write(f"Output: {runtime['output_dir']}")
 
     def source_check(self,label,path,ok=True):
@@ -407,8 +392,6 @@ class FancyTerminalUI(PlainTerminalUI):
             cfg.add_row('Items',f"{self.runtime['number']:,}")
             cfg.add_row('Classes',', '.join(self.runtime['classes']))
             cfg.add_row('Features',features)
-            if self.runtime.get('default_encounter_profile_count'):
-                cfg.add_row('Loot placement',f"world + dungeon/raid ({self.runtime['default_encounter_profile_count']} profiles)")
             cfg.add_row('Output',str(self.runtime['output_dir']))
             pieces.append(Panel(cfg,title='[bold]Forge Configuration[/bold]',border_style='cyan'))
         elif self.sources:
@@ -481,7 +464,6 @@ def _copy_server_itemset(client_itemset_path,output_root):
     shutil.copy2(client_itemset_path,server_path)
     return server_path
 GENERATED_LOOT_POOL_BASE = 3_000_000
-GENERATED_ENCOUNTER_POOL_BASE = 3_100_000
 GENERATED_LOOT_ATTACHMENT_ITEM_BASE = 2_000_000_000
 LOOT_BRACKETS = [
     ('01-19', 1, 19), ('20-39', 20, 39), ('40-59', 40, 59),
@@ -1622,8 +1604,6 @@ def parse_args(argv=None):
     parser.add_argument('--seed',type=_seed_arg,help='Use this exact numeric seed instead of generating one automatically.')
     parser.add_argument('--number',type=_number_arg,help=f'Generate exactly this many items (max {MAX_TOTAL_ITEMS:,} total; max {MAX_ITEMS_PER_CLASS:,} per class).')
     parser.add_argument('--class',dest='class_name',type=_class_arg,help='Generate items for only this class (case-insensitive).')
-    parser.add_argument('--content-manifest',type=Path,default=None,metavar='PATH',help='JSON manifest for targeted recipes, dungeon/raid loot, and quest rewards.')
-    parser.add_argument('--quest-template-source',type=Path,default=None,metavar='PATH',help='quest_template.sql used to validate and preserve mapped quest rewards.')
     parser.add_argument('--loot-chance',type=_loot_chance_arg,default=2.0,metavar='PERCENT',help='Independent generated-item roll on each existing world-loot reference (default: 2).')
     parser.add_argument('--world-loot-source',type=Path,default=DEFAULT_WORLD_LOOT_SOURCE,metavar='PATH',help=f'creature_loot_template.sql to map world-loot levels (default: {DEFAULT_WORLD_LOOT_SOURCE}).')
     parser.add_argument('--reference-loot-source',type=Path,default=DEFAULT_REFERENCE_LOOT_SOURCE,metavar='PATH',help=f'reference_loot_template.sql used to verify shared references (default: {DEFAULT_REFERENCE_LOOT_SOURCE}).')
@@ -1681,33 +1661,10 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W
     args=parse_args(argv) if args is None else args
-    content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
-    if content_manifest is not None and (args.number is not None or args.class_name is not None):
-        raise ValueError('--number and --class cannot be combined with --content-manifest; put counts and classes in the manifest')
-    quest_template_source=Path(args.quest_template_source).expanduser().resolve() if args.quest_template_source else None
     world_loot_source=Path(args.world_loot_source).expanduser().resolve()
     reference_loot_source=Path(args.reference_loot_source).expanduser().resolve()
-    quest_targets=content_manifest.get('quest_targets',()) if content_manifest else ()
-    if quest_targets and quest_template_source is None:
-        raise ValueError('--quest-template-source is required when the content manifest contains quest_targets')
-    quest_reward_rows=load_quest_reward_slots(quest_template_source,{int(target['quest_id']) for target in quest_targets}) if quest_targets else {}
-    encounter_source_catalog=None
-    default_encounter_manifest=None
-    encounter_source_paths=None
-    if content_manifest is None or any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',())):
-        encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
-                         DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
-                         world_loot_source,reference_loot_source)
-        missing=[str(path) for path in encounter_paths if not Path(path).is_file()]
-        if missing: raise FileNotFoundError('targeted encounter source file(s) not found: '+', '.join(missing))
-        encounter_source_catalog=load_encounter_source_catalog(*encounter_paths)
-        encounter_source_paths=encounter_paths[:6]
-        if content_manifest is None:
-            default_encounter_manifest=build_default_encounter_manifest(encounter_source_catalog,args.loot_chance)
-        else:
-            validate_targeted_source_membership(content_manifest,encounter_source_catalog)
     item_template_source=Path(args.item_template_source).expanduser().resolve()
     item_dbc_sources=[Path(path).expanduser().resolve() for path in (args.item_dbc_sources or _default_item_dbc_sources())]
     item_set_dbc_source=Path(args.item_set_dbc_source).expanduser().resolve()
@@ -1716,9 +1673,8 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     disenchant_source=Path(args.disenchant_source).expanduser().resolve()
     spell_proc_source=Path(args.spell_proc_source).expanduser().resolve()
     spell_script_names_source=Path(args.spell_script_names_source).expanduser().resolve()
-    source_total=10+(len(encounter_source_paths) if encounter_source_paths else 0)
     if ui:
-        ui.phase('Inspecting AzerothCore sources',total=source_total,detail='Verifying SQL and DBC inputs')
+        ui.phase('Inspecting AzerothCore sources',total=10,detail='Verifying SQL and DBC inputs')
     source_check_count=0
     for label,path in (('world-loot source',world_loot_source),('reference-loot source',reference_loot_source),('item-template source',item_template_source)):
         if not path.is_file():
@@ -1726,7 +1682,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
             raise FileNotFoundError(f'{label} not found: {path}')
         source_check_count+=1
         if ui:
-            ui.source_check(label,path,True); ui.progress(source_check_count,source_total,current=Path(path).name)
+            ui.source_check(label,path,True); ui.progress(source_check_count,10,current=Path(path).name)
     for item_dbc_source in item_dbc_sources:
         if not item_dbc_source.is_file():
             if ui: ui.source_check('item-dbc source',item_dbc_source,False)
@@ -1734,7 +1690,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     # Multiple Item.dbc baselines count as one logical source check in the dashboard.
     source_check_count+=1
     if ui:
-        ui.source_check('Item.dbc baseline(s)',', '.join(path.name for path in item_dbc_sources),True); ui.progress(source_check_count,source_total,current='Item.dbc baseline(s)')
+        ui.source_check('Item.dbc baseline(s)',', '.join(path.name for path in item_dbc_sources),True); ui.progress(source_check_count,10,current='Item.dbc baseline(s)')
     for label,path in (
             ('item-set DBC source',item_set_dbc_source),('spell DBC source',spell_dbc_source),
             ('spell-enchantment DBC source',spell_enchantment_dbc_source),('disenchant source',disenchant_source),
@@ -1744,25 +1700,13 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
             raise FileNotFoundError(f'{label} not found: {path}')
         source_check_count+=1
         if ui:
-            ui.source_check(label,path,True); ui.progress(source_check_count,source_total,current=Path(path).name)
+            ui.source_check(label,path,True); ui.progress(source_check_count,10,current=Path(path).name)
     if not spell_script_names_source.is_file():
         if ui: ui.source_check('spell-script-names source',spell_script_names_source,False)
         raise FileNotFoundError(f'spell-script-names source not found: {spell_script_names_source}')
     source_check_count+=1
     if ui:
-        ui.source_check('spell-script-names source',spell_script_names_source,True); ui.progress(source_check_count,source_total,current=spell_script_names_source.name)
-    if encounter_source_paths:
-        for label,path in (
-                ('dungeon/raid Map.dbc',encounter_source_paths[0]),
-                ('dungeon/raid MapDifficulty.dbc',encounter_source_paths[1]),
-                ('dungeon/raid DungeonMap.dbc',encounter_source_paths[2]),
-                ('dungeon/raid creature source',encounter_source_paths[3]),
-                ('dungeon/raid creature-template source',encounter_source_paths[4]),
-                ('dungeon/raid instance-encounters source',encounter_source_paths[5])):
-            source_check_count+=1
-            if ui:
-                ui.source_check(label,path,True); ui.progress(source_check_count,source_total,current=path.name)
-    if ui:
+        ui.source_check('spell-script-names source',spell_script_names_source,True); ui.progress(source_check_count,10,current=spell_script_names_source.name)
         ui.phase_done('Inspecting AzerothCore sources')
         ui.phase('Harvesting stock WotLK data',total=2,detail='Appearances, spells, effects, sets, sockets, and disenchant tables')
         ui.status('Harvesting stock item appearances and weapon anchors')
@@ -1780,14 +1724,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         seed=derive_auto_seed(user_guid,now)
         source='automatic'
 
-    SEED=seed
-    targeted_plan=None
-    if content_manifest is not None:
-        targeted_plan=build_generation_plan(content_manifest,CLASSES)
-        counts=Counter(row['class_name'] for row in targeted_plan)
-        selected=[row for row in CLASSES if counts.get(row[0],0)>0]
-        number=len(targeted_plan)
-    elif args.class_name is not None:
+    if args.class_name is not None:
         selected=[row for row in CLASSES if row[0]==args.class_name]
         number=args.number if args.number is not None else DEFAULT_ITEMS_PER_CLASS
         if number > MAX_ITEMS_PER_CLASS:
@@ -1804,6 +1741,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         counts={cname:base+(1 if i<remainder else 0) for i,(cname,_,_) in enumerate(CLASSES)}
         selected=[row for row in selected if counts[row[0]]>0]
 
+    SEED=seed
     LOOT_CHANCE=args.loot_chance
     WORLD_LOOT_SOURCE=world_loot_source
     REFERENCE_LOOT_SOURCE=reference_loot_source
@@ -1836,13 +1774,6 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         ui.progress(2,2,current='Feature catalogs ready')
         ui.phase_done('Harvesting stock WotLK data')
     REFERENCE_CATALOG_AUDIT=catalog_audit
-    CONTENT_MANIFEST=content_manifest
-    TARGETED_PLAN=targeted_plan
-    QUEST_TEMPLATE_SOURCE=quest_template_source
-    QUEST_REWARD_ROWS=quest_reward_rows
-    ENCOUNTER_SOURCE_CATALOG=encounter_source_catalog
-    DEFAULT_ENCOUNTER_MANIFEST=default_encounter_manifest
-    ENCOUNTER_SOURCE_PATHS=encounter_source_paths
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
     CLASS_ITEM_COUNTS=counts
@@ -1851,11 +1782,6 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     return {
         'seed':SEED,'source':source,'output_dir':OUT,'number':TARGET_ITEM_COUNT,
         'class_name':args.class_name,'classes':[row[0] for row in ACTIVE_CLASSES],
-        'content_manifest':CONTENT_MANIFEST,
-        'quest_template_source':QUEST_TEMPLATE_SOURCE,
-        'encounter_source_catalog':ENCOUNTER_SOURCE_CATALOG,
-        'default_encounter_profile_count':0 if DEFAULT_ENCOUNTER_MANIFEST is None else len(DEFAULT_ENCOUNTER_MANIFEST['profiles']),
-        'encounter_source_paths':ENCOUNTER_SOURCE_PATHS,
         'class_counts':dict(CLASS_ITEM_COUNTS),'loot_chance':LOOT_CHANCE,
         'world_loot_source':WORLD_LOOT_SOURCE,'reference_loot_source':REFERENCE_LOOT_SOURCE,
         'item_template_source':ITEM_TEMPLATE_SOURCE,'item_dbc_sources':ITEM_DBC_SOURCES,
@@ -2021,203 +1947,6 @@ def _load_sql_entry_rows(path):
             if values is not None:
                 rows.append(values)
     return rows
-
-def _scan_sql_tuples(text):
-    rows=[]; start=None; depth=0; quoted=False; index=0
-    while index<len(text):
-        char=text[index]
-        if quoted:
-            if char=='\\': index+=2; continue
-            if char=="'":
-                if index+1<len(text) and text[index+1]=="'": index+=2; continue
-                quoted=False
-        elif char=="'": quoted=True
-        elif char=='(':
-            if depth==0: start=index
-            depth+=1
-        elif char==')' and depth:
-            depth-=1
-            if depth==0 and start is not None:
-                values=_split_sql_tuple(text[start:index+1])
-                if values is not None: rows.append(values)
-                start=None
-        index+=1
-    return rows
-
-def _load_sql_table_rows(path):
-    path=Path(path)
-    columns=[]; rows=[]; in_schema=False
-    with path.open(encoding='utf-8') as source:
-        for line in source:
-            if re.search(r'CREATE\s+TABLE',line,re.IGNORECASE): in_schema=True
-            elif in_schema and line.lstrip().startswith('`'):
-                columns.append(line.split('`')[1])
-            elif in_schema and 'ENGINE=' in line.upper():
-                in_schema=False
-            if line.lstrip().startswith('('):
-                values=_split_sql_tuple(line)
-                if values is not None: rows.append(values)
-    if not rows:
-        text=path.read_text(encoding='utf-8')
-        match=re.search(r'INSERT\s+INTO.*?\bVALUES\b',text,re.IGNORECASE|re.DOTALL)
-        if match: rows=_scan_sql_tuples(text[match.end():])
-    if not columns or not rows: raise ValueError(f'could not read SQL table rows from {path}')
-    if any(len(row)!=len(columns) for row in rows):
-        mismatched=next(len(row) for row in rows if len(row)!=len(columns))
-        raise ValueError(f'SQL table {path} row has {mismatched} values; schema has {len(columns)} columns')
-    return columns,rows
-
-def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,creature_path,creature_template_path,instance_encounters_path,creature_loot_path,reference_loot_path):
-    map_rows,map_strings,_,_=_read_wdbc_records(map_path,label='Map.dbc')
-    difficulty_rows,_,_,_=_read_wdbc_records(map_difficulty_path,label='MapDifficulty.dbc')
-    dungeon_rows,_,_,_=_read_wdbc_records(dungeon_map_path,label='DungeonMap.dbc')
-    maps={entry:{'id':entry,'directory':_dbc_string(map_strings,row[1]),'map_type':row[2],'instance_type':row[3]} for entry,row in map_rows.items()}
-    difficulties={(row[1],row[2]):{'id':row[0],'map_id':row[1],'difficulty_id':row[2],'max_players':row[21],'item_level':row[22]} for row in difficulty_rows.values() if len(row)>=23}
-    template_columns,template_rows=_load_sql_table_rows(creature_template_path); template_index={name:index for index,name in enumerate(template_columns)}
-    creature_templates={_sql_int(row[template_index['entry']]):{'entry':_sql_int(row[template_index['entry']]),'name':str(row[template_index['name']]).strip("'").replace("''","'"),'lootid':_sql_int(row[template_index['lootid']]),
-                        'minlevel':_sql_int(row[template_index['minlevel']],1) if 'minlevel' in template_index else 1,
-                        'maxlevel':_sql_int(row[template_index['maxlevel']],80) if 'maxlevel' in template_index else 80} for row in template_rows}
-    creature_columns,creature_rows=_load_sql_table_rows(creature_path); creature_index={name:index for index,name in enumerate(creature_columns)}
-    creature_maps=defaultdict(set)
-    for row in creature_rows: creature_maps[_sql_int(row[creature_index['id']])].add(_sql_int(row[creature_index['map']]))
-    encounter_columns,encounter_rows=_load_sql_table_rows(instance_encounters_path); encounter_index={name:index for index,name in enumerate(encounter_columns)}
-    encounters={_sql_int(row[encounter_index['entry']]):{'credit_type':_sql_int(row[encounter_index['creditType']]),'credit_entry':_sql_int(row[encounter_index['creditEntry']]),'last_encounter_dungeon':_sql_int(row[encounter_index['lastEncounterDungeon']]),'comment':str(row[encounter_index['comment']]).strip("'").replace("''","'")} for row in encounter_rows}
-    _,creature_loot_rows=_load_sql_table_rows(creature_loot_path); _,reference_loot_rows=_load_sql_table_rows(reference_loot_path)
-    return {'maps':maps,'map_difficulties':difficulties,'dungeon_maps':dungeon_rows,'creature_templates':creature_templates,
-            'creature_maps':creature_maps,'instance_encounters':encounters,
-            'creature_loot_entries':{_sql_int(row[0]) for row in creature_loot_rows},
-            'reference_loot_entries':{_sql_int(row[0]) for row in reference_loot_rows}}
-
-def loot_mode_for_difficulty(map_type=None,difficulty_id=None):
-    if map_type is not None and int(map_type) not in (1,2):
-        raise ValueError(f'loot modes only support dungeon or raid maps: {map_type}')
-    difficulty=0 if difficulty_id is None else int(difficulty_id)
-    if not 0<=difficulty<=5:
-        raise ValueError(f'unsupported map difficulty for loot mode: {difficulty}')
-    return 1<<difficulty
-
-def _item_level_bounds_for_required_level(required_level):
-    required_level=max(1,min(80,int(required_level)))
-    if required_level<58: return required_level+1,required_level+8
-    if required_level<68:
-        base=80+(required_level-58)*3.8
-        return int(base),int(base+5.999999)
-    if required_level<75:
-        base=112+(required_level-68)*7
-        return int(base),int(base+8.999999)
-    if required_level<80:
-        base=160+(required_level-75)*7
-        return int(base),int(base+10.999999)
-    return 187,284
-
-def _item_level_band_for_creatures(creature_templates):
-    ranges=[]
-    for template in creature_templates:
-        minimum=template.get('minlevel'); maximum=template.get('maxlevel')
-        if minimum is None and maximum is None: continue
-        minimum=max(1,min(80,int(minimum or 1))); maximum=max(minimum,min(80,int(maximum or minimum)))
-        ranges.append((_item_level_bounds_for_required_level(minimum)[0],_item_level_bounds_for_required_level(maximum)[1]))
-    if not ranges: return 1,284
-    return min(row[0] for row in ranges),max(row[1] for row in ranges)
-
-def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
-    profiles=[]
-    dungeon_or_raid_maps={map_id:row for map_id,row in catalog['maps'].items()
-                          if row.get('instance_type')==1 and row.get('map_type') in (1,2)}
-    boss_entries=defaultdict(list)
-    for encounter_entry,encounter in sorted(catalog['instance_encounters'].items()):
-        creature_entry=int(encounter['credit_entry'])
-        template=catalog['creature_templates'].get(creature_entry)
-        if not template: continue
-        loot_entry=int(template.get('lootid') or creature_entry)
-        if loot_entry not in catalog['creature_loot_entries']: continue
-        for map_id in catalog['creature_maps'].get(creature_entry,set()):
-            if map_id in dungeon_or_raid_maps:
-                boss_entries[map_id].append((int(encounter_entry),creature_entry,loot_entry))
-
-    for map_id,map_row in sorted(dungeon_or_raid_maps.items()):
-        difficulty_ids=sorted(difficulty_id for current_map,difficulty_id in catalog['map_difficulties'] if current_map==map_id)
-        if not difficulty_ids: difficulty_ids=[0]
-        for difficulty_id in difficulty_ids:
-            loot_by_entry={}
-            for creature_entry,maps in catalog['creature_maps'].items():
-                if map_id not in maps: continue
-                template=catalog['creature_templates'].get(creature_entry)
-                if not template: continue
-                loot_entry=int(template.get('lootid') or creature_entry)
-                if loot_entry in catalog['creature_loot_entries']:
-                    loot_by_entry.setdefault(loot_entry,int(creature_entry))
-            bosses=[]; boss_loot=set()
-            for encounter_entry,creature_entry,loot_entry in boss_entries.get(map_id,()):
-                if loot_entry in boss_loot: continue
-                boss_loot.add(loot_entry); bosses.append((encounter_entry,creature_entry,loot_entry))
-            encounters=[]
-            trash=[{'type':'creature','entry':loot_entry,'creature_entry':creature_entry}
-                   for loot_entry,creature_entry in sorted(loot_by_entry.items()) if loot_entry not in boss_loot]
-            item_level_min,item_level_max=_item_level_band_for_creatures(
-                catalog['creature_templates'][creature_entry] for creature_entry in loot_by_entry.values())
-            loot_mode=loot_mode_for_difficulty(map_row.get('map_type'),difficulty_id)
-            if trash:
-                encounters.append({'id':'trash','kind':'trash','weight':1,'item_level':[item_level_min,item_level_max],'targets':trash})
-            previous=None
-            for encounter_entry,creature_entry,loot_entry in bosses:
-                encounter={'id':f'boss_{encounter_entry:06d}','kind':'boss','weight':3,'item_level':[item_level_min,item_level_max],
-                           'targets':[{'type':'creature','entry':loot_entry,'creature_entry':creature_entry}]}
-                if previous: encounter['requires']=[previous]
-                encounters.append(encounter); previous=encounter['id']
-            if not encounters: continue
-            profile_id=f'map_{map_id}_difficulty_{difficulty_id}'
-            profiles.append({'id':profile_id,'instance':map_row.get('directory',profile_id),
-                             'difficulty_id':difficulty_id,'map_id':map_id,'map_type':map_row.get('map_type'),
-                             'loot_mode':loot_mode,'item_level_min':item_level_min,'item_level_max':item_level_max,
-                             'additional_drop_chance':float(additional_drop_chance),'encounters':encounters})
-    manifest={'version':1,'profiles':profiles,'recipes':[],'quest_targets':[]}
-    validate_content_manifest(manifest)
-    validate_targeted_source_membership(manifest,catalog)
-    return manifest
-
-def assign_default_encounter_items(items,manifest):
-    profiles=[profile for profile in manifest.get('profiles',())
-              if any(encounter.get('targets') for encounter in profile.get('encounters',()))]
-    if not items or not profiles: return items
-    resolved={profile['id']:resolve_encounter_order(profile) for profile in profiles}
-    for item in sorted(items,key=lambda item:h64(item['entry'],'default_encounter_profile')):
-        item_level=int(item.get('ItemLevel',item.get('item_level',0)))
-        eligible_profiles=[profile for profile in profiles if profile['item_level_min']<=item_level<=profile['item_level_max']]
-        if not eligible_profiles: continue
-        profile=weighted([(row['id'],1) for row in eligible_profiles],item['entry'],'default_encounter_profile')
-        profile=next(row for row in eligible_profiles if row['id']==profile); profile_resolved=resolved[profile['id']]
-        encounters=[row for row in profile_resolved if row.get('targets')]
-        eligible=[]
-        for encounter in encounters:
-            lo,hi=encounter_item_level_band(profile,encounter,profile_resolved)
-            if lo<=item_level<=hi: eligible.append(encounter)
-        if not eligible: continue
-        target=weighted([(row['id'],float(row.get('weight',1))) for row in eligible],item['entry'],'default_encounter_target',profile['id'])
-        item['content_profile']=profile['id']; item['content_target']=target
-        item['target_kind']='raid' if profile.get('map_type')==2 else 'dungeon'
-    return items
-
-def validate_targeted_source_membership(manifest,catalog):
-    for profile in manifest.get('profiles',()):
-        if profile.get('map_id') is None: continue
-        map_id=int(profile['map_id']); difficulty_id=profile.get('difficulty_id')
-        if map_id not in catalog['maps']: raise ValueError(f'profile {profile["id"]} references unknown map {map_id}')
-        if difficulty_id is not None and (map_id,int(difficulty_id)) not in catalog['map_difficulties']:
-            raise ValueError(f'profile {profile["id"]} references unknown map difficulty {map_id}:{difficulty_id}')
-        for encounter in profile.get('encounters',()):
-            for target in encounter.get('targets',()):
-                target_type=target['type']; entry=int(target['entry'])
-                if target_type=='reference':
-                    if entry not in catalog['reference_loot_entries']: raise ValueError(f'unknown reference loot target {entry} in profile {profile["id"]}')
-                    continue
-                creature_entry=int(target.get('creature_entry',entry))
-                if creature_entry not in catalog['creature_templates'] or entry not in catalog['creature_loot_entries']:
-                    raise ValueError(f'creature loot target {entry} is missing creature or loot data')
-                if map_id not in catalog['creature_maps'].get(creature_entry,set()):
-                    raise ValueError(f'creature {creature_entry} is not spawned on map {map_id} for profile {profile["id"]}')
-                if encounter.get('kind')=='boss' and not any(row['credit_entry']==creature_entry for row in catalog['instance_encounters'].values()):
-                    raise ValueError(f'boss target {creature_entry} is not present in instance_encounters.sql')
 
 def _stock_item_metadata(fields):
     if len(fields)<=ITEM_TEMPLATE_DISENCHANT_INDEX:
@@ -2447,26 +2176,13 @@ def merge_item_dbc(source_path,generated_rows,output_path,overwrite=False):
 WORLD_LOOT_ROW_RE=re.compile(r'^\s*\(\s*\d+\s*,\s*\d+\s*,\s*(-?\d+)\s*,.*?World Loot Level\s+(\d+)\b',re.IGNORECASE)
 REFERENCE_ENTRY_RE=re.compile(r'^\s*\(\s*(\d+)\s*,')
 
-def _load_loot_insert_rows(path):
-    path=Path(path)
-    text=path.read_text(encoding='utf-8')
-    inserts=list(re.finditer(r'\bINSERT\s+INTO\b.*?\bVALUES\b',text,re.IGNORECASE|re.DOTALL))
-    rows=[]
-    for index,match in enumerate(inserts):
-        end=inserts[index+1].start() if index+1<len(inserts) else len(text)
-        rows.extend(_scan_sql_tuples(text[match.end():end]))
-    if rows: return rows
-    return [_split_sql_tuple(line) for line in text.splitlines() if REFERENCE_ENTRY_RE.match(line) and _split_sql_tuple(line) is not None]
-
 def _load_reference_entries(path):
-    entries={int(row[0]):True for row in _load_loot_insert_rows(path) if row and str(row[0]).strip().lstrip('-').isdigit()}
+    entries={}
+    for line in path.read_text(encoding='utf-8').splitlines():
+        match=REFERENCE_ENTRY_RE.match(line)
+        if match: entries[int(match.group(1))]=True
     if not entries:
         raise ValueError(f'no reference loot rows found in {path}')
-    return entries
-
-def load_loot_entry_ids(path):
-    entries={int(row[0]) for row in _load_loot_insert_rows(path) if row and str(row[0]).strip().lstrip('-').isdigit()}
-    if not entries: raise ValueError(f'no loot-template rows found in {path}')
     return entries
 
 def _catalog_reference_contexts():
@@ -2645,16 +2361,14 @@ def load_world_loot_references(world_path=None,reference_path=None):
     world_path=Path(DEFAULT_WORLD_LOOT_SOURCE if world_path is None else world_path)
     reference_path=Path(DEFAULT_REFERENCE_LOOT_SOURCE if reference_path is None else reference_path)
     levels={}
-    for row in _load_loot_insert_rows(world_path):
-        if len(row)<=9 or 'world loot level' not in str(row[9]).lower(): continue
-        match=re.search(r'world loot level\s+(\d+)\b',str(row[9]),re.IGNORECASE)
-        if not match: raise ValueError(f'unparseable world-loot row in {world_path}')
-        try:
-            reference_id=int(row[2]); level=int(match.group(1))
-        except (TypeError,ValueError) as exc:
-            raise ValueError(f'unparseable world-loot row in {world_path}') from exc
+    for line_number,line in enumerate(world_path.read_text(encoding='utf-8').splitlines(),1):
+        if 'world loot level' not in line.lower(): continue
+        match=WORLD_LOOT_ROW_RE.match(line)
+        if not match:
+            raise ValueError(f'unparseable world-loot row at {world_path}:{line_number}')
+        reference_id=int(match.group(1)); level=int(match.group(2))
         if reference_id<=0 or level<1:
-            raise ValueError(f'invalid world-loot mapping in {world_path}')
+            raise ValueError(f'invalid world-loot mapping at {world_path}:{line_number}')
         previous=levels.get(reference_id)
         if previous is not None and previous!=level:
             raise ValueError(f'world-loot reference {reference_id} maps to both levels {previous} and {level}')
@@ -2707,254 +2421,6 @@ def build_loot_records(items,world_references):
     if len({row['item'] for row in attachments})!=len(attachments):
         raise RuntimeError('generated loot attachments contain duplicate keys')
     return {'pools':pools,'pool_rows':pool_rows,'attachments':attachments}
-
-def resolve_encounter_order(profile):
-    encounters=list(profile.get('encounters',()))
-    nodes={str(row.get('id','')):dict(row) for row in encounters}
-    if len(nodes)!=len(encounters) or '' in nodes:
-        raise ValueError(f'profile {profile.get("id", "<unknown>")} has duplicate or missing encounter IDs')
-    requires={node_id:[str(value) for value in node.get('requires',())] for node_id,node in nodes.items()}
-    for node_id,parents in requires.items():
-        if node_id in parents or any(parent not in nodes for parent in parents):
-            raise ValueError(f'encounter {node_id} has an invalid prerequisite')
-
-    indegree={node_id:len(parents) for node_id,parents in requires.items()}
-    children=defaultdict(list)
-    for node_id,parents in requires.items():
-        for parent in parents: children[parent].append(node_id)
-    ready=sorted(node_id for node_id,count in indegree.items() if count==0)
-    ranks={node_id:0 for node_id in ready}
-    resolved=[]
-    while ready:
-        current=ready
-        ready=[]
-        for node_id in current:
-            row=dict(nodes[node_id]); row['rank']=ranks[node_id]; resolved.append(row)
-            for child in sorted(children[node_id]):
-                ranks[child]=max(ranks.get(child,0),ranks[node_id]+1)
-                indegree[child]-=1
-                if indegree[child]==0: ready.append(child)
-        ready.sort()
-    if len(resolved)!=len(nodes):
-        raise ValueError(f'profile {profile.get("id", "<unknown>")} has a cycle in encounter prerequisites')
-    return resolved
-
-def load_content_manifest(path):
-    path=Path(path).expanduser().resolve()
-    try:
-        manifest=json.loads(path.read_text(encoding='utf-8'))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f'invalid content manifest JSON: {path}: {exc.msg}') from exc
-    validate_content_manifest(manifest)
-    return manifest
-
-def validate_content_manifest(manifest):
-    if not isinstance(manifest,dict) or manifest.get('version')!=1:
-        raise ValueError('content manifest must be an object with version 1')
-    profiles=manifest.get('profiles',[])
-    recipes=manifest.get('recipes',[])
-    quests=manifest.get('quest_targets',[])
-    if not all(isinstance(rows,list) for rows in (profiles,recipes,quests)):
-        raise ValueError('content manifest profiles, recipes, and quest_targets must be lists')
-    profile_ids=[]; target_keys=set()
-    for profile in profiles:
-        if not isinstance(profile,dict) or not str(profile.get('id','')).strip():
-            raise ValueError('content profiles need non-empty IDs')
-        profile_id=str(profile['id'])
-        if profile_id in profile_ids: raise ValueError(f'duplicate content profile: {profile_id}')
-        profile_ids.append(profile_id)
-        lo=int(profile.get('item_level_min',0)); hi=int(profile.get('item_level_max',0))
-        if lo<0 or hi<lo: raise ValueError(f'invalid item-level range for profile {profile_id}')
-        chance=float(profile.get('additional_drop_chance',0))
-        if not 0<=chance<=100: raise ValueError(f'invalid additional-drop chance for profile {profile_id}')
-        if profile.get('loot_mode') is not None and not 0<int(profile['loot_mode'])<=65535:
-            raise ValueError(f'invalid loot mode for profile {profile_id}')
-        for encounter in profile.get('encounters',[]):
-            if not isinstance(encounter,dict) or not str(encounter.get('id','')).strip():
-                raise ValueError(f'profile {profile_id} has an encounter without an ID')
-            if encounter.get('kind') not in ('boss','trash'):
-                raise ValueError(f'encounter {encounter.get("id")} must be boss or trash')
-            weight=float(encounter.get('weight',1))
-            if weight<=0: raise ValueError(f'encounter {encounter.get("id")} must have a positive weight')
-            quantity=int(encounter.get('quantity',1))
-            if quantity<1: raise ValueError(f'encounter {encounter.get("id")} must have a positive quantity')
-            if encounter.get('loot_mode') is not None and not 0<int(encounter['loot_mode'])<=65535:
-                raise ValueError(f'invalid loot mode for encounter {encounter.get("id")}')
-            for target in encounter.get('targets',[]):
-                target_type=target.get('type') if isinstance(target,dict) else None
-                entry=int(target.get('entry',0)) if isinstance(target,dict) else 0
-                if target_type not in ('creature','reference') or entry<=0:
-                    raise ValueError(f'encounter {encounter.get("id")} has an invalid loot target')
-                key=(profile_id,target_type,entry)
-                if key in target_keys: raise ValueError(f'duplicate loot target: {target_type}:{entry}')
-                target_keys.add(key)
-        resolve_encounter_order(profile)
-    recipe_ids=[]
-    for recipe in recipes:
-        if not isinstance(recipe,dict) or not str(recipe.get('id','')).strip():
-            raise ValueError('content recipes need non-empty IDs')
-        recipe_id=str(recipe['id'])
-        if recipe_id in recipe_ids: raise ValueError(f'duplicate content recipe: {recipe_id}')
-        recipe_ids.append(recipe_id)
-        if recipe.get('set_count') is not None:
-            if int(recipe.get('set_count',0))<1 or not 1<=int(recipe.get('set_size',5))<=10:
-                raise ValueError(f'recipe {recipe_id} needs a positive set_count and set_size between 1 and 10')
-        elif int(recipe.get('count',0))<1:
-            raise ValueError(f'recipe {recipe_id} needs a positive count')
-        if recipe.get('profile') is not None and str(recipe['profile']) not in profile_ids:
-            raise ValueError(f'recipe {recipe_id} references unknown profile {recipe["profile"]}')
-    for target in quests:
-        if not isinstance(target,dict) or int(target.get('quest_id',0))<=0:
-            raise ValueError('quest targets need positive quest_id values')
-        if target.get('mode','fixed') not in ('fixed','choice'):
-            raise ValueError(f'quest {target.get("quest_id")} mode must be fixed or choice')
-        recipe_id=target.get('recipe')
-        if recipe_id is not None and str(recipe_id) not in recipe_ids:
-            raise ValueError(f'quest target references unknown recipe: {recipe_id}')
-    return manifest
-
-def allocate_weighted_counts(total,targets):
-    total=int(total)
-    if total<0: raise ValueError(f'weighted allocation total must be nonnegative: {total}')
-    rows=[(str(row.get('id','')),float(row.get('weight',1))) for row in targets]
-    if len({row[0] for row in rows})!=len(rows) or any(not row[0] for row in rows):
-        raise ValueError('weighted allocation targets must have unique non-empty IDs')
-    active=[row for row in rows if row[1]>0]
-    if total and not active: raise ValueError('weighted allocation needs a positive target weight')
-    if not total: return {row[0]:0 for row in rows}
-    weight_total=sum(weight for _,weight in active)
-    counts={target:0 for target,_ in rows}
-    remainders=[]
-    for target,weight in active:
-        raw=total*weight/weight_total
-        count=math.floor(raw)
-        counts[target]=count
-        remainders.append((raw-count,target))
-    remaining=total-sum(counts.values())
-    for _,target in sorted(remainders,key=lambda row:(-row[0],row[1]))[:remaining]:
-        counts[target]+=1
-    return counts
-
-def encounter_item_level_band(profile,encounter,resolved):
-    explicit=encounter.get('item_level')
-    if explicit is not None:
-        if not isinstance(explicit,(list,tuple)) or len(explicit)!=2: raise ValueError(f'encounter {encounter["id"]} item_level must be a two-value range')
-        lo,hi=map(int,explicit)
-    elif 'item_level_min' in encounter or 'item_level_max' in encounter:
-        lo=int(encounter.get('item_level_min',profile['item_level_min'])); hi=int(encounter.get('item_level_max',profile['item_level_max']))
-    else:
-        profile_lo=int(profile['item_level_min']); profile_hi=int(profile['item_level_max'])
-        max_rank=max((row['rank'] for row in resolved),default=0)
-        if max_rank==0: lo,hi=profile_lo,profile_hi
-        else:
-            lo=profile_lo+((profile_hi-profile_lo)*encounter['rank'])//(max_rank+1)
-            hi=profile_lo+((profile_hi-profile_lo)*(encounter['rank']+1))//(max_rank+1)
-            if encounter.get('kind')=='boss' and encounter['id']==next((row['id'] for row in reversed(resolved) if row.get('kind')=='boss'),None): hi=profile_hi
-    if lo<0 or hi<lo: raise ValueError(f'invalid item-level band for encounter {encounter["id"]}: {lo}-{hi}')
-    return lo,hi
-
-def validate_loot_targets(profile,source_rows):
-    for encounter in profile.get('encounters',()):
-        for target in encounter.get('targets',()):
-            target_type=target['type']; entry=int(target['entry'])
-            if entry not in source_rows.get(target_type,set()):
-                raise ValueError(f'loot target {target_type}:{entry} for {profile["id"]}/{encounter["id"]} was not found in the supplied SQL source')
-
-def build_encounter_loot_records(items,profile,source_rows,pool_base=GENERATED_ENCOUNTER_POOL_BASE):
-    validate_loot_targets(profile,source_rows)
-    resolved=resolve_encounter_order(profile)
-    encounters=[row for row in resolved if row.get('targets')]
-    eligible=[item for item in items if item.get('content_profile')==profile.get('id')]
-    if not eligible: return {'profile_id':profile.get('id'),'order':resolved,'encounters':{},'pool_rows':[],'attachments':[]}
-    explicit=[item for item in eligible if item.get('content_target')]
-    if explicit and len(explicit)!=len(eligible): raise ValueError(f'profile {profile["id"]} mixes explicit and automatic encounter assignments')
-    if not explicit:
-        counts=allocate_weighted_counts(len(eligible),encounters)
-        ordered=sorted(eligible,key=lambda item:h64(profile['id'],item['entry'],'encounter'))
-        cursor=0
-        for encounter in encounters:
-            for item in ordered[cursor:cursor+counts[encounter['id']]]: item['content_target']=encounter['id']
-            cursor+=counts[encounter['id']]
-    encounter_by_id={row['id']:row for row in encounters}
-    if any(item.get('content_target') not in encounter_by_id for item in eligible):
-        raise ValueError(f'generated item references an unknown encounter in profile {profile["id"]}')
-    pool_rows=[]; attachments=[]; result={}
-    for index,encounter in enumerate(encounters):
-        target_items=[item for item in eligible if item.get('content_target')==encounter['id']]
-        if not target_items: continue
-        pool_id=pool_base+index; chance=float(encounter.get('additional_drop_chance',profile.get('additional_drop_chance',0)))
-        loot_mode=int(encounter.get('loot_mode',profile.get('loot_mode',loot_mode_for_difficulty(profile.get('map_type'),profile.get('difficulty_id')))))
-        quantity=int(encounter.get('quantity',profile.get('quantity',1))); band=encounter_item_level_band(profile,encounter,resolved)
-        if not 0<=chance<=100 or quantity<1 or not 0<loot_mode<=65535: raise ValueError(f'invalid loot settings for encounter {encounter["id"]}')
-        if any(not band[0]<=item['ItemLevel']<=band[1] for item in target_items if 'ItemLevel' in item):
-            raise ValueError(f'items assigned to {profile["id"]}/{encounter["id"]} fall outside its item-level band')
-        for item in target_items:
-            pool_rows.append({'pool_id':pool_id,'item':item['entry'],'encounter':encounter['id'],
-                              'comment':f'Generated {profile["id"]} {encounter["id"]} | {item["name"] if item.get("name") else item["entry"]}'})
-        for target in encounter['targets']:
-            attachments.append({'parent_type':target['type'],'parent_entry':int(target['entry']),'pool_id':pool_id,
-                                'encounter':encounter['id'],'chance':chance,'quantity':quantity,'loot_mode':loot_mode})
-        result[encounter['id']]={'pool_id':pool_id,'item_count':len(target_items),'rank':encounter['rank'],
-                                 'band':band,'chance':chance,'quantity':quantity,'loot_mode':loot_mode,'targets':encounter['targets']}
-    return {'profile_id':profile.get('id'),'order':resolved,'encounters':result,'pool_rows':pool_rows,'attachments':attachments}
-
-def build_manifest_encounter_loot_records(items,manifest,world_path,reference_path,source_catalog=None):
-    source_rows={'creature':source_catalog['creature_loot_entries'],'reference':source_catalog['reference_loot_entries']} if source_catalog else {'creature':load_loot_entry_ids(world_path),'reference':load_loot_entry_ids(reference_path)}
-    records=[]
-    for index,profile in enumerate(manifest.get('profiles',())):
-        record=build_encounter_loot_records(items,profile,source_rows,
-                                             GENERATED_ENCOUNTER_POOL_BASE+index*10_000)
-        if record['encounters']: records.append(record)
-    used_pools=[pool['pool_id'] for record in records for pool in record['encounters'].values()]
-    if len(used_pools)!=len(set(used_pools)) or any(pool_id in source_rows['reference'] for pool_id in used_pools):
-        raise ValueError('generated encounter pool ID collides with an existing reference-loot entry')
-    return records
-
-def assign_plan_encounters(plan,profiles):
-    for profile_id,profile in profiles.items():
-        rows=[row for row in plan if row.get('content_profile')==profile_id and row.get('target_kind') in ('dungeon','raid')]
-        if not rows: continue
-        resolved=resolve_encounter_order(profile); encounters=[row for row in resolved if row.get('targets') or row.get('weight',1)>0]
-        explicit=[row for row in rows if row.get('content_target')]
-        if explicit and len(explicit)!=len(rows): raise ValueError(f'profile {profile_id} mixes explicit and automatic encounter assignments')
-        if not explicit:
-            groups=defaultdict(list)
-            for row in rows:
-                key=(row['recipe_id'],row.get('set_request_index')) if row.get('set_request_index') is not None else (row['recipe_id'],row['index'])
-                groups[key].append(row)
-            units=[(key,members) for key,members in sorted(groups.items(),key=lambda pair:str(pair[0]))]
-            if any(len(members)>1 for _,members in units):
-                counts=allocate_weighted_counts(len(units),encounters)
-                assignment=[]
-                cursor=0
-                ordered_units=sorted(units,key=lambda pair:h64(profile_id,str(pair[0]),'encounter'))
-                for encounter in encounters:
-                    for _key,members in ordered_units[cursor:cursor+counts[encounter['id']]]: assignment.extend((member,encounter['id']) for member in members)
-                    cursor+=counts[encounter['id']]
-            else:
-                counts=allocate_weighted_counts(len(rows),encounters); assignment=[]; ordered_rows=sorted(rows,key=lambda row:h64(profile_id,row['recipe_id'],row['index'],'encounter')); cursor=0
-                for encounter in encounters:
-                    assignment.extend((row,encounter['id']) for row in ordered_rows[cursor:cursor+counts[encounter['id']]]); cursor+=counts[encounter['id']]
-            for row,target in assignment: row['content_target']=target
-        encounter_by_id={row['id']:row for row in resolved}
-        for row in rows:
-            if row.get('content_target') not in encounter_by_id: raise ValueError(f'unknown encounter {row.get("content_target")} in profile {profile_id}')
-            lo,hi=encounter_item_level_band(profile,encounter_by_id[row['content_target']],resolved)
-            if row.get('item_level_min') is not None: lo=max(lo,row['item_level_min'])
-            if row.get('item_level_max') is not None: hi=min(hi,row['item_level_max'])
-            if lo>hi: raise ValueError(f'recipe {row["recipe_id"]} cannot satisfy encounter {row["content_target"]} item-level band')
-            row['item_level_min']=lo; row['item_level_max']=hi
-    return plan
-
-def assign_plan_quests(plan,targets):
-    for target in targets:
-        recipe_id=str(target.get('recipe','')); quest_id=int(target['quest_id']); mode=target.get('mode','fixed')
-        candidates=[row for row in plan if row.get('recipe_id')==recipe_id and row.get('target_kind')=='quest' and row.get('quest_id') is None]
-        count=int(target.get('count',1))
-        if count<1 or len(candidates)<count: raise ValueError(f'quest {quest_id} recipe {recipe_id} does not have enough generated items')
-        for row in sorted(candidates,key=lambda item:item['index'])[:count]:
-            row['quest_id']=quest_id; row['quest_mode']=mode; row['quest_slot']=target.get('slot'); row['quest_quantity']=target.get('quantity')
-    return plan
 
 def h64(*parts):
     if SEED is None:
@@ -3482,35 +2948,6 @@ def choose_structure(cname,role,req,ilvl,q,entry):
     ref=choose_ref(A[('armor',sub,inv)],ilvl,q,entry,'armor_ref')
     return dict(slot=slot,cls=4,sub=sub,inv=inv,kind='armor',budget_key=slot,ref=ref)
 
-def choose_weapon_structure(cname,role,req,ilvl,q,entry,requested_kind=None):
-    allowed={kind for kind,_weight in weapon_choices(cname,role)}
-    kind=requested_kind or weighted(weapon_choices(cname,role),entry,'targeted_weapon_kind')
-    if kind not in allowed: raise ValueError(f'{kind} is not a valid {cname} weapon choice')
-    sub,inv,budget_key=WEAPON_META[kind]
-    return dict(slot='weapon',cls=2,sub=sub,inv=inv,kind=kind,budget_key=budget_key,ref=None)
-
-def choose_structure_for_slot(cname,role,req,ilvl,q,entry,slot):
-    if slot=='weapon': return choose_weapon_structure(cname,role,req,ilvl,q,entry)
-    if slot=='relic':
-        sub={'Paladin':7,'Druid':8,'Shaman':9,'Death Knight':10}[cname]
-        ref=choose_ref(A[('relic',sub,28)],ilvl,q,entry,'targeted_relic_ref')
-        return dict(slot=slot,cls=4,sub=sub,inv=28,kind='relic',budget_key='relic',ref=ref)
-    if slot=='back':
-        ref=choose_ref(A[('misc',1,16)],ilvl,q,entry,'targeted_back_ref')
-        return dict(slot=slot,cls=4,sub=1,inv=16,kind='back',budget_key='back',ref=ref)
-    if slot in ('neck','finger','trinket'):
-        inv={'neck':2,'finger':11,'trinket':12}[slot]
-        ref=choose_ref(A[('misc',0,inv)],ilvl,q,entry,'targeted_'+slot+'_ref')
-        return dict(slot=slot,cls=4,sub=0,inv=inv,kind=slot,budget_key=slot,ref=ref)
-    sub=armor_subclass(cname,req)
-    if slot=='chest':
-        available=[inv for inv in (5,20) if A.get(('armor',sub,inv))]
-        if not available: raise ValueError(f'no harvested chest appearances for armor subclass {sub}')
-        inv=weighted([(candidate,len(A[('armor',sub,candidate)])) for candidate in available],entry,'targeted_chest_inventory')
-    else: inv=INV[slot]
-    ref=choose_ref(A[('armor',sub,inv)],ilvl,q,entry,'targeted_'+slot+'_ref')
-    return dict(slot=slot,cls=4,sub=sub,inv=inv,kind='armor',budget_key=slot,ref=ref)
-
 def expected_legendary_count(item_count):
     # Preserve the original rarity: three Legendaries per 100,000 generated items.
     return (item_count*3)//100000
@@ -3697,7 +3134,7 @@ def _assign_disenchant(item):
     item['DisenchantID']=chosen['disenchant_id']
     item['disenchant_source_entry']=chosen['source_entry']
 
-def _choose_set_template(anchor,set_size=None):
+def _choose_set_template(anchor):
     templates=[]
     set_window=_effect_ilvl_window(anchor['item_level'])*2
     for template in FEATURE_CATALOG.get('set_templates',[]):
@@ -3711,8 +3148,7 @@ def _choose_set_template(anchor,set_size=None):
         if abs(template['item_level']-anchor['item_level'])>set_window:
             continue
         thresholds={threshold for threshold,_ in template['bonuses']}
-        wanted_size=SET_SIZE if set_size is None else set_size
-        if 2 not in thresholds or (wanted_size>=4 and 4 not in thresholds):
+        if 2 not in thresholds or (SET_SIZE>=4 and 4 not in thresholds):
             continue
         templates.append(template)
     if not templates:
@@ -3852,44 +3288,6 @@ def assign_item_sets(skeletons):
         definitions.append({'set_id':set_id,'name':set_name,'bonuses':final_bonuses,'items':tuple(member['entry'] for member in candidates),'template_id':template['source_set_id']})
     return definitions
 
-def assign_targeted_sets(skeletons):
-    groups=defaultdict(list)
-    for item in skeletons:
-        if item.get('set_request_index') is not None:
-            groups[(item['recipe_id'],item['set_request_index'])].append(item)
-    if not groups: return []
-    if not feature_enabled('sets'):
-        raise ValueError('targeted set recipes require the sets feature to be enabled')
-    definitions=[]; used_set_names=set(); used_piece_names=set()
-    next_set_id=max(FEATURE_CATALOG.get('item_sets',()),default=0)+1
-    for _group_key,members in sorted(groups.items()):
-        members.sort(key=lambda item:item['set_piece_index'])
-        set_size=members[0].get('set_size') or len(members)
-        if len(members)!=set_size: raise ValueError(f'targeted set has {len(members)} pieces, expected {set_size}')
-        anchor=members[0]
-        template=_choose_set_template(anchor,set_size)
-        if template is None: raise ValueError(f'no compatible stock set template for targeted set {anchor["recipe_id"]}')
-        final_bonuses=_normalize_set_bonuses(template['bonuses'],set_size)
-        thresholds={threshold for threshold,_ in final_bonuses}
-        if 2 not in thresholds or (set_size>=4 and 4 not in thresholds):
-            raise ValueError(f'targeted set {anchor["recipe_id"]} lacks required stock bonuses')
-        for attempt in range(len(SET_THEME_TITLES)*4):
-            set_name=_set_name(anchor,attempt)
-            piece_names=_set_piece_names(members,set_name)
-            if set_name not in used_set_names and piece_names is not None and not used_piece_names.intersection(piece_names): break
-        else: raise ValueError(f'could not create a unique name for targeted set {anchor["recipe_id"]}')
-        used_set_names.add(set_name); used_piece_names.update(piece_names)
-        set_id=next_set_id; next_set_id+=1
-        for member,piece_name in zip(members,piece_names):
-            member['item_level']=anchor['item_level']; member['required_level']=anchor['required_level']
-            member['class_mask']=CLASS_MASK_BY_NAME[anchor['class_name']]
-            member['set_id']=set_id; member['set_name']=set_name; member['set_piece_name']=piece_name
-            member['set_bonuses']=final_bonuses; member['set_template_id']=template['source_set_id']
-            member['set_visual_ref']=template['visuals'].get(member['slot'])
-        definitions.append({'set_id':set_id,'name':set_name,'bonuses':final_bonuses,
-                            'items':tuple(member['entry'] for member in members),'template_id':template['source_set_id']})
-    return definitions
-
 def generated_item_set_rows(items):
     grouped=defaultdict(list)
     for item in items:
@@ -3902,109 +3300,6 @@ def generated_item_set_rows(items):
         bonuses=_normalize_set_bonuses(first.get('set_bonuses',()),len(members))
         rows.append(item_set_row(set_id,first.get('set_name','Generated Set'),[item['entry'] for item in members],bonuses))
     return rows
-
-def _recipe_range(recipe,profile,key,default_lo,default_hi):
-    value=recipe.get(key)
-    if value is None and profile is not None:
-        value=profile.get(key)
-    if value is None:
-        if default_lo is None and default_hi is None and f'{key}_min' not in recipe and f'{key}_max' not in recipe and not profile:
-            return None,None
-        lo=recipe.get(f'{key}_min',profile.get(f'{key}_min',default_lo) if profile else default_lo)
-        hi=recipe.get(f'{key}_max',profile.get(f'{key}_max',default_hi) if profile else default_hi)
-    else:
-        if not isinstance(value,(list,tuple)) or len(value)!=2:
-            raise ValueError(f'{key} range must contain exactly two values')
-        lo,hi=value
-    lo=int(lo); hi=int(hi)
-    if (default_lo is not None and lo<default_lo) or (default_hi is not None and hi>default_hi) or lo>hi:
-        raise ValueError(f'invalid {key} range: {lo}-{hi}')
-    return lo,hi
-
-def build_generation_plan(manifest,available_classes):
-    validate_content_manifest(manifest)
-    profiles={str(row['id']):row for row in manifest.get('profiles',())}
-    class_names=[row[0] for row in available_classes]
-    class_counts=Counter()
-    plan=[]
-    for recipe in manifest.get('recipes',()):
-        recipe_id=str(recipe['id']); profile=profiles.get(str(recipe.get('profile'))) if recipe.get('profile') else None
-        classes=recipe.get('classes') or ([recipe['class']] if recipe.get('class') else class_names)
-        normalized=[]
-        for class_name in classes:
-            key=''.join(ch for ch in str(class_name).lower() if ch.isalnum())
-            normalized_name=CLASS_ALIASES.get(key)
-            if normalized_name not in class_names: raise ValueError(f'recipe {recipe_id} references unknown class: {class_name}')
-            normalized.append(normalized_name)
-        required_min,required_max=_recipe_range(recipe,profile,'required_level',1,80)
-        item_min,item_max=_recipe_range(recipe,profile,'item_level',None,None)
-        set_count=int(recipe.get('set_count',0)); set_size=int(recipe.get('set_size',5)) if set_count else 0
-        total_count=set_count*set_size if set_count else int(recipe['count'])
-        set_classes={}
-        for index in range(total_count):
-            set_index=index//set_size if set_count else None
-            if set_count and set_index not in set_classes:
-                set_classes[set_index]=normalized[set_index%len(normalized)] if len(normalized)==1 else weighted([(name,1) for name in normalized],recipe_id,set_index,'set_class')
-            class_name=set_classes[set_index] if set_count else (normalized[index%len(normalized)] if len(normalized)==1 else weighted([(name,1) for name in normalized],recipe_id,index,'class'))
-            local_index=class_counts[class_name]
-            if local_index>=MAX_ITEMS_PER_CLASS: raise ValueError(f'targeted generation exceeds the per-class cap for {class_name}')
-            class_counts[class_name]+=1
-            row=dict(recipe_id=recipe_id,index=index,class_name=class_name,class_index=local_index,
-                     required_level_min=required_min,required_level_max=required_max,
-                     item_level_min=item_min,item_level_max=item_max,
-                     quality=recipe.get('quality'),role=recipe.get('role'),kind=recipe.get('kind'),
-                     weapon_kind=recipe.get('weapon_kind'),content_profile=recipe.get('profile'),
-                     target_kind=recipe.get('target_kind','general'),content_target=recipe.get('target'),
-                     set_request_index=set_index,set_piece_index=index%set_size if set_count else None,
-                     set_size=set_size or None,set_slot=SET_SLOT_ORDER[index%set_size] if set_count else None,
-                     quest_id=None,quest_mode=None,quest_slot=None,quest_quantity=None)
-            plan.append(row)
-    if not plan: raise ValueError('content manifest must contain at least one recipe item')
-    assign_plan_encounters(plan,profiles)
-    assign_plan_quests(plan,manifest.get('quest_targets',()))
-    return plan
-
-def choose_recipe_level(recipe,index):
-    lo=int(recipe['required_level_min']); hi=int(recipe['required_level_max'])
-    return lo if lo==hi else lo+int(r01(recipe['recipe_id'],index,'required_level')*(hi-lo+1))
-
-def choose_recipe_item_level(recipe,required_level,index):
-    if recipe.get('item_level_min') is None or recipe.get('item_level_max') is None:
-        return item_level(required_level,entry_for_class(recipe['class_name'],recipe['class_index']))
-    lo=int(recipe['item_level_min']); hi=int(recipe['item_level_max'])
-    if lo==hi: return lo
-    return lo+int(r01(recipe['recipe_id'],index,'item_level',required_level)*(hi-lo+1))
-
-def build_targeted_skeletons(plan,ui=None):
-    skeletons=[]
-    for completed,recipe in enumerate(plan,1):
-        cname=recipe['class_name']; entry=entry_for_class(cname,recipe['class_index'])
-        req=choose_recipe_level(recipe,recipe['index']); ilvl=choose_recipe_item_level(recipe,req,recipe['index'])
-        q=int(recipe['quality']) if recipe.get('quality') is not None else quality(req,ilvl,entry)
-        role=recipe.get('role') or weighted(ROLE_WEIGHTS[cname],entry,'targeted_role',recipe['recipe_id'])
-        if recipe.get('set_slot'):
-            st=choose_structure_for_slot(cname,role,req,ilvl,q,entry,recipe['set_slot'])
-        elif recipe.get('kind')=='weapon':
-            st=choose_weapon_structure(cname,role,req,ilvl,q,entry,recipe.get('weapon_kind'))
-        else:
-            st=choose_structure(cname,role,req,ilvl,q,entry)
-        mask_kind='weapon' if st['cls']==2 else st['kind']
-        weapon_kind=st['kind'] if st['cls']==2 else None
-        class_mask=compatible_class_mask(cname,role,req,mask_kind,armor_subclass=st['sub'],weapon_kind=weapon_kind)
-        skeletons.append(dict(entry=entry,class_name=cname,class_mask=class_mask,required_level=req,item_level=ilvl,quality=q,role=role,
-                              recipe_id=recipe['recipe_id'],content_profile=recipe.get('content_profile'),target_kind=recipe.get('target_kind'),
-                              content_target=recipe.get('content_target'),set_request_index=recipe.get('set_request_index'),
-                              set_piece_index=recipe.get('set_piece_index'),set_size=recipe.get('set_size'),quest_id=recipe.get('quest_id'),
-                              quest_mode=recipe.get('quest_mode'),quest_slot=recipe.get('quest_slot'),quest_quantity=recipe.get('quest_quantity'),**st))
-        if ui and (completed==1 or completed==len(plan) or completed%25==0):
-            ui.progress(completed,len(plan),current=f'{cname} • Level {req} • {QUALITY_NAME[q]}')
-    return skeletons
-
-def build_runtime_skeletons(ui=None):
-    if TARGETED_PLAN is None: return build_skeletons(ui=ui)
-    skeletons=build_targeted_skeletons(TARGETED_PLAN,ui=ui)
-    assign_targeted_sets(skeletons)
-    return skeletons
 
 def build_skeletons(ui=None):
     if ACTIVE_CLASSES is None or CLASS_ITEM_COUNTS is None or TARGET_ITEM_COUNT is None:
@@ -4107,10 +3402,7 @@ def finish_items(sk,ui=None):
                   itemset=x.get('set_id',0),socketBonus=0,RequiredDisenchantSkill=-1,DisenchantID=0,
                   special_effect_feature=effect_probe['special_effect_feature'],effect_source_entry=effect_probe['effect_source_entry'],
                   effect_source_spell=effect_probe['effect_source_spell'],spell_slots=effect_probe['spell_slots'],
-                  set_name=x.get('set_name',''),set_bonuses=x.get('set_bonuses',()),set_template_id=x.get('set_template_id',0),
-                  recipe_id=x.get('recipe_id',''),content_profile=x.get('content_profile'),target_kind=x.get('target_kind','general'),
-                  content_target=x.get('content_target'),set_request_index=x.get('set_request_index'),quest_id=x.get('quest_id'),
-                  quest_mode=x.get('quest_mode'),quest_slot=x.get('quest_slot'),quantity=x.get('quest_quantity'))
+                  set_name=x.get('set_name',''),set_bonuses=x.get('set_bonuses',()),set_template_id=x.get('set_template_id',0))
         _assign_socket_bonus(item)
         _assign_disenchant(item)
         items.append(item)
@@ -4130,17 +3422,11 @@ def validate(items,ui=None):
     expected_counts=CLASS_ITEM_COUNTS or Counter(x['class_name'] for x in items)
     if len(items)!=expected_total: errors.append(f'count={len(items)} expected={expected_total}')
 
-    if CONTENT_MANIFEST is None:
-        expected_entries=[]
-        for cname,_,_start in CLASSES:
-            for i in range(expected_counts.get(cname,0)):
-                expected_entries.append(entry_for_class(cname,i))
-        if entries!=expected_entries: errors.append('entry allocation does not match the configured class/item plan')
-    else:
-        for cname,_,_start in CLASSES:
-            actual=sorted(x['entry'] for x in items if x['class_name']==cname)
-            expected=[entry_for_class(cname,i) for i in range(expected_counts.get(cname,0))]
-            if actual!=expected: errors.append(f'{cname} targeted entry allocation does not match the configured class/item plan')
+    expected_entries=[]
+    for cname,_,_start in CLASSES:
+        for i in range(expected_counts.get(cname,0)):
+            expected_entries.append(entry_for_class(cname,i))
+    if entries!=expected_entries: errors.append('entry allocation does not match the configured class/item plan')
     if len(set(entries))!=len(entries): errors.append('duplicate entries')
     if len(set(names))!=len(names): errors.append('duplicate names')
     for x in items:
@@ -4302,181 +3588,15 @@ def _format_entry_ranges(items):
 def _loot_sql_row(values):
     return '('+','.join(fmt(v) for v in values)+')'
 
-def build_world_item_placement_rows(items,loot):
-    pools={pool['pool_id']:pool for pool in loot.get('pools',())}
-    pool_items={row['item']:row for row in loot.get('pool_rows',())}
-    attachments=defaultdict(list)
-    for row in loot.get('attachments',()): attachments[row['pool_id']].append(row)
-    rows=[]
-    for item in items:
-        pool_row=pool_items.get(item['entry'])
-        if pool_row is None or pool_row['pool_id'] not in pools:
-            raise RuntimeError(f'world placement is missing generated item {item["entry"]}')
-        pool=pools[pool_row['pool_id']]; targets=sorted(attachments.get(pool['pool_id'],()),key=lambda row:row['parent_reference'])
-        rows.append({'entry':item['entry'],'name':item['name'],'required_level':item['RequiredLevel'],'item_level':item['ItemLevel'],
-                     'quality':item['Quality'],'destination':'world','pool_id':pool['pool_id'],'pool_bracket':pool['bracket'],
-                     'pool_level_min':pool['level_min'],'pool_level_max':pool['level_max'],'world_reference_count':len(targets),
-                     'world_reference_entries':'; '.join(str(row['parent_reference']) for row in targets),
-                     'world_loot_levels':'; '.join(str(level) for level in sorted({row['world_level'] for row in targets})),
-                     'chance':LOOT_CHANCE if LOOT_CHANCE is not None else 0})
-    return rows
-
-def build_encounter_item_placement_rows(items,records,manifest,source_catalog=None):
-    profiles={profile['id']:profile for profile in (manifest or {}).get('profiles',())}
-    encounters={(profile['id'],encounter['id']):encounter for profile in profiles.values() for encounter in profile.get('encounters',())}
-    infos={(record['profile_id'],encounter_id):info for record in records for encounter_id,info in record.get('encounters',{}).items()}
-    source_catalog=source_catalog or {}
-    creature_templates=source_catalog.get('creature_templates',{})
-    instance_encounters=source_catalog.get('instance_encounters',{})
-    rows=[]
-    for item in items:
-        key=(item.get('content_profile'),item.get('content_target'))
-        info=infos.get(key); profile=profiles.get(key[0]); encounter=encounters.get(key)
-        if info is None or profile is None or encounter is None: continue
-        target_entries=[]; target_names=[]; target_details=[]
-        for target in info.get('targets',()):
-            target_type=str(target['type']); entry=int(target['entry']); target_entries.append(f'{target_type}:{entry}')
-            if target_type=='creature':
-                creature_entry=int(target.get('creature_entry',entry)); name=creature_templates.get(creature_entry,{}).get('name')
-            else:
-                name=None
-            name=name or ('Reference '+str(entry) if target_type=='reference' else str(entry))
-            target_names.append(name); target_details.append(f'{target_type}:{entry}={name}')
-        encounter_id=key[1]; encounter_name='Trash' if encounter_id=='trash' else encounter_id
-        match=re.fullmatch(r'boss_(\d+)',str(encounter_id))
-        if match:
-            encounter_name=instance_encounters.get(int(match.group(1)),{}).get('comment') or encounter_name
-        rows.append({'entry':item['entry'],'name':item['name'],'required_level':item['RequiredLevel'],'item_level':item['ItemLevel'],
-                     'quality':item['Quality'],'profile_id':profile['id'],'map_id':profile.get('map_id',''),
-                     'difficulty_id':profile.get('difficulty_id',''),'instance':profile.get('instance',profile['id']),
-                     'destination':'raid' if profile.get('map_type')==2 else 'dungeon' if profile.get('map_type')==1 else 'dungeon/raid',
-                     'encounter':encounter_id,'encounter_kind':encounter.get('kind',''),'encounter_name':encounter_name,
-                     'pool_id':info['pool_id'],'loot_mode':info.get('loot_mode',1),'chance':info['chance'],'quantity':info['quantity'],
-                     'item_level_min':info['band'][0],'item_level_max':info['band'][1],
-                     'target_count':len(target_entries),'target_entries':'; '.join(target_entries),
-                     'target_names':'; '.join(target_names),'targets':'; '.join(target_details)})
-    return rows
-
-def write_placement_reports(items,loot,records,output_dir,manifest=None,source_catalog=None):
-    output_dir=Path(output_dir); output_dir.mkdir(parents=True,exist_ok=True)
-    world_path=output_dir/'world_item_placements.csv'; world_fields=['entry','name','required_level','item_level','quality','destination','pool_id','pool_bracket','pool_level_min','pool_level_max','world_reference_count','world_reference_entries','world_loot_levels','chance']
-    with world_path.open('w',encoding='utf-8',newline='') as f:
-        writer=csv.DictWriter(f,fieldnames=world_fields); writer.writeheader(); writer.writerows(build_world_item_placement_rows(items,loot))
-    encounter_path=output_dir/'dungeon_raid_item_placements.csv'; encounter_fields=['entry','name','required_level','item_level','quality','profile_id','map_id','difficulty_id','instance','destination','encounter','encounter_kind','encounter_name','pool_id','loot_mode','chance','quantity','item_level_min','item_level_max','target_count','target_entries','target_names','targets']
-    with encounter_path.open('w',encoding='utf-8',newline='') as f:
-        writer=csv.DictWriter(f,fieldnames=encounter_fields); writer.writeheader(); writer.writerows(build_encounter_item_placement_rows(items,records,manifest,source_catalog))
-    return {'world':world_path,'encounter':encounter_path}
-
-def render_encounter_loot_sql(records):
-    columns=',\n    '.join(f'`{column}`' for column in LOOT_SQL_COLUMNS)
-    pool_ids=sorted({value['pool_id'] for value in records.get('encounters',{}).values()})
-    pool_modes={value['pool_id']:value.get('loot_mode',1) for value in records.get('encounters',{}).values()}
-    pool_rows=records.get('pool_rows',[])
-    sql=['-- Generated encounter loot; existing loot rows remain independent.','START TRANSACTION;']
-    for pool_id in pool_ids:
-        rows=[_loot_sql_row((pool_id,row['item'],0,0,0,pool_modes[pool_id],1,1,1,sqlq(row['comment']))) for row in pool_rows if row['pool_id']==pool_id]
-        sql.extend([f'DELETE FROM `reference_loot_template` WHERE `Entry` = {pool_id};',
-                    'INSERT INTO `reference_loot_template`\n(\n    '+columns+'\n)\nVALUES\n'+',\n'.join(rows)+';'])
-    for row in records.get('attachments',[]):
-        table='creature_loot_template' if row['parent_type']=='creature' else 'reference_loot_template'
-        values=(row['parent_entry'],1,row['pool_id'],row['chance'],0,row.get('loot_mode',1),0,row['quantity'],row['quantity'],sqlq(f'Generated encounter attachment | {records.get("profile_id")} | {row["encounter"]}'))
-        sql.extend([f'DELETE FROM `{table}` WHERE `Entry` = {row["parent_entry"]} AND `Item` = 1 AND `Reference` = {row["pool_id"]};',
-                    f'INSERT INTO `{table}`\n(\n    {columns}\n)\nVALUES\n'+_loot_sql_row(values)+';'])
-    sql.append('COMMIT;')
-    cleanup=['-- Removes only generated encounter pools and attachments.','START TRANSACTION;']
-    if pool_ids: cleanup.append(f'DELETE FROM `reference_loot_template` WHERE `Entry` IN ({", ".join(map(str,pool_ids))}) OR `Reference` IN ({", ".join(map(str,pool_ids))});')
-    for row in records.get('attachments',[]):
-        table='creature_loot_template' if row['parent_type']=='creature' else 'reference_loot_template'
-        cleanup.append(f'DELETE FROM `{table}` WHERE `Entry` = {row["parent_entry"]} AND `Item` = 1 AND `Reference` = {row["pool_id"]};')
-    cleanup.append('COMMIT;')
-    return '\n\n'.join(sql)+'\n', '\n'.join(cleanup)+'\n'
-
-def build_quest_reward_records(items,targets,source_rows):
-    records=[]
-    for target in targets:
-        quest_id=int(target['quest_id']); mode=target.get('mode','fixed'); source=source_rows.get(quest_id)
-        if source is None: raise ValueError(f'quest {quest_id} was not found in the supplied quest_template source')
-        candidates=[item for item in items if int(item.get('quest_id') or 0)==quest_id and item.get('quest_mode',mode)==mode]
-        if not candidates: raise ValueError(f'quest {quest_id} has no generated items assigned to its {mode} rewards')
-        slots=[dict(slot) for slot in source.get('fixed' if mode=='fixed' else 'choice',())]
-        used=set()
-        for item in candidates:
-            requested=target.get('slot')
-            slot_index=int(requested)-1 if requested is not None else next((index for index,slot in enumerate(slots) if index not in used and not slot['item']),None)
-            if slot_index is None or not 0<=slot_index<len(slots): raise ValueError(f'quest {quest_id} has no available {mode} reward slot')
-            slot=slots[slot_index]
-            if slot['item'] and not target.get('overwrite',False): raise ValueError(f'quest {quest_id} {mode} reward slot {slot_index+1} is already occupied')
-            used.add(slot_index)
-            records.append({'quest_id':quest_id,'mode':mode,'column':slot['item_column'],'quantity_column':slot['quantity_column'],
-                            'old_item':int(slot['item']),'old_quantity':int(slot['quantity']),'new_item':int(item['entry']),
-                            'new_quantity':int(target.get('quantity') or item.get('quantity') or 1)})
-    return records
-
-def render_quest_reward_sql(records):
-    sql=['-- Generated quest rewards; existing unmapped reward fields remain unchanged.','START TRANSACTION;']
-    cleanup=['-- Restores only quest reward fields changed by this generation.','START TRANSACTION;']
-    for record in records:
-        sql.append(f'UPDATE `quest_template` SET `{record["column"]}` = {record["new_item"]}, `{record["quantity_column"]}` = {record["new_quantity"]} WHERE `ID` = {record["quest_id"]};')
-        cleanup.append(f'UPDATE `quest_template` SET `{record["column"]}` = {record["old_item"]}, `{record["quantity_column"]}` = {record["old_quantity"]} WHERE `ID` = {record["quest_id"]};')
-    sql.append('COMMIT;'); cleanup.append('COMMIT;')
-    return '\n'.join(sql)+'\n', '\n'.join(cleanup)+'\n'
-
-def load_quest_reward_slots(path,quest_ids):
-    path=Path(path); text=path.read_text(encoding='utf-8')
-    schema_match=re.search(r'CREATE\s+TABLE\s+`?quest_template`?\s*\((.*?)\)\s*ENGINE',text,re.IGNORECASE|re.DOTALL)
-    if not schema_match: raise ValueError(f'quest_template schema not found in {path}')
-    quote=chr(96)
-    columns=[line.split(quote)[1] for line in schema_match.group(1).splitlines() if line.lstrip().startswith(quote)]
-    indexes={name:index for index,name in enumerate(columns)}
-    if 'ID' not in indexes: raise ValueError(f'quest_template schema has no ID column: {path}')
-    insert_match=re.search(r'INSERT\s+INTO\s+`?quest_template`?\s+VALUES\s*',text,re.IGNORECASE)
-    if not insert_match: raise ValueError(f'quest_template data insert not found in {path}')
-    wanted={int(value) for value in quest_ids}; found={}
-    for line in text[insert_match.end():].splitlines():
-        values=_split_sql_tuple(line)
-        if values is None: continue
-        if len(values)!=len(columns): raise ValueError(f'quest_template row has {len(values)} values; schema has {len(columns)} columns')
-        quest_id=int(values[indexes['ID']]);
-        if quest_id not in wanted: continue
-        def number(column):
-            raw=values[indexes[column]].strip().strip("'") if column in indexes else '0'
-            return 0 if raw.upper() in ('','NULL') else int(float(raw))
-        fixed=[]; choice=[]
-        for index in range(1,5):
-            item_column=f'RewardItem{index}'; quantity_column=f'RewardAmount{index}'
-            if item_column in indexes and quantity_column in indexes:
-                fixed.append({'item_column':item_column,'quantity_column':quantity_column,'item':number(item_column),'quantity':number(quantity_column)})
-        for index in range(1,7):
-            item_column=f'RewardChoiceItemID{index}'; quantity_column=f'RewardChoiceItemQuantity{index}'
-            if item_column in indexes and quantity_column in indexes:
-                choice.append({'item_column':item_column,'quantity_column':quantity_column,'item':number(item_column),'quantity':number(quantity_column)})
-        found[quest_id]={'fixed':fixed,'choice':choice}
-        if found.keys()>=wanted: break
-    missing=sorted(wanted-set(found))
-    if missing: raise ValueError(f'quests missing from {path}: {missing[:10]}')
-    return found
-
 def write_outputs(items,ui=None,name_changes=()):
     if (OUT is None or SQLDIR is None or LOOT_CHANCE is None or WORLD_LOOT_SOURCE is None or
             REFERENCE_LOOT_SOURCE is None or ITEM_TEMPLATE_SOURCE is None or ITEM_DBC_SOURCES is None or
             ITEM_SET_DBC_SOURCE is None or REFERENCE_CATALOG_AUDIT is None):
         raise RuntimeError('Runtime output directory is not configured. Call configure_runtime() first.')
-    encounter_loot_records=[]
     if ui: ui.status('Mapping world-loot references')
     world_references=load_world_loot_references(WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE)
     if ui: ui.progress(1,10,current='World-loot references mapped')
     loot=build_loot_records(items,world_references)
-    if CONTENT_MANIFEST is not None:
-        if ui: ui.status('Mapping targeted dungeon and raid encounters')
-        encounter_loot_records=build_manifest_encounter_loot_records(items,CONTENT_MANIFEST,WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE,ENCOUNTER_SOURCE_CATALOG)
-    elif DEFAULT_ENCOUNTER_MANIFEST is not None:
-        if ui: ui.status('Assigning generated items to dungeon and raid encounters')
-        assign_default_encounter_items(items,DEFAULT_ENCOUNTER_MANIFEST)
-        encounter_loot_records=build_manifest_encounter_loot_records(items,DEFAULT_ENCOUNTER_MANIFEST,WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE,ENCOUNTER_SOURCE_CATALOG)
-    if ui:
-        ui.status(f'Placement: world loot ({len(loot["attachments"]):,} references)')
-        if encounter_loot_records:
-            ui.status(f'Placement: dungeon/raid loot ({sum(len(record["attachments"]) for record in encounter_loot_records):,} targets)')
     if ui: ui.progress(2,10,current='Generated loot pools built')
     item_dbc_rows=[item_dbc_row(x) for x in items]
     item_set_rows=generated_item_set_rows(items) if feature_enabled('sets') else []
@@ -4569,9 +3689,7 @@ def write_outputs(items,ui=None,name_changes=()):
     loot_dir=SQLDIR/'loot'; loot_dir.mkdir()
     loot_columns=',\n    '.join(f'`{c}`' for c in LOOT_SQL_COLUMNS)
     pool_ids=[GENERATED_LOOT_POOL_BASE+i for i in range(len(LOOT_BRACKETS))]
-    encounter_pool_ids=[pool['pool_id'] for record in encounter_loot_records for pool in record['encounters'].values()]
-    pool_id_list=', '.join(map(str,pool_ids)) or '0'
-    encounter_pool_id_list=', '.join(map(str,encounter_pool_ids)) or '0'
+    pool_id_list=', '.join(map(str,pool_ids))
     cleanup_path=loot_dir/'00_generated_loot_cleanup.sql'; import_order.append(cleanup_path.relative_to(OUT).as_posix())
     cleanup_path.write_text(
         '-- Removes generated reference pools and any rows pointing at them.\n'
@@ -4603,37 +3721,6 @@ def write_outputs(items,ui=None,name_changes=()):
                   for row in loot['attachments']]
             f.write(',\n'.join(rows)+';\n\nCOMMIT;\n')
 
-    encounter_sql=[]; encounter_cleanup=[]
-    for record in encounter_loot_records:
-        sql,cleanup=render_encounter_loot_sql(record)
-        encounter_sql.append(sql); encounter_cleanup.append(cleanup)
-    if encounter_sql:
-        cleanup_path=loot_dir/'00_generated_encounter_loot_cleanup.sql'; import_order.append(cleanup_path.relative_to(OUT).as_posix())
-        cleanup_path.write_text('\n'.join(encounter_cleanup),encoding='utf-8')
-        path=loot_dir/'dungeon_raid_encounter_loot.sql'; import_order.append(path.relative_to(OUT).as_posix())
-        path.write_text('\n'.join(encounter_sql),encoding='utf-8')
-        with (OUT/'encounter_loot.csv').open('w',encoding='utf-8',newline='') as f:
-            w=csv.writer(f); w.writerow(['profile_id','encounter','rank','pool_id','item_count','chance','quantity','loot_mode','item_level_min','item_level_max','parent_type','parent_entry'])
-            for record in encounter_loot_records:
-                for encounter_id,info in record['encounters'].items():
-                    for target in info['targets']:
-                        w.writerow([record['profile_id'],encounter_id,info['rank'],info['pool_id'],info['item_count'],info['chance'],info['quantity'],info['loot_mode'],info['band'][0],info['band'][1],target['type'],target['entry']])
-
-    placement_reports=write_placement_reports(
-        items,loot,encounter_loot_records,
-        OUT,CONTENT_MANIFEST if CONTENT_MANIFEST is not None else DEFAULT_ENCOUNTER_MANIFEST,
-        ENCOUNTER_SOURCE_CATALOG)
-    if ui: ui.status('Placement reports written for world and dungeon/raid loot')
-
-    quest_records=build_quest_reward_records(items,CONTENT_MANIFEST.get('quest_targets',()),QUEST_REWARD_ROWS) if CONTENT_MANIFEST and CONTENT_MANIFEST.get('quest_targets') else []
-    if quest_records:
-        quest_sql,quest_cleanup=render_quest_reward_sql(quest_records)
-        quest_cleanup_path=SQLDIR/'00_generated_quest_rewards_cleanup.sql'; import_order.append(quest_cleanup_path.relative_to(OUT).as_posix()); quest_cleanup_path.write_text(quest_cleanup,encoding='utf-8')
-        quest_path=SQLDIR/'quest_rewards.sql'; import_order.append(quest_path.relative_to(OUT).as_posix()); quest_path.write_text(quest_sql,encoding='utf-8')
-        with (OUT/'quest_rewards.csv').open('w',encoding='utf-8',newline='') as f:
-            w=csv.writer(f); w.writerow(['quest_id','mode','column','quantity_column','old_item','old_quantity','new_item','new_quantity'])
-            for row in quest_records: w.writerow([row['quest_id'],row['mode'],row['column'],row['quantity_column'],row['old_item'],row['old_quantity'],row['new_item'],row['new_quantity']])
-
     with (OUT/'loot_pools.csv').open('w',encoding='utf-8',newline='') as f:
         w=csv.writer(f); w.writerow(['pool_id','bracket','level_min','level_max','item_count','chance','group_id'])
         for pool in loot['pools']: w.writerow([pool['pool_id'],pool['bracket'],pool['level_min'],pool['level_max'],pool['item_count'],0,1])
@@ -4653,11 +3740,6 @@ def write_outputs(items,ui=None,name_changes=()):
     if ui: ui.progress(9,10,current='Loot SQL and GM command files written')
 
     entry_filter=_entry_filter_sql(items)
-    encounter_pool_filter=f'`Entry` IN ({encounter_pool_id_list})'
-    encounter_pool_reference_filter=f'`Reference` IN ({encounter_pool_id_list})'
-    encounter_creature_conditions=' OR '.join(f'(`Entry` = {row["parent_entry"]} AND `Item` = 1 AND `Reference` = {row["pool_id"]})' for record in encounter_loot_records for row in record['attachments'] if row['parent_type']=='creature') or '1 = 0'
-    encounter_reference_conditions=' OR '.join(f'(`Entry` = {row["parent_entry"]} AND `Item` = 1 AND `Reference` = {row["pool_id"]})' for record in encounter_loot_records for row in record['attachments'] if row['parent_type']=='reference') or '1 = 0'
-    quest_restore_sql=''.join(f'UPDATE `quest_template` SET `{row["column"]}` = {row["old_item"]}, `{row["quantity_column"]}` = {row["old_quantity"]} WHERE `ID` = {row["quest_id"]};\n' for row in quest_records)
     pool_filter=f'`Entry` IN ({pool_id_list})'
     pool_reference_filter=f'`Reference` IN ({pool_id_list})'
     (OUT/'00_PREIMPORT_COLLISION_CHECK.sql').write_text(
@@ -4670,23 +3752,15 @@ def write_outputs(items,ui=None,name_changes=()):
         'SELECT COUNT(*) AS generated_loot_reference_collision_count\nFROM `reference_loot_template`\nWHERE '+pool_reference_filter+';\n'
         'SELECT `Entry`,`Item`,`Reference`,`Comment` FROM `reference_loot_template`\nWHERE '+pool_reference_filter+'\nORDER BY `Entry`,`Item`;\n\n'
         'SELECT COUNT(*) AS generated_loot_attachment_collision_count\nFROM `reference_loot_template`\nWHERE '+attachment_conditions+';\n'
-        'SELECT `Entry`,`Item`,`Reference`,`Comment` FROM `reference_loot_template`\nWHERE '+attachment_conditions+'\nORDER BY `Entry`,`Item`;\n\n'
-        'SELECT COUNT(*) AS generated_encounter_pool_collision_count\nFROM `reference_loot_template`\nWHERE '+encounter_pool_filter+' OR '+encounter_pool_reference_filter+';\n\n'
-        'SELECT COUNT(*) AS generated_encounter_creature_attachment_collision_count\nFROM `creature_loot_template`\nWHERE '+encounter_creature_conditions+';\n\n'
-        'SELECT COUNT(*) AS generated_encounter_reference_attachment_collision_count\nFROM `reference_loot_template`\nWHERE '+encounter_reference_conditions+';\n',encoding='utf-8')
+        'SELECT `Entry`,`Item`,`Reference`,`Comment` FROM `reference_loot_template`\nWHERE '+attachment_conditions+'\nORDER BY `Entry`,`Item`;\n',encoding='utf-8')
     (OUT/'99_REMOVE_GENERATED_ITEMS.sql').write_text(
         'START TRANSACTION;\n'
-        f'DELETE FROM `reference_loot_template` WHERE `Entry` IN ({pool_id_list}) OR `Reference` IN ({pool_id_list}) OR `Entry` IN ({encounter_pool_id_list}) OR `Reference` IN ({encounter_pool_id_list});\n'
-        'DELETE FROM `creature_loot_template` WHERE '+encounter_creature_conditions+';\n'
-        'DELETE FROM `reference_loot_template` WHERE '+encounter_reference_conditions+';\n'
-        +quest_restore_sql
-        + 'DELETE FROM `item_template` WHERE '+entry_filter+';\n'
+        f'DELETE FROM `reference_loot_template` WHERE `Entry` IN ({pool_id_list}) OR `Reference` IN ({pool_id_list});\n'
+        'DELETE FROM `item_template` WHERE '+entry_filter+';\n'
         'COMMIT;\n',encoding='utf-8')
     (OUT/'00_SCHEMA_CHECK.sql').write_text(
         "SHOW COLUMNS FROM `acore_world`.`item_template`;\n"
-        "SHOW COLUMNS FROM `acore_world`.`reference_loot_template`;\n"
-        "SHOW COLUMNS FROM `acore_world`.`creature_loot_template`;\n"
-        +("SHOW COLUMNS FROM `acore_world`.`quest_template`;\n" if quest_records else ''),encoding='utf-8')
+        "SHOW COLUMNS FROM `acore_world`.`reference_loot_template`;\n",encoding='utf-8')
 
     q=Counter(QUALITY_NAME[x['Quality']] for x in items); roles=Counter(x['role'] for x in items); kinds=Counter(x['kind'] for x in items)
     loot_bracket_distribution={label:next((pool['item_count'] for pool in loot['pools'] if pool['bracket']==label),0) for label,_,_ in LOOT_BRACKETS}
@@ -4731,21 +3805,7 @@ def write_outputs(items,ui=None,name_changes=()):
             'reference_catalog_inventory_type_mismatch_count':len(REFERENCE_CATALOG_AUDIT['inventory_type_mismatches']),
             'world_loot_reference_count':len(world_references),'loot_bracket_distribution':loot_bracket_distribution,
             'world_loot_bracket_distribution':world_loot_bracket_distribution,
-            'loot_destinations':['world']+(['dungeon','raid'] if encounter_loot_records else []),
-            'placement_reports':{key:path.relative_to(OUT).as_posix() for key,path in placement_reports.items()},
             'generated_loot_pool_ids':[pool['pool_id'] for pool in loot['pools']],
-            'encounter_loot_profiles':[{'profile_id':record['profile_id'],'order':record['order'],'encounters':record['encounters'],
-                                       'pool_row_count':len(record['pool_rows']),'attachment_count':len(record['attachments'])}
-                                      for record in encounter_loot_records],
-            'generated_encounter_pool_ids':encounter_pool_ids,
-            'encounter_source_audit':None if ENCOUNTER_SOURCE_CATALOG is None else {
-                'source_paths':[_portable_source_path(path) for path in (ENCOUNTER_SOURCE_PATHS or ())],
-                'map_count':len(ENCOUNTER_SOURCE_CATALOG['maps']),'map_difficulty_count':len(ENCOUNTER_SOURCE_CATALOG['map_difficulties']),
-                'creature_template_count':len(ENCOUNTER_SOURCE_CATALOG['creature_templates']),'spawn_creature_count':len(ENCOUNTER_SOURCE_CATALOG['creature_maps']),
-                'instance_encounter_count':len(ENCOUNTER_SOURCE_CATALOG['instance_encounters']),
-                'profile_count':0 if DEFAULT_ENCOUNTER_MANIFEST is None else len(DEFAULT_ENCOUNTER_MANIFEST['profiles']),
-            },
-            'quest_reward_count':len(quest_records),'quest_rewards':quest_records,
             'random_effects_enabled':feature_enabled('spell-effects'),'socket_bonus_ids_generated':feature_enabled('socket-bonuses'),
             'disenchant_ids_generated':feature_enabled('disenchant'),'chance_on_hit_enabled':feature_enabled('chance-on-hit'),
             'on_use_enabled':feature_enabled('on-use'),'sets_enabled':feature_enabled('sets'),
@@ -4767,12 +3827,8 @@ Classes: `{class_summary}`<br>
 Generated entry ranges: `{entry_summary}`<br>
 Generated loot pools: `{len(loot['pools'])}` (`{len(loot['pool_rows'])}` item rows)<br>
 World-loot attachments: `{len(loot['attachments'])}` at `{LOOT_CHANCE}%`<br>
-Loot destinations: `world` plus `{len(encounter_pool_ids)}` dungeon/raid encounter pools<br>
-Dungeon/raid LootMode: `1 << MapDifficulty difficulty_id`<br>
-Placement reports: `world_item_placements.csv`, `dungeon_raid_item_placements.csv`<br>
 World-loot source: `{_portable_source_path(WORLD_LOOT_SOURCE)}`<br>
 Reference-loot source: `{_portable_source_path(REFERENCE_LOOT_SOURCE)}`<br>
-Dungeon/raid source files: `{', '.join(_portable_source_path(path) for path in (ENCOUNTER_SOURCE_PATHS or ())) or 'none'}`<br>
 Item-template source: `{_portable_source_path(ITEM_TEMPLATE_SOURCE)}`<br>
 Client Item.dbc sources: `{', '.join(_portable_source_path(path) for path in ITEM_DBC_SOURCES)}`<br>
 ItemSet.dbc source: `{_portable_source_path(ITEM_SET_DBC_SOURCE)}`<br>
@@ -4791,7 +3847,6 @@ Target: AzerothCore / WotLK 3.3.5a
 ## Generator CLI
 
 - `py generate_pack.py` - default 100,000-item pack (10,000 per class).
-- `py generate_pack.py` - also reads the dungeon/raid DBC and SQL sources and writes world plus dungeon/raid loot integrations by default.
 - `py generate_pack.py --number 10` - exactly 10 items total, distributed across classes.
 - `py generate_pack.py --class warrior` - default 10,000-item Warrior block.
 - `py generate_pack.py --seed 12311523 --number 20 --class warlock` - exactly 20 deterministic Warlock items.
@@ -4872,7 +3927,7 @@ def main(argv=None):
         ui.configure(runtime)
 
         ui.phase('Generating item skeletons',total=runtime['number'],detail='Levels, item levels, quality, roles, slots, and class compatibility')
-        sk=build_runtime_skeletons(ui=ui)
+        sk=build_skeletons(ui=ui)
         ui.phase_done('Generating item skeletons',f'{len(sk):,} skeletons ready')
 
         ui.phase('Finalizing generated items',total=len(sk),detail='Stats, appearances, effects, sockets, disenchant data, and names')

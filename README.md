@@ -20,7 +20,7 @@ The current generator also supports:
 - generated `ItemSet.dbc` output for both the client and AzerothCore worldserver
 - an optional Rich terminal dashboard with plain, quiet, and no-animation modes
 - manifest-driven disjoint recipes for exact counts, independent required/item-level ranges, weapons, qualities, and sets
-- explicit dungeon/raid encounter graphs for trash and boss ordering, weighted allocation, progression item levels, and additive encounter loot
+- automatic dungeon/raid encounter integration from the checked-in AzerothCore DBC/SQL sources, plus explicit manifest overrides
 - safe fixed and choice quest-reward assignment that fills empty slots and emits reversible SQL
 
 See [CLI_UI.md](CLI_UI.md) for the dashboard behavior and inspect each generated `validation_report.json` for feature counts and source-audit results.
@@ -233,6 +233,7 @@ This creates the default:
 10,000 per class
 2% world-loot attachment chance
 automatic seed
+dungeon/raid encounter loot integration
 ```
 
 For a small test run:
@@ -2137,11 +2138,15 @@ The generator validates that the resulting value fits within an unsigned 32-bit 
 
 # Targeted Dungeon, Raid, and Quest Content
 
-Pass `--content-manifest PATH` to enable targeted generation. The manifest is JSON and keeps recipe counts disjoint by default. Required level and item level ranges are independent; set recipes use `set_count` and `set_size`.
+The normal no-argument run automatically integrates generated items into source-backed dungeon and raid trash/boss loot tables. It reads the root `Map.dbc`, `MapDifficulty.dbc`, `DungeonMap.dbc`, `creature.sql`, `creature_template.sql`, and `instance_encounters.sql` files, then reports those source paths and generated placements. World-loot pools are emitted in the same run.
+
+Encounter attachments use `LootMode = 1 << MapDifficulty.difficulty_id`. Generated encounter items are filtered to the item-level envelope implied by the spawned creature `minlevel`/`maxlevel` values; items outside every dungeon/raid envelope remain world-loot-only.
+
+Pass `--content-manifest PATH` when explicit recipes, encounter mappings, or quest rewards are needed. The manifest is JSON and keeps recipe counts disjoint by default. Required level and item level ranges are independent; set recipes use `set_count` and `set_size`.
 
 Dungeon and raid profiles are difficulty-specific. Each profile lists exact creature/reference loot targets and an encounter graph using `requires`. The generator resolves a deterministic order, assigns progression ranks, increases item-level bands through the instance, and gives the final boss the profile maximum. Encounter weights allocate exact generated items; each encounter receives its own additive pool and configurable additional-drop chance. One generated item is awarded per successful roll by default.
 
-When a profile includes `map_id` and `difficulty_id`, the generator also reads the root `Map.dbc`, `MapDifficulty.dbc`, `DungeonMap.dbc`, `creature.sql`, `creature_template.sql`, and `instance_encounters.sql` files. It verifies map/difficulty identity, creature spawn membership, creature names/loot IDs, boss credit entries, and existing creature/reference loot targets before writing SQL.
+When a manifest profile includes `map_id` and `difficulty_id`, the same source audit verifies map/difficulty identity, creature spawn membership, creature names/loot IDs, boss credit entries, and existing creature/reference loot targets before writing SQL.
 
 Quest targets reference generated recipes and support both fixed and choice rewards. Provide `--quest-template-source PATH` when the manifest contains `quest_targets`. Existing quest rewards are preserved and empty slots are filled first. Generated quest SQL and cleanup SQL update only mapped fields.
 
@@ -2683,7 +2688,7 @@ py .\generate_pack.py `
   --seed 424242
 ```
 
-This writes separate encounter loot pools, additive creature-loot attachments, quest reward updates, cleanup SQL, `encounter_loot.csv`, `quest_rewards.csv`, and the resolved assignments in `validation_report.json`.
+This writes separate encounter loot pools, additive creature-loot attachments, quest reward updates, cleanup SQL, per-item `world_item_placements.csv` and `dungeon_raid_item_placements.csv` reports, and the resolved assignments in `validation_report.json`.
 
 ---
 
@@ -2700,6 +2705,7 @@ Result:
 10,000 per class
 automatic seed
 2% world-loot chance
+dungeon/raid encounter loot integration
 ```
 
 ---
@@ -2853,7 +2859,9 @@ generated-<seed>/
 ├─ reference_catalog_used.csv
 ├─ loot_pools.csv
 ├─ loot_attachments.csv
-├─ encounter_loot.csv                # targeted manifests only
+├─ world_item_placements.csv          # one row per generated item
+├─ encounter_loot.csv                 # generated dungeon/raid target summary
+├─ dungeon_raid_item_placements.csv  # one row per placed dungeon/raid item
 ├─ quest_rewards.csv                 # targeted manifests only
 │
 ├─ 00_SCHEMA_CHECK.sql
@@ -2903,7 +2911,7 @@ generated-<seed>/
    │
    └─ loot/
       ├─ 00_generated_loot_cleanup.sql
-      ├─ 00_generated_encounter_loot_cleanup.sql  # targeted manifests only
+      ├─ 00_generated_encounter_loot_cleanup.sql
       ├─ 01-19_pool.sql
       ├─ 20-39_pool.sql
       ├─ 40-59_pool.sql
@@ -2911,7 +2919,7 @@ generated-<seed>/
       ├─ 70-79_pool.sql
       ├─ 80_pool.sql
       ├─ world_loot_attachments.sql
-      └─ dungeon_raid_encounter_loot.sql          # targeted manifests only
+      └─ dungeon_raid_encounter_loot.sql
    ├─ 00_generated_quest_rewards_cleanup.sql      # targeted manifests only
    └─ quest_rewards.sql                           # targeted manifests only
 ```
@@ -2930,6 +2938,7 @@ A per-generation summary containing:
 - generated classes
 - entry ranges
 - loot-pool counts
+- per-item world and dungeon/raid placement CSVs
 - loot chance
 - source file paths
 - appearance-harvest counts
@@ -2968,6 +2977,7 @@ Includes:
 - level min/max
 - loot-pool counts
 - loot attachment counts
+- per-item world and dungeon/raid placement reports
 - loot chance
 - source paths
 - DBC merge report

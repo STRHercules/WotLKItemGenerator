@@ -258,6 +258,131 @@ class LootTests(unittest.TestCase):
     def setUp(self):
         g.SEED = 424242
 
+    def test_placement_reports_list_world_and_encounter_destinations_per_item(self):
+        items = [{'entry': 7001, 'name': 'Generated', 'RequiredLevel': 70, 'ItemLevel': 120, 'Quality': 4,
+                  'content_profile': 'sample', 'content_target': 'boss'}]
+        loot = {
+            'pools': [{'pool_id': 3000004, 'bracket': '70-79', 'level_min': 70, 'level_max': 79, 'item_count': 1}],
+            'pool_rows': [{'pool_id': 3000004, 'item': 7001, 'bracket': '70-79', 'comment': 'Generated'}],
+            'attachments': [{'parent_reference': 9000, 'pool_id': 3000004, 'world_level': 70, 'bracket': '70-79'}],
+        }
+        profile = {'id': 'sample', 'map_id': 100, 'map_type': 2, 'difficulty_id': 1,
+                   'encounters': [{'id': 'boss', 'kind': 'boss', 'loot_mode': 2,
+                                   'item_level': [100, 140], 'targets': [{'type': 'creature', 'entry': 8001}]}]}
+        encounter_records = [g.build_encounter_loot_records(items, profile,
+                                                              {'creature': {8001}, 'reference': set()},
+                                                              pool_base=3_100_000)]
+        with tempfile.TemporaryDirectory() as directory:
+            paths = g.write_placement_reports(items, loot, encounter_records, pathlib.Path(directory),
+                                              {'profiles': [profile]},
+                                              {'creature_templates': {8001: {'name': 'Test Boss'}},
+                                               'instance_encounters': {}})
+            with paths['world'].open(encoding='utf-8', newline='') as world_file:
+                world_rows = list(__import__('csv').DictReader(world_file))
+            with paths['encounter'].open(encoding='utf-8', newline='') as encounter_file:
+                encounter_rows = list(__import__('csv').DictReader(encounter_file))
+
+        self.assertEqual(world_rows[0]['entry'], '7001')
+        self.assertEqual(world_rows[0]['world_reference_entries'], '9000')
+        self.assertEqual(encounter_rows[0]['entry'], '7001')
+        self.assertEqual(encounter_rows[0]['destination'], 'raid')
+        self.assertEqual(encounter_rows[0]['encounter_name'], 'boss')
+        self.assertEqual(encounter_rows[0]['targets'], 'creature:8001=Test Boss')
+
+    def test_placement_reports_always_emit_both_csv_headers(self):
+        items = [{'entry': 7001, 'name': 'Generated', 'RequiredLevel': 10, 'ItemLevel': 12, 'Quality': 2}]
+        loot = {'pools': [{'pool_id': 3000000, 'bracket': '1-19', 'level_min': 1, 'level_max': 19, 'item_count': 1}],
+                'pool_rows': [{'pool_id': 3000000, 'item': 7001}], 'attachments': []}
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = g.write_placement_reports(items, loot, [], pathlib.Path(directory))
+            world_header = paths['world'].read_text(encoding='utf-8').splitlines()[0]
+            encounter_header = paths['encounter'].read_text(encoding='utf-8').splitlines()[0]
+
+        self.assertIn('world_reference_entries', world_header)
+        self.assertIn('encounter_name', encounter_header)
+
+    def test_difficulty_loot_modes_use_distinct_bits(self):
+        self.assertEqual(g.loot_mode_for_difficulty(1, 0), 1)
+        self.assertEqual(g.loot_mode_for_difficulty(1, 1), 2)
+        self.assertEqual(g.loot_mode_for_difficulty(2, 2), 4)
+        self.assertEqual(g.loot_mode_for_difficulty(2, 3), 8)
+
+    def test_default_manifest_derives_item_level_band_from_creature_levels(self):
+        catalog = {
+            'maps': {100: {'id': 100, 'directory': 'TestDungeon', 'map_type': 1, 'instance_type': 1}},
+            'map_difficulties': {(100, 0): {'id': 1, 'map_id': 100, 'difficulty_id': 0, 'max_players': 5, 'item_level': 0}},
+            'dungeon_maps': {},
+            'creature_templates': {
+                10: {'entry': 10, 'name': 'Trash', 'lootid': 110, 'minlevel': 66, 'maxlevel': 68},
+                20: {'entry': 20, 'name': 'Boss', 'lootid': 120, 'minlevel': 66, 'maxlevel': 68},
+            },
+            'creature_maps': {10: {100}, 20: {100}},
+            'instance_encounters': {1: {'credit_entry': 20, 'comment': 'Boss'}},
+            'creature_loot_entries': {110, 120},
+            'reference_loot_entries': set(),
+        }
+
+        profile = g.build_default_encounter_manifest(catalog, 2.0)['profiles'][0]
+
+        self.assertEqual((profile['item_level_min'], profile['item_level_max']), (110, 120))
+        self.assertEqual(profile['loot_mode'], 1)
+        self.assertEqual(profile['encounters'][0]['item_level'], [110, 120])
+
+    def test_default_assignment_filters_items_by_profile_item_level(self):
+        manifest = {
+            'version': 1,
+            'profiles': [
+                {'id': 'low', 'map_type': 1, 'item_level_min': 1, 'item_level_max': 10,
+                 'loot_mode': 1, 'encounters': [{'id': 'trash', 'kind': 'trash', 'weight': 1,
+                                                'item_level': [1, 10], 'targets': [{'type': 'creature', 'entry': 110}]}]},
+                {'id': 'high', 'map_type': 2, 'item_level_min': 100, 'item_level_max': 120,
+                 'loot_mode': 2, 'encounters': [{'id': 'boss', 'kind': 'boss', 'weight': 1,
+                                                'item_level': [100, 120], 'targets': [{'type': 'creature', 'entry': 120}]}]},
+            ],
+        }
+        items = [{'entry': 1, 'ItemLevel': 5}, {'entry': 2, 'ItemLevel': 110}, {'entry': 3, 'ItemLevel': 250}]
+
+        g.assign_default_encounter_items(items, manifest)
+
+        self.assertEqual(items[0]['content_profile'], 'low')
+        self.assertEqual(items[1]['content_profile'], 'high')
+        self.assertNotIn('content_profile', items[2])
+
+    def test_encounter_pool_and_attachment_share_difficulty_loot_mode(self):
+        profile = {
+            'id': 'sample', 'item_level_min': 100, 'item_level_max': 120, 'loot_mode': 2,
+            'encounters': [{'id': 'boss', 'kind': 'boss', 'weight': 1, 'item_level': [100, 120],
+                           'targets': [{'type': 'creature', 'entry': 9001}]}],
+        }
+        records = g.build_encounter_loot_records(
+            [{'entry': 7001, 'content_profile': 'sample', 'content_target': 'boss', 'ItemLevel': 110, 'name': 'Generated'}],
+            profile, {'creature': {9001}, 'reference': set()}, pool_base=3_100_000)
+
+        sql, _ = g.render_encounter_loot_sql(records)
+
+        self.assertIn('(3100000,7001,0,0,0,2,1,1,1', sql)
+        self.assertIn('(9001,1,3100000,0,0,2,0,1,1', sql)
+
+    def test_world_loot_source_parses_multi_tuple_insert_statements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            world = pathlib.Path(directory) / 'creature_loot_template.sql'
+            reference = pathlib.Path(directory) / 'reference_loot_template.sql'
+            world.write_text(
+                "INSERT INTO `creature_loot_template` VALUES "
+                "(10,1,9001,0,0,1,5,1,1,'World Loot Level 24'),"
+                "(10,2,9002,0,0,1,5,1,1,'World Loot Level 25');\n",
+                encoding='utf-8')
+            reference.write_text(
+                "INSERT INTO `reference_loot_template` VALUES "
+                "(9001,1,0,0,0,1,1,1,1,'one'),"
+                "(9002,1,0,0,0,1,1,1,1,'two');\n",
+                encoding='utf-8')
+
+            levels = g.load_world_loot_references(world, reference)
+
+        self.assertEqual(levels, {9001: 24, 9002: 25})
+
     def test_encounter_progression_ends_at_profile_maximum(self):
         profile = {
             'id': 'sample',
@@ -423,6 +548,50 @@ INSERT INTO `quest_template` VALUES
 
 
 class SourceTests(unittest.TestCase):
+    def test_default_encounter_manifest_maps_source_backed_trash_and_boss_loot(self):
+        catalog = {
+            'maps': {100: {'id': 100, 'directory': 'TestDungeon', 'map_type': 1, 'instance_type': 1}},
+            'map_difficulties': {(100, 0): {'id': 1, 'map_id': 100, 'difficulty_id': 0, 'max_players': 5, 'item_level': 127}},
+            'dungeon_maps': {},
+            'creature_templates': {
+                10: {'entry': 10, 'name': 'Trash', 'lootid': 110},
+                20: {'entry': 20, 'name': 'Boss', 'lootid': 120},
+            },
+            'creature_maps': {10: {100}, 20: {100}},
+            'instance_encounters': {1: {'credit_entry': 20, 'comment': 'Boss'}},
+            'creature_loot_entries': {110, 120},
+            'reference_loot_entries': set(),
+        }
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        self.assertEqual(len(manifest['profiles']), 1)
+        profile = manifest['profiles'][0]
+        self.assertEqual(profile['map_id'], 100)
+        self.assertEqual([row['kind'] for row in profile['encounters']], ['trash', 'boss'])
+        self.assertEqual(profile['encounters'][0]['targets'][0]['entry'], 110)
+        self.assertEqual(profile['encounters'][0]['targets'][0]['creature_entry'], 10)
+        self.assertEqual(profile['encounters'][1]['targets'][0]['entry'], 120)
+
+    def test_default_encounter_assignment_covers_items_with_valid_bands(self):
+        g.SEED = 424242
+        manifest = {
+            'version': 1,
+            'profiles': [{
+                'id': 'sample', 'item_level_min': 1, 'item_level_max': 284,
+                'encounters': [
+                    {'id': 'trash', 'kind': 'trash', 'weight': 1, 'targets': [{'type': 'creature', 'entry': 110}]},
+                    {'id': 'boss', 'kind': 'boss', 'requires': ['trash'], 'weight': 3, 'targets': [{'type': 'creature', 'entry': 120}]},
+                ],
+            }],
+        }
+        items = [{'entry': 1, 'ItemLevel': 50}, {'entry': 2, 'ItemLevel': 250}]
+
+        g.assign_default_encounter_items(items, manifest)
+
+        self.assertEqual({row['content_profile'] for row in items}, {'sample'})
+        self.assertEqual({row['content_target'] for row in items}, {'trash', 'boss'})
+
     def test_root_sources_build_map_creature_and_encounter_catalogs(self):
         catalog = g.load_encounter_source_catalog(
             pathlib.Path('Map.dbc'), pathlib.Path('MapDifficulty.dbc'), pathlib.Path('DungeonMap.dbc'),
