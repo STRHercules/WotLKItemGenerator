@@ -67,6 +67,21 @@ def _minimal_encounter_catalog(*, map_id=631, map_type=2, instance_type=13,
     }
 
 
+def _catalog_with_gameobject_sources():
+    catalog = _minimal_encounter_catalog(map_id=631, map_type=2,
+                                         instance_type=13)
+    catalog['gameobject_templates'] = {
+        7001: {'entry': 7001, 'type': 3, 'name': 'Reward Chest',
+               'lootid': 97001},
+    }
+    catalog['gameobject_spawns'] = [
+        {'guid': 44, 'id': 7001, 'map': 631, 'spawn_mask': 3},
+    ]
+    catalog['gameobject_maps'] = {7001: {631}}
+    catalog['gameobject_loot_entries'] = {97001}
+    return catalog
+
+
 def _stock_item(entry, item_level, required_level, quality=4):
     return {
         'entry': entry, 'class': 4, 'subclass': 2, 'name': f'Stock {entry}',
@@ -617,6 +632,24 @@ class SafetyTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_reward_target_report_has_fixed_header(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = g.write_placement_reports(
+                [], {'pools': [], 'attachments': []}, [], pathlib.Path(directory),
+                {'profiles': [], 'gameobject_reward_targets': [{
+                    'profile_id': 'map_631_difficulty_0', 'map_id': 631,
+                    'difficulty_id': 0, 'encounter_id': '',
+                    'encounter_name': '', 'gameobject_entry': 7001,
+                    'gameobject_name': 'Reward Chest', 'loot_entry': 97001,
+                    'spawn_guid': 44, 'spawn_mask': 3,
+                    'association_method': 'static_spawn',
+                    'association_source': 'gameobject.sql',
+                    'direct_item_count': 0, 'reference_item_count': 0,
+                    'valid': False, 'invalid_reason': 'no boss association',
+                }]})
+            header = paths['gameobject_rewards'].read_text(
+                encoding='utf-8').splitlines()[0]
+        self.assertEqual(header, 'profile_id,map_id,difficulty_id,encounter_id,encounter_name,gameobject_entry,gameobject_name,loot_entry,spawn_guid,spawn_mask,association_method,association_source,direct_item_count,reference_item_count,valid,invalid_reason')
     def test_gameobject_encounter_sql_uses_gameobject_table(self):
         records = {
             'profile_id': 'sample',
@@ -1261,6 +1294,58 @@ INSERT INTO `quest_template` VALUES
 
 
 class SourceTests(unittest.TestCase):
+    def test_static_chest_uses_map_and_data1_without_fuzzy_boss_association(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['instance_encounters'] = {}
+        rows = g.discover_gameobject_reward_targets(catalog, 631, 0)
+        self.assertEqual(rows[0]['gameobject_entry'], 7001)
+        self.assertEqual(rows[0]['loot_entry'], 97001)
+        self.assertEqual(rows[0]['spawn_mask'], 3)
+        self.assertFalse(rows[0]['valid'])
+        self.assertIn('boss', rows[0]['invalid_reason'].lower())
+
+    def test_gameobject_instance_mapping_is_valid_only_for_the_matching_map(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['instance_encounters'] = {
+            44: {'credit_type': 1, 'credit_entry': 7001,
+                 'last_encounter_dungeon': 500, 'comment': 'Reward Cache'},
+        }
+        catalog['dungeon_maps'] = {500: (500, 631)}
+        rows = g.discover_gameobject_reward_targets(catalog, 631, 0)
+        self.assertTrue(rows[0]['valid'])
+        self.assertEqual(rows[0]['association_method'], 'explicit_instance_mapping')
+
+    def test_explicit_done_path_summon_maps_script_reward(self):
+        source = """
+enum GameObjects { GO_REWARD_CHEST = 7001 };
+void InstanceTest::SetBossState(uint32 id, EncounterState state) {
+    if (id == DATA_BOSS && state == DONE)
+        instance->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            mappings, status = g.discover_script_reward_mappings(root, {
+                'gameobject_templates': {7001: {'entry': 7001, 'type': 3,
+                                                'name': 'Reward Chest',
+                                                'lootid': 97001}},
+                'gameobject_loot_entries': {97001},
+            })
+        self.assertEqual(status, 'exercised')
+        self.assertEqual(mappings[0]['gameobject_entry'], 7001)
+        self.assertIn('SummonGameObject', mappings[0]['evidence_type'])
+
+    def test_same_file_symbol_cooccurrence_is_not_script_reward_evidence(self):
+        source = "enum GameObjects { GO_REWARD_CHEST = 7001 }; void Other() { }"
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'unrelated.cpp'
+            path.write_text(source, encoding='utf-8')
+            mappings, status = g.discover_script_reward_mappings(
+                pathlib.Path(directory), {'gameobject_templates': {7001: {}},
+                                           'gameobject_loot_entries': {97001}})
+        self.assertEqual(status, 'exercised')
+        self.assertEqual(mappings, [])
     def test_complete_default_gameobject_trio_is_discoverable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)

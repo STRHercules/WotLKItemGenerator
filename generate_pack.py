@@ -1734,6 +1734,11 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
             gameobject_loot_path=gameobject_source_paths[2] if gameobject_source_paths else None,
         )
         encounter_source_paths=encounter_paths[:6]
+        encounter_source_catalog.setdefault('source_audit',{})['azerothcore_source_root']=str(source_root)
+        script_root=source_root if args.azerothcore_source_root else None
+        script_mappings,script_status=discover_script_reward_mappings(script_root,encounter_source_catalog)
+        encounter_source_catalog['script_reward_mappings']=script_mappings
+        encounter_source_catalog['source_audit']['script_reward_mapping']=script_status
         if content_manifest is None:
             default_encounter_manifest=build_default_encounter_manifest(encounter_source_catalog,args.loot_chance)
         else:
@@ -2255,6 +2260,73 @@ def gameobject_support_state(catalog):
     audit=catalog.get('source_audit',{})
     return 'exercised' if audit.get('gameobject_source_paths') or catalog.get('gameobject_templates') else 'not_exercised'
 
+def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None):
+    """Return the auditable static reward-object candidates, fail-closed."""
+    rows=[]
+    requested_map=None if map_id is None else int(map_id)
+    requested_difficulty='' if difficulty_id is None else int(difficulty_id)
+    encounters=catalog.get('instance_encounters',{})
+    dungeon_maps=catalog.get('dungeon_maps',{})
+    for spawn in catalog.get('gameobject_spawns',()):
+        entry=int(spawn.get('id',0)); template=catalog.get('gameobject_templates',{}).get(entry)
+        if not template or int(template.get('type',0))!=3: continue
+        loot_entry=int(template.get('lootid') or 0)
+        if loot_entry<=0 or loot_entry not in catalog.get('gameobject_loot_entries',set()): continue
+        spawn_map=int(spawn.get('map',-1))
+        if requested_map is not None and spawn_map!=requested_map: continue
+        matches=[]
+        for encounter_entry, encounter in encounters.items():
+            if int(encounter.get('credit_type',0))!=1 or int(encounter.get('credit_entry',-1))!=entry: continue
+            resolved=_dungeon_map_id(dungeon_maps,encounter.get('last_encounter_dungeon',0))
+            if resolved==spawn_map: matches.append((int(encounter_entry),encounter))
+        source_path=(catalog.get('source_audit',{}).get('gameobject_source_paths') or [''])[0]
+        base={'profile_id':f'map_{spawn_map}_difficulty_{requested_difficulty}' if requested_map is not None else '',
+              'map_id':spawn_map,'difficulty_id':requested_difficulty,'gameobject_entry':entry,
+              'gameobject_name':template.get('name',''),'loot_entry':loot_entry,
+              'spawn_guid':int(spawn.get('guid',0)),'spawn_mask':int(spawn.get('spawn_mask',1)),
+              'direct_item_count':0,'reference_item_count':0,'association_source':source_path}
+        if matches:
+            encounter_entry,encounter=matches[0]
+            base.update({'encounter_id':f'boss_{encounter_entry:06d}',
+                         'encounter_name':encounter.get('comment',''),
+                         'association_method':'explicit_instance_mapping','valid':True,
+                         'invalid_reason':''})
+        else:
+            base.update({'encounter_id':'','encounter_name':'','association_method':'static_spawn',
+                         'valid':False,'invalid_reason':'static map/spawn has no boss association'})
+        rows.append(base)
+    return rows
+
+def discover_script_reward_mappings(source_root, catalog):
+    """Find explicit completion-path summons; file-level symbol co-occurrence is insufficient."""
+    if source_root is None: return [], 'not_exercised'
+    root=Path(source_root)
+    scan_root=root/'src'/'server'/'scripts' if (root/'src'/'server'/'scripts').is_dir() else root
+    files=[path for path in scan_root.rglob('*') if path.is_file() and path.suffix.lower() in {'.cpp','.h','.hpp','.cc','.c'}]
+    constants={}
+    templates=catalog.get('gameobject_templates',{})
+    text_by_file=[]
+    for path in files:
+        text=path.read_text(encoding='utf-8',errors='ignore'); text_by_file.append((path,text))
+        for name,value in re.findall(r'\b(GO_[A-Za-z0-9_]+)\s*=\s*(\d+)',text): constants[name]=int(value)
+        for name,value in re.findall(r'\b(?:const(?:ant)?\s+)?(?:uint\w*|int)\s+(GO_[A-Za-z0-9_]+)\s*=\s*(\d+)',text):
+            constants[name]=int(value)
+    mappings=[]
+    for path,text in text_by_file:
+        for match in re.finditer(r'\b(?:SummonGameObject|SummonGameobject|summonGameObject)\s*\(\s*([^,)]+)',text):
+            prefix=text[:match.start()]; function=re.search(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*\{([^{}]*)$',prefix,re.S)
+            if not function: continue
+            block=prefix[function.start():]
+            if not re.search(r'(?:SetBossState\s*\([^;{}]*\bDONE\b|\bstate\s*==\s*DONE\b|\bDONE\b\s*==\s*state)',block): continue
+            token=match.group(1).strip(); entry=constants.get(token)
+            if entry is None and token.isdigit(): entry=int(token)
+            template=templates.get(entry,{}) if entry is not None else {}
+            if entry is None or int(template.get('type',0))!=3 or int(template.get('lootid') or 0) not in catalog.get('gameobject_loot_entries',set()): continue
+            mappings.append({'source_path':str(path.relative_to(root) if path.is_relative_to(root) else path),
+                             'encounter_identifier':function.group(1),'gameobject_entry':entry,
+                             'difficulty_condition':'','evidence_type':'SummonGameObject completion path'})
+    return mappings, 'exercised'
+
 def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_kind='profile'):
     usable=[evidence for evidence in evidences if evidence and evidence.get('item_level_min') is not None]
     if not usable:
@@ -2283,6 +2355,7 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
 
 def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
     profiles=[]; coverage=[]
+    catalog['gameobject_reward_targets']=discover_gameobject_reward_targets(catalog)
     source_evidence_enabled='stock_items' in catalog and 'creature_loot_rows' in catalog
     dungeon_or_raid_maps={map_id:row for map_id,row in catalog['maps'].items()
                           if row.get('map_type') in (1,2)}
@@ -2513,7 +2586,8 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                                                'band_b':[right['item_level_min'],right['item_level_max']],
                                                'identical':identical,
                                                'reason':'filtered source evidence is identical' if identical else 'independently filtered source evidence'})
-    manifest={'version':1,'profiles':profiles,'coverage':coverage,'difficulty_comparisons':difficulty_comparisons,'recipes':[],'quest_targets':[],
+    manifest={'version':1,'profiles':profiles,'coverage':coverage,'difficulty_comparisons':difficulty_comparisons,
+              'gameobject_reward_targets':catalog.get('gameobject_reward_targets',()),'recipes':[],'quest_targets':[],
               'source_audit':dict(catalog.get('source_audit',{}))}
     validate_content_manifest(manifest)
     validate_targeted_source_membership(manifest,catalog)
@@ -5192,8 +5266,18 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
                              'entry':item.get('entry',''),'name':item.get('name',''),'slot':item.get('slot',''),
                              'profile_id':item.get('content_profile',''),'encounter':item.get('content_target',''),
                              'atomic_profile':item.get('set_atomic_profile') or item.get('content_profile','')})
+    reward_path=output_dir/'gameobject_reward_targets.csv'
+    reward_fields=['profile_id','map_id','difficulty_id','encounter_id','encounter_name',
+                   'gameobject_entry','gameobject_name','loot_entry','spawn_guid','spawn_mask',
+                   'association_method','association_source','direct_item_count','reference_item_count',
+                   'valid','invalid_reason']
+    with reward_path.open('w',encoding='utf-8',newline='') as f:
+        writer=csv.DictWriter(f,fieldnames=reward_fields); writer.writeheader()
+        writer.writerows({field:row.get(field,'') for field in reward_fields}
+                         for row in (manifest or {}).get('gameobject_reward_targets',()))
     return {'world':world_path,'encounter':encounter_path,'coverage':coverage_path,'profiles':profile_path,
-            'difficulty_comparison':comparison_path,'rejections':rejection_path,'sets':set_path}
+            'difficulty_comparison':comparison_path,'rejections':rejection_path,'sets':set_path,
+            'gameobject_rewards':reward_path}
 
 def render_encounter_loot_sql(records):
     columns=',\n    '.join(f'`{column}`' for column in LOOT_SQL_COLUMNS)
