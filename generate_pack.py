@@ -2175,6 +2175,8 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
             'creature_loot_entries':{_sql_int(row[0]) for row in creature_loot_rows},
             'reference_loot_entries':{_sql_int(row[0]) for row in reference_loot_rows},
             'gameobject_templates':gameobject_templates,'gameobject_spawns':gameobject_spawns,'gameobject_maps':gameobject_maps,
+            'supported_gameobject_entries':{entry for entry, template in gameobject_templates.items()
+                                            if template.get('type') == 3 and template.get('lootid', 0) > 0},
             'gameobject_loot_columns':gameobject_loot_columns,'gameobject_loot_rows':gameobject_loot_rows,
             'gameobject_loot_entries':{_sql_int(row[0]) for row in gameobject_loot_rows},
             'stock_items':stock_items,

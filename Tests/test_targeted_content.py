@@ -1332,7 +1332,7 @@ INSERT INTO `gameobject` VALUES (1,7001,631);
   `type` int,
   `data1` int
 ) ENGINE=InnoDB;
-INSERT INTO `gameobject_template` VALUES (7001,'Chest',3,97001),(7002,'Not loot',2,0);
+INSERT INTO `gameobject_template` VALUES (7001,'Chest',3,97001),(7002,'Wrong type',2,97002),(7003,'No loot',3,0);
 """,
                 encoding='utf-8',
             )
@@ -1365,8 +1365,10 @@ INSERT INTO `gameobject_loot_template` VALUES (97001,19001,0,1);
         self.assertEqual(catalog['gameobject_templates'][7001]['lootid'], 97001)
         self.assertEqual(catalog['gameobject_templates'][7001]['type'], 3)
         self.assertEqual(catalog['gameobject_templates'][7002]['type'], 2)
-        self.assertEqual(catalog['gameobject_templates'][7002]['lootid'], 0)
-        self.assertNotIn('eligible_reward_objects', catalog)
+        self.assertEqual(catalog['gameobject_templates'][7002]['lootid'], 97002)
+        self.assertEqual(catalog['gameobject_templates'][7003]['type'], 3)
+        self.assertEqual(catalog['gameobject_templates'][7003]['lootid'], 0)
+        self.assertEqual(catalog['supported_gameobject_entries'], {7001})
         self.assertEqual(catalog['gameobject_spawns'][0]['spawn_mask'], 1)
         self.assertEqual(catalog['gameobject_maps'][7001], {631})
 
