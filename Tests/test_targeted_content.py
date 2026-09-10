@@ -1,4 +1,5 @@
 import importlib.util
+import csv
 import json
 import pathlib
 import tempfile
@@ -234,7 +235,10 @@ class ProfileTests(unittest.TestCase):
 
         row = next(row for row in manifest['coverage'] if row['map_id'] == 631)
         self.assertFalse(row['profile_created'])
-        self.assertEqual(row['excluded_reason'], 'no usable stock equipment loot')
+        self.assertIn(row['excluded_reason'], {
+            'no usable stock equipment loot',
+            'raid has no usable boss or reward evidence',
+        })
 
     def test_gameobject_reward_becomes_first_class_encounter_target(self):
         catalog = _minimal_encounter_catalog(map_id=631, map_type=2,
@@ -262,6 +266,223 @@ class ProfileTests(unittest.TestCase):
             for encounter in profile['encounters']
             for target in encounter['targets']
         ))
+
+
+def _phase2_difficulty_catalog(*, map_id=100, map_type=1, instance_type=1,
+                               difficulty_ids=(0, 1)):
+    catalog = _minimal_encounter_catalog(
+        map_id=map_id, map_type=map_type, instance_type=instance_type,
+        difficulty_ids=difficulty_ids,
+    )
+    base = catalog['creature_templates'][9001]
+    base['difficulty_entries'] = [9002, 9003, 9004]
+    catalog['creature_templates'].update({
+        9002: {'entry': 9002, 'name': 'Difficulty Boss 1', 'lootid': 9102,
+               'minlevel': 80, 'maxlevel': 80, 'difficulty_entries': [0, 0, 0]},
+        9003: {'entry': 9003, 'name': 'Difficulty Boss 2', 'lootid': 9103,
+               'minlevel': 80, 'maxlevel': 80, 'difficulty_entries': [0, 0, 0]},
+        9004: {'entry': 9004, 'name': 'Difficulty Boss 3', 'lootid': 9104,
+               'minlevel': 80, 'maxlevel': 80, 'difficulty_entries': [0, 0, 0]},
+    })
+    catalog['creature_loot_entries'].update({9102, 9103, 9104})
+    catalog['creature_loot_rows'] = [
+        (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal'),
+        (9102, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'heroic'),
+        (9103, 5003, 0, 100.0, 0, 4, 0, 1, 1, 'raid heroic 10'),
+        (9104, 5004, 0, 100.0, 0, 8, 0, 1, 1, 'raid heroic 25'),
+    ]
+    catalog['stock_items'].update({
+        5001: _stock_item(5001, 150, 60),
+        5002: _stock_item(5002, 200, 80),
+        5003: _stock_item(5003, 232, 80),
+        5004: _stock_item(5004, 264, 80),
+    })
+    return catalog
+
+
+class Phase2Tests(unittest.TestCase):
+    def test_difficulty_profile_uses_effective_creature_template_and_loot(self):
+        catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1))
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        profiles = {profile['difficulty_id']: profile for profile in manifest['profiles']}
+
+        heroic_target = profiles[1]['encounters'][-1]['targets'][0]
+        self.assertEqual(heroic_target['entry'], 9102)
+        self.assertEqual((profiles[1]['item_level_min'], profiles[1]['item_level_max']), (200, 200))
+        self.assertEqual(heroic_target['effective_creature_entry'], 9002)
+
+    def test_difficulty_variant_reference_consumer_maps_to_base_spawn(self):
+        catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1))
+        catalog['creature_loot_rows'] = [
+            (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal'),
+            (9102, 0, 9200, 100.0, 0, 2, 0, 1, 1, 'heroic reference'),
+        ]
+        catalog['reference_loot_rows'] = [
+            (9200, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'heroic gear'),
+        ]
+        catalog['reference_loot_entries'] = {9200}
+        catalog['stock_items'][5002] = _stock_item(5002, 200, 80)
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 1, 'loot_mode': 2},
+            {'type': 'creature', 'entry': 9102, 'creature_entry': 9002},
+        )
+
+        self.assertEqual(evidence['reference_item_count'], 1)
+        self.assertEqual(evidence['item_level_min'], 200)
+
+    def test_raid_difficulty_profiles_resolve_all_four_template_variants(self):
+        catalog = _phase2_difficulty_catalog(
+            map_id=649, map_type=2, instance_type=29,
+            difficulty_ids=(0, 1, 2, 3),
+        )
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        profiles = {profile['difficulty_id']: profile for profile in manifest['profiles']}
+        self.assertEqual(set(profiles), {0, 1, 2, 3})
+        self.assertEqual(
+            {profiles[index]['encounters'][-1]['targets'][0]['entry'] for index in profiles},
+            {9100, 9102, 9103, 9104},
+        )
+
+    def test_raid_trash_only_candidate_is_excluded(self):
+        catalog = _minimal_encounter_catalog(map_id=631, map_type=2,
+                                             instance_type=13)
+        catalog['instance_encounters'] = {}
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        self.assertFalse(manifest['profiles'])
+        row = next(row for row in manifest['coverage'] if row['map_id'] == 631)
+        self.assertIn('boss or reward', row['excluded_reason'])
+
+    def test_filtered_encounters_rebuild_prerequisites(self):
+        catalog = _phase2_difficulty_catalog(
+            map_id=649, map_type=2, instance_type=29, difficulty_ids=(0,))
+        catalog['creature_loot_rows'] = [
+            (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'modern 1'),
+            (9100, 5007, 0, 100.0, 0, 1, 0, 1, 1, 'modern 2'),
+            (9100, 5008, 0, 100.0, 0, 1, 0, 1, 1, 'modern 3'),
+            (9110, 5005, 0, 100.0, 0, 1, 0, 1, 1, 'legacy 1'),
+            (9110, 5006, 0, 100.0, 0, 1, 0, 1, 1, 'legacy 2'),
+        ]
+        catalog['stock_items'].update({
+            5001: _stock_item(5001, 213, 80),
+            5007: _stock_item(5007, 214, 80),
+            5008: _stock_item(5008, 215, 80),
+            5005: _stock_item(5005, 60, 60),
+            5006: _stock_item(5006, 61, 60),
+        })
+        catalog['creature_templates'][9005] = {
+            'entry': 9005, 'name': 'Filtered Boss', 'lootid': 9110,
+            'minlevel': 80, 'maxlevel': 80, 'difficulty_entries': [0, 0, 0],
+        }
+        catalog['creature_maps'][9005] = {649}
+        catalog['creature_loot_entries'].add(9110)
+        catalog['instance_encounters'] = {
+            1: {'credit_type': 0, 'credit_entry': 9005,
+                'last_encounter_dungeon': 0, 'comment': 'Filtered Boss'},
+            2: {'credit_type': 0, 'credit_entry': 9001,
+                'last_encounter_dungeon': 0, 'comment': 'Retained Boss'},
+        }
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        resolved = g.resolve_encounter_order(manifest['profiles'][0])
+        self.assertEqual([row['id'] for row in resolved], ['boss_000002'])
+
+    def test_prerequisite_rebuild_clears_removed_parents(self):
+        encounters = [{'id': 'boss_2', 'kind': 'boss', 'requires': ['boss_1']}]
+
+        g.rebuild_encounter_prerequisites(encounters)
+
+        self.assertNotIn('requires', encounters[0])
+
+    def test_mixed_era_raid_keeps_active_boss_cluster(self):
+        catalog = _minimal_encounter_catalog(map_id=249, map_type=2,
+                                             instance_type=29)
+        catalog['instance_encounters'] = {
+            1: {'credit_type': 0, 'credit_entry': 9001,
+                'last_encounter_dungeon': 0, 'comment': 'Modern Boss'},
+        }
+        catalog['creature_templates'][9001]['minlevel'] = 83
+        catalog['creature_templates'][9001]['maxlevel'] = 83
+        catalog['creature_maps'][9010] = {249}
+        catalog['creature_templates'][9010] = {
+            'entry': 9010, 'name': 'Legacy Trash', 'lootid': 9110,
+            'minlevel': 60, 'maxlevel': 60, 'difficulty_entries': [0, 0, 0],
+        }
+        catalog['creature_loot_entries'].add(9110)
+        catalog['creature_loot_rows'] = [
+            (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'modern boss'),
+            (9110, 5002, 0, 100.0, 0, 1, 0, 1, 1, 'legacy trash'),
+        ]
+        catalog['stock_items'] = {
+            5001: _stock_item(5001, 213, 80),
+            5002: _stock_item(5002, 60, 60),
+        }
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        profile = manifest['profiles'][0]
+
+        self.assertGreaterEqual(profile['item_level_min'], 200)
+        self.assertLessEqual(profile['item_level_max'] - profile['item_level_min'], 20)
+        self.assertNotIn('trash', {encounter['id'] for encounter in profile['encounters']})
+        self.assertTrue(profile['evidence'].get('progression_cluster'))
+        self.assertIn(60, profile['evidence']['progression_cluster']['rejected'])
+        self.assertTrue(any(
+            row.get('reason') == 'mixed progression cluster excluded'
+            for row in profile['evidence'].get('rejections', ())
+        ))
+
+    def test_profile_range_contradiction_invalidates_encounter_integration(self):
+        profile = _placement_profile('sample', 'raid', (200, 220), (80, 80))
+        profile['encounters'][0]['evidence'] = {
+            'band_source': 'direct', 'item_level_min': 180,
+            'item_level_max': 240, 'required_level_min': 70,
+            'required_level_max': 80, 'band_center': 210,
+            'qualities': (4,), 'item_count': 2,
+        }
+
+        report = g.validate_encounter_integration(
+            [], {'profiles': [profile]}, [], {})
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('range' in error.lower() for error in report['errors']))
+
+    def test_encounter_sql_rejects_required_level_outside_retained_band(self):
+        profile = _placement_profile('sample', 'dungeon', (100, 140), (70, 80))
+        item = {'entry': 7001, 'name': 'Generated', 'ItemLevel': 120,
+                'RequiredLevel': 4, 'Quality': 4,
+                'content_profile': 'sample', 'content_target': 'boss'}
+
+        with self.assertRaises(ValueError):
+            g.build_encounter_loot_records(
+                [item], profile, {'creature': {9001}, 'reference': set()},
+                pool_base=3100000,
+            )
+
+    def test_heroic_coverage_failure_invalidates_encounter_integration(self):
+        coverage = [
+            {'map_id': map_id, 'map_name': f'Heroic {map_id}',
+             'map_type': 1, 'expansion': 2, 'difficulty_id': 1,
+             'profile_created': False, 'excluded_reason': 'no usable stock equipment loot'}
+            for map_id in range(16)
+        ]
+
+        report = g.validate_encounter_integration(
+            [], {'profiles': [], 'coverage': coverage}, [], {})
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('heroic' in error.lower() for error in report['errors']))
+
+    def test_gameobject_support_is_not_exercised_without_sources(self):
+        catalog = _minimal_encounter_catalog()
+        catalog['source_audit'] = {'gameobject_source_paths': []}
+
+        self.assertEqual(g.gameobject_support_state(catalog), 'not_exercised')
 
 
 def _placement_profile(profile_id, kind, item_level, required_level,
@@ -461,6 +682,29 @@ class ReportTests(unittest.TestCase):
         self.assertIn('band_source', header)
         self.assertIn('placement_score', header)
         self.assertIn('set_atomic_profile', header)
+
+    def test_encounter_rejection_report_preserves_filtered_encounter_id(self):
+        profile = {
+            'id': 'sample', 'map_id': 631, 'map_type': 2,
+            'encounters': [],
+            'evidence': {
+                'band_source': 'direct',
+                'rejections': [{
+                    'encounter': 'legacy_boss',
+                    'reason': 'mixed progression cluster excluded',
+                }],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = g.write_placement_reports(
+                [], {'pools': [], 'attachments': []}, [],
+                pathlib.Path(directory), {'profiles': [profile]},
+            )
+            with paths['rejections'].open(newline='', encoding='utf-8') as report:
+                rows = list(csv.DictReader(report))
+
+        self.assertEqual(rows[0]['encounter_id'], 'legacy_boss')
 
 
 class ManifestTests(unittest.TestCase):
