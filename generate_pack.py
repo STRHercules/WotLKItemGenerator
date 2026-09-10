@@ -80,7 +80,8 @@ def resolve_optional_gameobject_sources(explicit_paths=None, data_dir=DATA_DIR):
     if any(path is not None for path in explicit):
         if not all(path is not None for path in explicit):
             raise ValueError('gameobject sources must be supplied together')
-        return tuple(Path(path).expanduser().resolve() for path in explicit)
+        paths=tuple(Path(path).expanduser().resolve() for path in explicit)
+        return None if all(not path.is_file() for path in paths) else paths
     defaults=tuple(Path(data_dir) / name for name in (
         'gameobject.sql', 'gameobject_template.sql', 'gameobject_loot_template.sql'))
     return defaults if all(path.is_file() for path in defaults) else None
@@ -2279,18 +2280,25 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
             if int(encounter.get('credit_type',0))!=1 or int(encounter.get('credit_entry',-1))!=entry: continue
             resolved=_dungeon_map_id(dungeon_maps,encounter.get('last_encounter_dungeon',0))
             if resolved==spawn_map: matches.append((int(encounter_entry),encounter))
-        source_path=(catalog.get('source_audit',{}).get('gameobject_source_paths') or [''])[0]
+        script_matches=[mapping for mapping in catalog.get('script_reward_mappings',())
+                        if int(mapping.get('gameobject_entry',-1))==entry]
+        source_path=';'.join(catalog.get('source_audit',{}).get('gameobject_source_paths') or ())
         base={'profile_id':f'map_{spawn_map}_difficulty_{requested_difficulty}' if requested_map is not None else '',
               'map_id':spawn_map,'difficulty_id':requested_difficulty,'gameobject_entry':entry,
               'gameobject_name':template.get('name',''),'loot_entry':loot_entry,
               'spawn_guid':int(spawn.get('guid',0)),'spawn_mask':int(spawn.get('spawn_mask',1)),
               'direct_item_count':0,'reference_item_count':0,'association_source':source_path}
         if matches:
-            encounter_entry,encounter=matches[0]
-            base.update({'encounter_id':f'boss_{encounter_entry:06d}',
-                         'encounter_name':encounter.get('comment',''),
-                         'association_method':'explicit_instance_mapping','valid':True,
-                         'invalid_reason':''})
+            for encounter_entry,encounter in matches:
+                row=dict(base)
+                script=script_matches[0] if script_matches else None
+                row.update({'encounter_id':f'boss_{encounter_entry:06d}',
+                            'encounter_name':encounter.get('comment',''),
+                            'association_method':'script_summon' if script else 'explicit_instance_mapping',
+                            'association_source':script.get('source_path',source_path) if script else source_path,
+                            'valid':True,'invalid_reason':''})
+                rows.append(row)
+            continue
         else:
             base.update({'encounter_id':'','encounter_name':'','association_method':'static_spawn',
                          'valid':False,'invalid_reason':'static map/spawn has no boss association'})
@@ -2314,17 +2322,30 @@ def discover_script_reward_mappings(source_root, catalog):
     mappings=[]
     for path,text in text_by_file:
         for match in re.finditer(r'\b(?:SummonGameObject|SummonGameobject|summonGameObject)\s*\(\s*([^,)]+)',text):
-            prefix=text[:match.start()]; function=re.search(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*\{([^{}]*)$',prefix,re.S)
-            if not function: continue
-            block=prefix[function.start():]
+            prefix=text[:match.start()]
+            openings=[candidate for candidate in re.finditer(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*\{',prefix)]
+            if not openings: continue
+            function=openings[-1]; opening=text.find('{',function.start(),function.end())
+            depth=0; end=None
+            for index in range(opening,len(text)):
+                if text[index]=='{': depth+=1
+                elif text[index]=='}':
+                    depth-=1
+                    if depth==0: end=index; break
+            if end is None or not opening<match.start()<end: continue
+            block=text[opening+1:match.start()]
             if not re.search(r'(?:SetBossState\s*\([^;{}]*\bDONE\b|\bstate\s*==\s*DONE\b|\bDONE\b\s*==\s*state)',block): continue
             token=match.group(1).strip(); entry=constants.get(token)
             if entry is None and token.isdigit(): entry=int(token)
             template=templates.get(entry,{}) if entry is not None else {}
             if entry is None or int(template.get('type',0))!=3 or int(template.get('lootid') or 0) not in catalog.get('gameobject_loot_entries',set()): continue
+            condition=''
+            visible_lines=[line.strip() for line in block.splitlines()
+                           if 'difficulty' in line.lower() and ('if' in line or '==' in line)]
+            if visible_lines: condition=visible_lines[-1]
             mappings.append({'source_path':str(path.relative_to(root) if path.is_relative_to(root) else path),
                              'encounter_identifier':function.group(1),'gameobject_entry':entry,
-                             'difficulty_condition':'','evidence_type':'SummonGameObject completion path'})
+                             'difficulty_condition':condition,'evidence_type':'SummonGameObject completion path'})
     return mappings, 'exercised'
 
 def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_kind='profile'):
@@ -2368,15 +2389,15 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
             target_type='creature'; target_entry=credit_entry
             candidate_maps=set(catalog['creature_maps'].get(credit_entry,set()))
         elif credit_type==1:
-            template=catalog.get('gameobject_templates',{}).get(credit_entry)
-            if not template: continue
-            loot_entry=int(template.get('lootid') or 0)
-            if loot_entry not in catalog.get('gameobject_loot_entries',set()): continue
+            audit_id=f'boss_{int(encounter_entry):06d}'
+            audit_rows=[row for row in catalog.get('gameobject_reward_targets',())
+                        if row.get('encounter_id')==audit_id and row.get('valid')]
+            if not audit_rows: continue
             target_type='gameobject'; target_entry=credit_entry
-            candidate_maps=set(catalog.get('gameobject_maps',{}).get(credit_entry,set()))
+            candidate_maps={int(row['map_id']) for row in audit_rows}
         else:
             continue
-        if not candidate_maps and encounter.get('last_encounter_dungeon'):
+        if credit_type==0 and not candidate_maps and encounter.get('last_encounter_dungeon'):
             mapped=_dungeon_map_id(catalog.get('dungeon_maps',{}),encounter['last_encounter_dungeon'])
             if mapped is not None: candidate_maps.add(mapped)
         for map_id in sorted(candidate_maps):

@@ -210,6 +210,41 @@ class BandTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
+    def test_map_only_gameobject_audit_never_becomes_encounter_target(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['instance_encounters'] = {}
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        self.assertTrue(any(not row['valid'] for row in manifest['gameobject_reward_targets']))
+        self.assertFalse(any(target.get('type') == 'gameobject'
+                             for profile in manifest['profiles']
+                             for encounter in profile['encounters']
+                             for target in encounter['targets']))
+
+    def test_script_reward_mapping_propagates_to_audited_target(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['instance_encounters'] = {
+            44: {'credit_type': 1, 'credit_entry': 7001,
+                 'last_encounter_dungeon': 500, 'comment': 'Reward Cache'},
+        }
+        catalog['dungeon_maps'] = {500: (500, 631)}
+        catalog['gameobject_loot_columns'] = catalog['creature_loot_columns']
+        catalog['gameobject_loot_rows'] = [
+            (97001, 6001, 0, 100.0, 0, 1, 0, 1, 1, 'cache gear'),
+        ]
+        catalog['stock_items'][6001] = _stock_item(6001, 220, 80)
+        catalog['script_reward_mappings'] = [{
+            'gameobject_entry': 7001, 'encounter_identifier': 'DATA_BOSS',
+            'source_path': 'instance_test.cpp',
+            'difficulty_condition': 'difficulty == RAID_DIFFICULTY_10_N',
+            'evidence_type': 'SummonGameObject completion path',
+        }]
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        rows = manifest['gameobject_reward_targets']
+        self.assertEqual(rows[0]['association_method'], 'script_summon')
+        self.assertTrue(any(target.get('type') == 'gameobject'
+                            for profile in manifest['profiles']
+                            for encounter in profile['encounters']
+                            for target in encounter['targets']))
     def test_default_profiles_use_stock_bands_per_difficulty(self):
         catalog = _minimal_encounter_catalog(
             difficulty_ids=(0, 1), map_id=631, map_type=2,
@@ -262,10 +297,13 @@ class ProfileTests(unittest.TestCase):
             1: {'credit_type': 1, 'credit_entry': 7001,
                 'last_encounter_dungeon': 500, 'comment': 'Reward Cache'},
         }
+        catalog['dungeon_maps'] = {500: (500, 631)}
         catalog['gameobject_templates'] = {
             7001: {'entry': 7001, 'type': 3, 'lootid': 97001},
         }
         catalog['gameobject_maps'] = {7001: {631}}
+        catalog['gameobject_spawns'] = [{'guid': 44, 'id': 7001, 'map': 631,
+                                         'spawn_mask': 3}]
         catalog['gameobject_loot_columns'] = catalog['creature_loot_columns']
         catalog['gameobject_loot_rows'] = [
             (97001, 6001, 0, 100.0, 0, 1, 0, 1, 1, 'cache gear'),
@@ -1294,6 +1332,42 @@ INSERT INTO `quest_template` VALUES
 
 
 class SourceTests(unittest.TestCase):
+    def test_all_missing_explicit_gameobject_sources_leave_core_sources_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = tuple(pathlib.Path(directory) / name for name in (
+                'gameobject.sql', 'gameobject_template.sql',
+                'gameobject_loot_template.sql'))
+            self.assertIsNone(g.resolve_optional_gameobject_sources(paths))
+
+    def test_script_mapping_retains_visible_difficulty_condition(self):
+        source = """
+const uint32 GO_REWARD_CHEST = 7001;
+void InstanceTest::SetBossState(uint32 id, EncounterState state) {
+    if (state == DONE && difficulty == RAID_DIFFICULTY_10_N)
+        instance->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            mappings, _ = g.discover_script_reward_mappings(root, {
+                'gameobject_templates': {7001: {'type': 3, 'lootid': 97001}},
+                'gameobject_loot_entries': {97001},
+            })
+        self.assertIn('RAID_DIFFICULTY_10_N', mappings[0]['difficulty_condition'])
+
+    def test_multiple_instance_mappings_are_preserved_in_audit(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['instance_encounters'] = {
+            44: {'credit_type': 1, 'credit_entry': 7001,
+                 'last_encounter_dungeon': 500, 'comment': 'Reward Cache A'},
+            45: {'credit_type': 1, 'credit_entry': 7001,
+                 'last_encounter_dungeon': 500, 'comment': 'Reward Cache B'},
+        }
+        catalog['dungeon_maps'] = {500: (500, 631)}
+        rows = g.discover_gameobject_reward_targets(catalog, 631, 0)
+        self.assertEqual({row['encounter_id'] for row in rows},
+                         {'boss_000044', 'boss_000045'})
     def test_static_chest_uses_map_and_data1_without_fuzzy_boss_association(self):
         catalog = _catalog_with_gameobject_sources()
         catalog['instance_encounters'] = {}
