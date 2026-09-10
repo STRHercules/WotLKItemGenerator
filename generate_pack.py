@@ -2215,6 +2215,7 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
         }
     levels=[level for evidence in usable for level in evidence.get('retained_item_levels',())]
     required=[level for evidence in usable for level in evidence.get('required_levels',())]
+    required=_dominant_progression_cluster(required,3)
     qualities=sorted({quality for evidence in usable for quality in evidence.get('qualities',())})
     band=infer_safe_band(levels,source_kind,encounter_kind)
     band.update({'required_levels':tuple(sorted(required)),'qualities':tuple(qualities),
@@ -2545,12 +2546,26 @@ def validate_targeted_source_membership(manifest,catalog):
 def _stock_equipment(meta):
     if not meta or int(meta.get('item_level',0))<=0 or int(meta.get('quality',0))<2:
         return False
+    if int(meta.get('required_level',0))<=0 or int(meta.get('item_level',0))<int(meta.get('required_level',0)):
+        return False
     item_class=int(meta.get('class',-1)); inventory_type=int(meta.get('inventory_type',0))
     if item_class==2:
         return inventory_type in {13,14,15,17,21,22,26,28}
     if item_class==4:
         return inventory_type in {1,2,3,5,6,7,8,9,10,11,12,13,14,16,20,28}
     return False
+
+def _dominant_progression_cluster(values,gap):
+    ordered=tuple(sorted(int(value) for value in values))
+    if not ordered: return ()
+    clusters=[]; current=[ordered[0]]
+    for value in ordered[1:]:
+        if value-current[-1]>gap:
+            clusters.append(tuple(current)); current=[value]
+        else:
+            current.append(value)
+    clusters.append(tuple(current))
+    return max(clusters,key=lambda cluster:(len(cluster),-cluster[0],-cluster[-1]))
 
 def infer_safe_band(values,source_kind='profile_aggregate',encounter_kind='boss'):
     ordered=tuple(sorted(int(value) for value in values))
@@ -2663,11 +2678,21 @@ def collect_target_stock_evidence(catalog,profile_context,target):
     band=infer_safe_band([row['item_level'] for row in selected],source_kind,target.get('kind','boss'))
     retained=set(band.get('retained_item_levels',()))
     retained_items=[row for row in selected if row['item_level'] in retained]
+    required_cluster=_dominant_progression_cluster(
+        [row.get('required_level',0) for row in retained_items if int(row.get('required_level',0))>0],3)
+    required_set=set(required_cluster)
+    required_rejections=[row for row in retained_items if int(row.get('required_level',0)) not in required_set]
+    if required_rejections:
+        rejections.extend({'item':row.get('entry'),'reason':'RequiredLevel outlier'} for row in required_rejections)
+        retained_items=[row for row in retained_items if row not in required_rejections]
+        band=infer_safe_band([row['item_level'] for row in retained_items],source_kind,target.get('kind','boss'))
     required=tuple(sorted(int(row.get('required_level',0)) for row in retained_items if int(row.get('required_level',0))>0))
     qualities=tuple(sorted({int(row.get('quality',0)) for row in retained_items if int(row.get('quality',0))>0}))
     band.update({'required_levels':required,'qualities':qualities,'item_count':len(retained_items),
                  'direct_item_count':len(direct),'reference_item_count':len(referenced),
-                 'rejected_reference_count':len(rejected_refs),'rejections':rejections,
+                 'rejected_reference_count':len(rejected_refs),'rejected_required_level_count':len(required_rejections),
+                 'rejected_required_levels':tuple(sorted({int(row.get('required_level',0)) for row in required_rejections})),
+                 'rejections':rejections,
                  'required_level_min':min(required) if required else None,
                  'required_level_max':max(required) if required else None})
     cache[cache_key]=band

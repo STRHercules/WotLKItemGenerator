@@ -179,6 +179,19 @@ class BandTests(unittest.TestCase):
         self.assertFalse(g.item_fits_encounter_profile(
             {'ItemLevel': 180, 'RequiredLevel': 4, 'Quality': 4}, profile))
 
+    def test_stock_item_level_below_required_level_is_not_progression_evidence(self):
+        catalog = _loot_catalog(
+            [(9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'invalid')],
+            stock_items={5001: _stock_item(5001, 1, 70)},
+        )
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 0, 'loot_mode': 1},
+            {'type': 'creature', 'entry': 9100, 'creature_entry': 10},
+        )
+
+        self.assertFalse(evidence['valid'])
+
 
 class ProfileTests(unittest.TestCase):
     def test_default_profiles_use_stock_bands_per_difficulty(self):
