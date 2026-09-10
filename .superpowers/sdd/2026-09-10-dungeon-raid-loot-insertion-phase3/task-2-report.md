@@ -211,3 +211,97 @@ OK
 - Added regressions for script-only propagation, partial-missing continuation, nested controls, and association separation.
 
 Fix round 3 commit: `fix(encounters): harden reward-object discovery`
+
+## Fix round 4: preserve function scope and distinct gameobject associations
+
+### RED
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.SourceTests.test_braced_done_control_block_reports_real_function Tests.test_targeted_content.ProfileTests.test_multiple_instance_mappings_remain_distinct_in_profile -v
+```
+
+Result before the fix:
+
+```text
+test_braced_done_control_block_reports_real_function (Tests.test_targeted_content.SourceTests.test_braced_done_control_block_reports_real_function) ... FAIL
+test_multiple_instance_mappings_remain_distinct_in_profile (Tests.test_targeted_content.ProfileTests.test_multiple_instance_mappings_remain_distinct_in_profile) ... FAIL
+
+----------------------------------------------------------------------
+FAIL: test_braced_done_control_block_reports_real_function (Tests.test_targeted_content.SourceTests.test_braced_done_control_block_reports_real_function)
+----------------------------------------------------------------------
+AssertionError: 0 != 1
+
+----------------------------------------------------------------------
+FAIL: test_multiple_instance_mappings_remain_distinct_in_profile (Tests.test_targeted_content.ProfileTests.test_multiple_instance_mappings_remain_distinct_in_profile)
+----------------------------------------------------------------------
+AssertionError: Lists differ: ['boss_000044'] != ['boss_000044', 'boss_000045']
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.018s
+
+FAILED (failures=2)
+```
+
+### GREEN: focused regressions
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.SourceTests.test_braced_done_control_block_reports_real_function Tests.test_targeted_content.ProfileTests.test_multiple_instance_mappings_remain_distinct_in_profile Tests.test_targeted_content.SourceTests.test_nested_control_block_does_not_inherit_outer_done_condition Tests.test_targeted_content.SourceTests.test_explicit_done_path_summon_maps_script_reward Tests.test_targeted_content.ProfileTests.test_explicit_and_script_associations_remain_separate -v
+```
+
+Result:
+
+```text
+test_braced_done_control_block_reports_real_function (Tests.test_targeted_content.SourceTests.test_braced_done_control_block_reports_real_function) ... ok
+test_multiple_instance_mappings_remain_distinct_in_profile (Tests.test_targeted_content.ProfileTests.test_multiple_instance_mappings_remain_distinct_in_profile) ... ok
+test_nested_control_block_does_not_inherit_outer_done_condition (Tests.test_targeted_content.SourceTests.test_nested_control_block_does_not_inherit_outer_done_condition) ... ok
+test_explicit_done_path_summon_maps_script_reward (Tests.test_targeted_content.SourceTests.test_explicit_done_path_summon_maps_script_reward) ... ok
+test_explicit_and_script_associations_remain_separate (Tests.test_targeted_content.ProfileTests.test_explicit_and_script_associations_remain_separate) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.013s
+
+OK
+```
+
+### GREEN: covering source/profile/report suites
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.SourceTests Tests.test_targeted_content.ProfileTests Tests.test_targeted_content.ReportTests -q
+```
+
+Result:
+
+```text
+Ran 34 tests in 12.817s
+
+OK
+```
+
+### GREEN: full suite
+
+Command:
+
+```text
+rtk py -m unittest discover -s Tests -q
+```
+
+Result:
+
+```text
+Ran 102 tests in 39.771s
+
+OK
+```
+
+### Fixes
+
+- Braced control keywords are excluded from function candidates; the scanner reports the containing real function while still rejecting nested conditional summons that do not carry DONE themselves.
+- Gameobject profile deduplication now includes the normalized source encounter association, so duplicate representations of one association collapse while distinct instance/script associations remain separate.
+- Manifest duplicate-target validation remains strict for creature/reference targets and permits the same gameobject loot entry only across distinct encounters.
+- Added regressions for braced DONE function scope and distinct instance mappings in generated profiles.

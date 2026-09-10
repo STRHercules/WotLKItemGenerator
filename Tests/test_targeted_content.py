@@ -250,6 +250,30 @@ class ProfileTests(unittest.TestCase):
                             for encounter in profile['encounters']
                             for target in encounter['targets']))
 
+    def test_multiple_instance_mappings_remain_distinct_in_profile(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['instance_encounters'] = {
+            44: {'credit_type': 1, 'credit_entry': 7001,
+                 'last_encounter_dungeon': 500, 'comment': 'Reward Cache A'},
+            45: {'credit_type': 1, 'credit_entry': 7001,
+                 'last_encounter_dungeon': 500, 'comment': 'Reward Cache B'},
+        }
+        catalog['dungeon_maps'] = {500: (500, 631)}
+        catalog['gameobject_loot_columns'] = catalog['creature_loot_columns']
+        catalog['gameobject_loot_rows'] = [
+            (97001, 6001, 0, 100.0, 0, 1, 0, 1, 1, 'cache gear'),
+        ]
+        catalog['stock_items'][6001] = _stock_item(6001, 220, 80)
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        profile = next(profile for profile in manifest['profiles']
+                       if profile['map_id'] == 631 and profile['difficulty_id'] == 0)
+        self.assertEqual(
+            [encounter['id'] for encounter in profile['encounters']
+             if encounter['kind'] == 'boss'],
+            ['boss_000044', 'boss_000045'])
+
     def test_script_only_reward_mapping_creates_profile_target(self):
         catalog = _catalog_with_gameobject_sources()
         catalog['instance_encounters'] = {}
@@ -1434,6 +1458,26 @@ void InstanceTest::Complete(uint32 id, EncounterState state) {
             })
         self.assertEqual(mappings, [])
 
+    def test_braced_done_control_block_reports_real_function(self):
+        source = """
+const uint32 GO_REWARD_CHEST = 7001;
+void InstanceTest::SetBossState(uint32 id, EncounterState state) {
+    if (id == DATA_BOSS && state == DONE) {
+        instance->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            mappings, _ = g.discover_script_reward_mappings(root, {
+                'gameobject_templates': {7001: {'type': 3, 'lootid': 97001}},
+                'gameobject_loot_entries': {97001},
+            })
+        self.assertEqual(len(mappings), 1)
+        self.assertEqual(mappings[0]['encounter_identifier'],
+                         'InstanceTest::SetBossState')
+
     def test_multiple_instance_mappings_are_preserved_in_audit(self):
         catalog = _catalog_with_gameobject_sources()
         catalog['instance_encounters'] = {
@@ -1446,6 +1490,7 @@ void InstanceTest::Complete(uint32 id, EncounterState state) {
         rows = g.discover_gameobject_reward_targets(catalog, 631, 0)
         self.assertEqual({row['encounter_id'] for row in rows},
                          {'boss_000044', 'boss_000045'})
+
     def test_static_chest_uses_map_and_data1_without_fuzzy_boss_association(self):
         catalog = _catalog_with_gameobject_sources()
         catalog['instance_encounters'] = {}

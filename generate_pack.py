@@ -2344,7 +2344,8 @@ def discover_script_reward_mappings(source_root, catalog):
     for path,text in text_by_file:
         for match in re.finditer(r'\b(?:SummonGameObject|SummonGameobject|summonGameObject)\s*\(\s*([^,)]+)',text):
             prefix=text[:match.start()]
-            openings=[candidate for candidate in re.finditer(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*\{',prefix)]
+            openings=[candidate for candidate in re.finditer(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*\{',prefix)
+                      if candidate.group(1) not in {'if','for','while','switch','catch'}]
             if not openings: continue
             function=openings[-1]; opening=text.find('{',function.start(),function.end())
             depth=0; end=None
@@ -2355,7 +2356,11 @@ def discover_script_reward_mappings(source_root, catalog):
                     if depth==0: end=index; break
             if end is None or not opening<match.start()<end: continue
             block=text[opening+1:match.start()]
-            if not re.search(r'(?:SetBossState\s*\([^;{}]*\bDONE\b|\bstate\s*==\s*DONE\b|\bDONE\b\s*==\s*state)',block): continue
+            control_conditions=list(re.finditer(r'\bif\s*\(([^{}]*)\)',block,re.S))
+            if control_conditions:
+                if not re.search(r'\bDONE\b',control_conditions[-1].group(1)): continue
+            elif not re.search(r'(?:SetBossState\s*\([^;{}]*\bDONE\b|\bstate\s*==\s*DONE\b|\bDONE\b\s*==\s*state)',block):
+                continue
             token=match.group(1).strip(); entry=constants.get(token)
             if entry is None and token.isdigit(): entry=int(token)
             template=templates.get(entry,{}) if entry is not None else {}
@@ -2465,7 +2470,14 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                     effective_entry=target_entry; resolution='gameobject_source'
                     loot_entry=int(template.get('lootid') or 0)
                     if loot_entry not in catalog.get('gameobject_loot_entries',set()): continue
-                boss_key=(target_type,loot_entry)
+                if target_type=='gameobject':
+                    association_key=encounter_entry
+                    if isinstance(association_key,str):
+                        match=re.fullmatch(r'boss_(\d+)',association_key)
+                        if match: association_key=int(match.group(1))
+                    boss_key=(target_type,loot_entry,association_key)
+                else:
+                    boss_key=(target_type,loot_entry)
                 if boss_key in boss_loot: continue
                 boss_loot.add(boss_key)
                 bosses.append({'encounter_entry':encounter_entry,'target_type':target_type,
@@ -3569,7 +3581,7 @@ def validate_content_manifest(manifest):
                 entry=int(target.get('entry',0)) if isinstance(target,dict) else 0
                 if target_type not in ('creature','gameobject','reference') or entry<=0:
                     raise ValueError(f'encounter {encounter.get("id")} has an invalid loot target')
-                key=(profile_id,target_type,entry)
+                key=(profile_id,encounter.get('id'),target_type,entry) if target_type=='gameobject' else (profile_id,target_type,entry)
                 if key in target_keys: raise ValueError(f'duplicate loot target: {target_type}:{entry}')
                 target_keys.add(key)
         resolve_encounter_order(profile)
