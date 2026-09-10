@@ -30,7 +30,7 @@ def _minimal_encounter_catalog(*, map_id=631, map_type=2, instance_type=13,
         'dungeon_maps': dungeon_map_rows or {},
         'creature_templates': {
             9001: {'entry': 9001, 'name': 'Scripted Boss', 'lootid': 9100,
-                   'minlevel': 80, 'maxlevel': 80},
+                   'minlevel': 60, 'maxlevel': 80},
         },
         'creature_maps': {9001: {map_id}} if boss_spawn else {},
         'instance_encounters': {
@@ -199,6 +199,8 @@ class ProfileTests(unittest.TestCase):
             difficulty_ids=(0, 1), map_id=631, map_type=2,
             instance_type=13,
         )
+        catalog['creature_templates'][9001]['minlevel'] = 60
+        catalog['creature_templates'][9001]['maxlevel'] = 80
         catalog['creature_loot_columns'] = (
             'Entry', 'Item', 'Reference', 'Chance', 'QuestRequired',
             'LootMode', 'GroupId', 'MinCount', 'MaxCount', 'Comment',

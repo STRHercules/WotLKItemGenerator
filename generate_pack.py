@@ -2297,9 +2297,14 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
             encounters=[]; profile_evidence=None
             if source_evidence_enabled:
                 for encounter_id,kind,weight,targets,requires in encounter_specs:
-                    target_evidence=[(target,collect_target_stock_evidence(
-                        catalog,{'map_id':map_id,'difficulty_id':difficulty_id,'loot_mode':loot_mode},
-                        target)) for target in targets]
+                    target_evidence=[]
+                    for target in targets:
+                        context={'map_id':map_id,'difficulty_id':difficulty_id,'loot_mode':loot_mode}
+                        if target.get('type')=='creature':
+                            template=catalog.get('creature_templates',{}).get(int(target.get('creature_entry',target.get('entry',0))),{})
+                            context['creature_level_min']=template.get('minlevel')
+                            context['creature_level_max']=template.get('maxlevel')
+                        target_evidence.append((target,collect_target_stock_evidence(catalog,context,target)))
                     valid_targets=[target for target,evidence in target_evidence if evidence.get('valid')]
                     evidences=[evidence for target,evidence in target_evidence if evidence.get('valid')]
                     if not evidences: continue
@@ -2580,10 +2585,7 @@ def infer_safe_band(values,source_kind='profile_aggregate',encounter_kind='boss'
         else:
             current.append(value)
     clusters.append(tuple(current))
-    if source_kind in ('direct','encounter_reference'):
-        retained=ordered
-    else:
-        retained=max(clusters,key=lambda cluster:(len(cluster),-cluster[0],-cluster[-1]))
+    retained=max(clusters,key=lambda cluster:(len(cluster),-cluster[0],-cluster[-1]))
     retained_set=list(retained)
     rejected=list(ordered)
     for value in retained_set:
@@ -2673,6 +2675,16 @@ def collect_target_stock_evidence(catalog,profile_context,target):
             (referenced if source_kind=='reference' else direct).append(meta)
 
     collect(target.get('entry',0),target_type,'direct')
+    expected_min=profile_context.get('creature_level_min'); expected_max=profile_context.get('creature_level_max')
+    if expected_min is not None and expected_max is not None:
+        expected_min=max(1,int(expected_min)-5); expected_max=min(80,int(expected_max)+5)
+        def context_ok(meta):
+            required=int(meta.get('required_level',0))
+            return expected_min<=required<=expected_max
+        for row in direct+referenced:
+            if not context_ok(row): rejections.append({'item':row.get('entry'),'reason':'RequiredLevel outside creature progression context'})
+        direct=[row for row in direct if context_ok(row)]
+        referenced=[row for row in referenced if context_ok(row)]
     selected=direct or referenced
     source_kind='direct' if direct else 'encounter_reference' if referenced else 'profile_aggregate'
     band=infer_safe_band([row['item_level'] for row in selected],source_kind,target.get('kind','boss'))
