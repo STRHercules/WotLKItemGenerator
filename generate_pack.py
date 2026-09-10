@@ -75,6 +75,8 @@ DEFAULT_GAMEOBJECT_LOOT_SOURCE = _default_data_source('gameobject_loot_template.
 
 def resolve_optional_gameobject_sources(explicit_paths=None, data_dir=DATA_DIR):
     explicit=tuple(explicit_paths or (None, None, None))
+    if len(explicit) != 3:
+        raise ValueError('gameobject sources must contain exactly three paths')
     if any(path is not None for path in explicit):
         if not all(path is not None for path in explicit):
             raise ValueError('gameobject sources must be supplied together')
@@ -2153,7 +2155,7 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
             gameobject_templates[entry]={'entry':entry,
                                          'name':str(_sql_row_value(row,gameobject_template_index,'name') or '').strip("'").replace("''", "'"),
                                          'type':_sql_int(_sql_row_value(row,gameobject_template_index,'type')),
-                                         'lootid':_sql_int(_sql_row_value(row,gameobject_template_index,'data1','data0'))}
+                                         'lootid':_sql_int(_sql_row_value(row,gameobject_template_index,'data1'))}
         gameobject_columns,gameobject_rows=_load_sql_table_rows(gameobject_path)
         gameobject_index=_sql_column_indexes(gameobject_columns)
         for row in gameobject_rows:

@@ -1280,6 +1280,11 @@ class SourceTests(unittest.TestCase):
             g.resolve_optional_gameobject_sources(
                 explicit_paths=(pathlib.Path('gameobject.sql'), None, None))
 
+    def test_malformed_gameobject_source_tuple_is_rejected(self):
+        for paths in ((None, None), (None, None, None, None)):
+            with self.assertRaises(ValueError):
+                g.resolve_optional_gameobject_sources(explicit_paths=paths)
+
     def test_scripted_boss_uses_instance_encounter_without_static_spawn(self):
         catalog = _minimal_encounter_catalog(
             difficulty_ids=(0, 1, 2, 3), boss_spawn=False,
@@ -1323,10 +1328,11 @@ INSERT INTO `gameobject` VALUES (1,7001,631);
             gameobject_template_path.write_text(
                 """CREATE TABLE `gameobject_template` (
   `entry` int,
+  `name` varchar(100),
   `type` int,
   `data1` int
 ) ENGINE=InnoDB;
-INSERT INTO `gameobject_template` VALUES (7001,3,97001);
+INSERT INTO `gameobject_template` VALUES (7001,'Chest',3,97001),(7002,'Not loot',2,0);
 """,
                 encoding='utf-8',
             )
@@ -1358,6 +1364,9 @@ INSERT INTO `gameobject_loot_template` VALUES (97001,19001,0,1);
         self.assertIn(97001, catalog['gameobject_loot_entries'])
         self.assertEqual(catalog['gameobject_templates'][7001]['lootid'], 97001)
         self.assertEqual(catalog['gameobject_templates'][7001]['type'], 3)
+        self.assertEqual(catalog['gameobject_templates'][7002]['type'], 2)
+        self.assertEqual(catalog['gameobject_templates'][7002]['lootid'], 0)
+        self.assertNotIn('eligible_reward_objects', catalog)
         self.assertEqual(catalog['gameobject_spawns'][0]['spawn_mask'], 1)
         self.assertEqual(catalog['gameobject_maps'][7001], {631})
 
