@@ -305,3 +305,96 @@ OK
 - Gameobject profile deduplication now includes the normalized source encounter association, so duplicate representations of one association collapse while distinct instance/script associations remain separate.
 - Manifest duplicate-target validation remains strict for creature/reference targets and permits the same gameobject loot entry only across distinct encounters.
 - Added regressions for braced DONE function scope and distinct instance mappings in generated profiles.
+
+## Fix round 5 of 5: preserve completion paths before later difficulty guards
+
+### RED
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.SourceTests.test_done_path_survives_unrelated_later_difficulty_if -v
+```
+
+Result before the fix:
+
+```text
+test_done_path_survives_unrelated_later_difficulty_if (Tests.test_targeted_content.SourceTests.test_done_path_survives_unrelated_later_difficulty_if) ... FAIL
+
+======================================================================
+FAIL: test_done_path_survives_unrelated_later_difficulty_if (Tests.test_targeted_content.SourceTests.test_done_path_survives_unrelated_later_difficulty_if)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "R:\Users\Zach\Documents\GitHub\WotLKItemGenerator\.worktrees\codex-phase3-encounter-loot\Tests\test_targeted_content.py", line 1480, in test_done_path_survives_unrelated_later_difficulty_if
+    self.assertEqual(len(mappings), 1)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1
+
+----------------------------------------------------------------------
+Ran 1 test in 0.013s
+FAILED (failures=1)
+```
+
+### GREEN: focused scanner regressions
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.SourceTests.test_done_path_survives_unrelated_later_difficulty_if Tests.test_targeted_content.SourceTests.test_nested_control_block_does_not_inherit_outer_done_condition Tests.test_targeted_content.SourceTests.test_braced_done_control_block_reports_real_function Tests.test_targeted_content.SourceTests.test_explicit_done_path_summon_maps_script_reward -v
+```
+
+Result:
+
+```text
+test_done_path_survives_unrelated_later_difficulty_if (Tests.test_targeted_content.SourceTests.test_done_path_survives_unrelated_later_difficulty_if) ... ok
+test_nested_control_block_does_not_inherit_outer_done_condition (Tests.test_targeted_content.SourceTests.test_nested_control_block_does_not_inherit_outer_done_condition) ... ok
+test_braced_done_control_block_reports_real_function (Tests.test_targeted_content.SourceTests.test_braced_done_control_block_reports_real_function) ... ok
+test_explicit_done_path_summon_maps_script_reward (Tests.test_targeted_content.SourceTests.test_explicit_done_path_summon_maps_script_reward) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.022s
+
+OK
+```
+
+### GREEN: covering suites
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.SourceTests Tests.test_targeted_content.ProfileTests Tests.test_targeted_content.ReportTests -q
+```
+
+Result:
+
+```text
+----------------------------------------------------------------------
+Ran 33 tests in 16.901s
+
+OK
+```
+
+Command:
+
+```text
+rtk py -m unittest discover -s Tests -q
+```
+
+Result:
+
+```text
+----------------------------------------------------------------------
+Ran 103 tests in 52.966s
+
+OK
+```
+
+### Fix
+
+- `discover_script_reward_mappings` still selects the real containing function and rejects a nested control block whose own condition is not completion-related.
+- An explicit `SetBossState(..., DONE)` before the summon now remains authoritative when a later unrelated difficulty `if` is the final condition seen in the function prefix.
+- The new regression preserves the existing nested-control negative regression; all previously addressed source-map, optional-source, association, mapping, condition, and source-path behavior remains unchanged.
+
+Remaining concern: the scanner is intentionally a conservative regex/brace heuristic, not a full C++ control-flow parser. This round covers the reviewed completion-plus-later-difficulty form and the nested-control safeguard; arbitrary unsupported C++ control-flow forms remain outside its proof boundary.
+
+Fix round 5 commit: `fix(encounters): preserve completion-path reward summons`

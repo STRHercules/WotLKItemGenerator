@@ -1458,6 +1458,29 @@ void InstanceTest::Complete(uint32 id, EncounterState state) {
             })
         self.assertEqual(mappings, [])
 
+    def test_done_path_survives_unrelated_later_difficulty_if(self):
+        source = """
+const uint32 GO_REWARD_CHEST = 7001;
+void InstanceTest::Complete(uint32 id, EncounterState state) {
+    if (state == DONE) {
+        instance->SetBossState(DATA_BOSS, DONE);
+        if (difficulty == RAID_DIFFICULTY_10_N) {
+            instance->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+        }
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            mappings, _ = g.discover_script_reward_mappings(root, {
+                'gameobject_templates': {7001: {'type': 3, 'lootid': 97001}},
+                'gameobject_loot_entries': {97001},
+            })
+        self.assertEqual(len(mappings), 1)
+        self.assertEqual(mappings[0]['encounter_identifier'],
+                         'InstanceTest::Complete')
+
     def test_braced_done_control_block_reports_real_function(self):
         source = """
 const uint32 GO_REWARD_CHEST = 7001;

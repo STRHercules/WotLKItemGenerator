@@ -2358,7 +2358,8 @@ def discover_script_reward_mappings(source_root, catalog):
             block=text[opening+1:match.start()]
             control_conditions=list(re.finditer(r'\bif\s*\(([^{}]*)\)',block,re.S))
             if control_conditions:
-                if not re.search(r'\bDONE\b',control_conditions[-1].group(1)): continue
+                if not re.search(r'\bDONE\b',control_conditions[-1].group(1)):
+                    if not re.search(r'SetBossState\s*\([^;{}]*\bDONE\b',block): continue
             elif not re.search(r'(?:SetBossState\s*\([^;{}]*\bDONE\b|\bstate\s*==\s*DONE\b|\bDONE\b\s*==\s*state)',block):
                 continue
             token=match.group(1).strip(); entry=constants.get(token)
