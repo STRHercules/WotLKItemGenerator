@@ -152,3 +152,62 @@ OK
 - Added regression coverage for exclusion, propagation, missing sources, difficulty conditions, and multiple mappings.
 
 Fix commit: `fix(encounters): close reward-object audit gaps`
+
+## Fix round 3: scoped re-review findings
+
+### RED
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.ProfileTests.test_script_only_reward_mapping_creates_profile_target Tests.test_targeted_content.ProfileTests.test_explicit_and_script_associations_remain_separate Tests.test_targeted_content.SourceTests.test_partially_missing_explicit_gameobject_sources_leave_core_sources_available Tests.test_targeted_content.SourceTests.test_nested_control_block_does_not_inherit_outer_done_condition -v
+```
+
+Result before the fix:
+
+```text
+test_script_only_reward_mapping_creates_profile_target ... FAIL
+test_explicit_and_script_associations_remain_separate ... FAIL
+test_partially_missing_explicit_gameobject_sources_leave_core_sources_available ... FAIL
+test_nested_control_block_does_not_inherit_outer_done_condition ... ok
+Ran 4 tests in 0.017s
+FAILED (failures=3)
+```
+
+### GREEN: focused and covering suites
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.ProfileTests.test_script_only_reward_mapping_creates_profile_target Tests.test_targeted_content.ProfileTests.test_explicit_and_script_associations_remain_separate Tests.test_targeted_content.SourceTests.test_partially_missing_explicit_gameobject_sources_leave_core_sources_available Tests.test_targeted_content.SourceTests.test_nested_control_block_does_not_inherit_outer_done_condition Tests.test_targeted_content.SourceTests Tests.test_targeted_content.ReportTests -v
+```
+
+Result:
+
+```text
+Ran 23 tests in 14.033s
+OK
+```
+
+Command:
+
+```text
+rtk py -m unittest discover -s Tests -v
+```
+
+Result:
+
+```text
+Ran 100 tests in 41.231s
+OK
+```
+
+### Fixes
+
+- Script-only reward mappings now create audit/profile targets from actual gameobject spawn maps, using source-derived script encounter identifiers without inventing map or instance IDs.
+- Any missing file in an explicitly supplied complete trio now disables optional gameobject discovery while preserving partial-tuple arity validation.
+- Function detection excludes control blocks; brace-depth checks prevent outer DONE conditions from authorizing nested conditional summons.
+- Explicit instance rows remain explicit; script evidence is emitted as separate script rows, with all relevant gameobject and script source paths retained.
+- Added regressions for script-only propagation, partial-missing continuation, nested controls, and association separation.
+
+Fix round 3 commit: `fix(encounters): harden reward-object discovery`

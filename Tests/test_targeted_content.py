@@ -222,6 +222,9 @@ class ProfileTests(unittest.TestCase):
 
     def test_script_reward_mapping_propagates_to_audited_target(self):
         catalog = _catalog_with_gameobject_sources()
+        catalog['source_audit'] = {'gameobject_source_paths': ['gameobject.sql',
+                                                               'gameobject_template.sql',
+                                                               'gameobject_loot_template.sql']}
         catalog['instance_encounters'] = {
             44: {'credit_type': 1, 'credit_entry': 7001,
                  'last_encounter_dungeon': 500, 'comment': 'Reward Cache'},
@@ -240,11 +243,58 @@ class ProfileTests(unittest.TestCase):
         }]
         manifest = g.build_default_encounter_manifest(catalog, 2.0)
         rows = manifest['gameobject_reward_targets']
-        self.assertEqual(rows[0]['association_method'], 'script_summon')
+        self.assertTrue(any(row['association_method'] == 'script_summon'
+                            for row in rows))
         self.assertTrue(any(target.get('type') == 'gameobject'
                             for profile in manifest['profiles']
                             for encounter in profile['encounters']
                             for target in encounter['targets']))
+
+    def test_script_only_reward_mapping_creates_profile_target(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['instance_encounters'] = {}
+        catalog['gameobject_loot_columns'] = catalog['creature_loot_columns']
+        catalog['gameobject_loot_rows'] = [
+            (97001, 6001, 0, 100.0, 0, 1, 0, 1, 1, 'cache gear'),
+        ]
+        catalog['stock_items'][6001] = _stock_item(6001, 220, 80)
+        catalog['script_reward_mappings'] = [{
+            'gameobject_entry': 7001, 'encounter_identifier': 'DATA_BOSS',
+            'source_path': 'instance_test.cpp',
+            'difficulty_condition': '',
+            'evidence_type': 'SummonGameObject completion path',
+        }]
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        self.assertTrue(any(row['association_method'] == 'script_summon'
+                            and row['encounter_id'].startswith('script_')
+                            for row in manifest['gameobject_reward_targets']))
+        self.assertTrue(any(target.get('type') == 'gameobject'
+                            for profile in manifest['profiles']
+                            for encounter in profile['encounters']
+                            for target in encounter['targets']))
+
+    def test_explicit_and_script_associations_remain_separate(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['source_audit'] = {'gameobject_source_paths': ['gameobject.sql',
+                                                               'gameobject_template.sql',
+                                                               'gameobject_loot_template.sql']}
+        catalog['instance_encounters'] = {
+            1: {'credit_type': 1, 'credit_entry': 7001,
+                'last_encounter_dungeon': 500, 'comment': 'Reward Cache'},
+        }
+        catalog['dungeon_maps'] = {500: (500, 631)}
+        catalog['script_reward_mappings'] = [{
+            'gameobject_entry': 7001, 'encounter_identifier': 'OTHER_BOSS',
+            'source_path': 'other.cpp', 'difficulty_condition': '',
+            'evidence_type': 'SummonGameObject completion path',
+        }]
+        rows = g.discover_gameobject_reward_targets(catalog, 631, 0)
+        self.assertEqual(rows[0]['association_method'], 'explicit_instance_mapping')
+        self.assertEqual(rows[0]['encounter_id'], 'boss_000001')
+        self.assertIn('gameobject.sql', rows[0]['association_source'])
+        self.assertTrue(any(row['association_method'] == 'script_summon'
+                            and row['encounter_id'].startswith('script_')
+                            for row in rows))
     def test_default_profiles_use_stock_bands_per_difficulty(self):
         catalog = _minimal_encounter_catalog(
             difficulty_ids=(0, 1), map_id=631, map_type=2,
@@ -1339,6 +1389,15 @@ class SourceTests(unittest.TestCase):
                 'gameobject_loot_template.sql'))
             self.assertIsNone(g.resolve_optional_gameobject_sources(paths))
 
+    def test_partially_missing_explicit_gameobject_sources_leave_core_sources_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            paths = tuple(root / name for name in (
+                'gameobject.sql', 'gameobject_template.sql',
+                'gameobject_loot_template.sql'))
+            paths[0].write_text('available', encoding='utf-8')
+            self.assertIsNone(g.resolve_optional_gameobject_sources(paths))
+
     def test_script_mapping_retains_visible_difficulty_condition(self):
         source = """
 const uint32 GO_REWARD_CHEST = 7001;
@@ -1355,6 +1414,25 @@ void InstanceTest::SetBossState(uint32 id, EncounterState state) {
                 'gameobject_loot_entries': {97001},
             })
         self.assertIn('RAID_DIFFICULTY_10_N', mappings[0]['difficulty_condition'])
+
+    def test_nested_control_block_does_not_inherit_outer_done_condition(self):
+        source = """
+const uint32 GO_REWARD_CHEST = 7001;
+void InstanceTest::Complete(uint32 id, EncounterState state) {
+    if (state == DONE) {
+        if (id == DATA_BOSS)
+            instance->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            mappings, _ = g.discover_script_reward_mappings(root, {
+                'gameobject_templates': {7001: {'type': 3, 'lootid': 97001}},
+                'gameobject_loot_entries': {97001},
+            })
+        self.assertEqual(mappings, [])
 
     def test_multiple_instance_mappings_are_preserved_in_audit(self):
         catalog = _catalog_with_gameobject_sources()

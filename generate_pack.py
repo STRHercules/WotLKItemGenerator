@@ -81,7 +81,7 @@ def resolve_optional_gameobject_sources(explicit_paths=None, data_dir=DATA_DIR):
         if not all(path is not None for path in explicit):
             raise ValueError('gameobject sources must be supplied together')
         paths=tuple(Path(path).expanduser().resolve() for path in explicit)
-        return None if all(not path.is_file() for path in paths) else paths
+        return None if any(not path.is_file() for path in paths) else paths
     defaults=tuple(Path(data_dir) / name for name in (
         'gameobject.sql', 'gameobject_template.sql', 'gameobject_loot_template.sql'))
     return defaults if all(path.is_file() for path in defaults) else None
@@ -2291,12 +2291,33 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
         if matches:
             for encounter_entry,encounter in matches:
                 row=dict(base)
-                script=script_matches[0] if script_matches else None
                 row.update({'encounter_id':f'boss_{encounter_entry:06d}',
                             'encounter_name':encounter.get('comment',''),
-                            'association_method':'script_summon' if script else 'explicit_instance_mapping',
-                            'association_source':script.get('source_path',source_path) if script else source_path,
+                            'association_method':'explicit_instance_mapping',
+                            'association_source':source_path,
                             'valid':True,'invalid_reason':''})
+                rows.append(row)
+            for script in script_matches:
+                identifier=re.sub(r'[^A-Za-z0-9_]+','_',str(script.get('encounter_identifier') or 'reward'))
+                row=dict(base)
+                row.update({'encounter_id':f'script_{identifier}',
+                            'encounter_name':script.get('encounter_identifier',''),
+                            'association_method':'script_summon','valid':True,
+                            'association_source':';'.join(filter(None,(source_path,script.get('source_path','')))),
+                            'difficulty_condition':script.get('difficulty_condition',''),
+                            'evidence_type':script.get('evidence_type','')})
+                rows.append(row)
+            continue
+        if script_matches:
+            for script in script_matches:
+                identifier=re.sub(r'[^A-Za-z0-9_]+','_',str(script.get('encounter_identifier') or 'reward'))
+                row=dict(base)
+                row.update({'encounter_id':f'script_{identifier}',
+                            'encounter_name':script.get('encounter_identifier',''),
+                            'association_method':'script_summon','valid':True,
+                            'association_source':';'.join(filter(None,(source_path,script.get('source_path','')))),
+                            'difficulty_condition':script.get('difficulty_condition',''),
+                            'evidence_type':script.get('evidence_type','')})
                 rows.append(row)
             continue
         else:
@@ -2403,6 +2424,13 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
         for map_id in sorted(candidate_maps):
             if map_id in dungeon_or_raid_maps:
                 boss_entries[map_id].append((int(encounter_entry),target_type,target_entry))
+    for row in catalog.get('gameobject_reward_targets',()):
+        if not row.get('valid') or row.get('association_method') not in ('script_summon','explicit_instance_mapping'):
+            continue
+        map_id=int(row['map_id'])
+        if map_id in dungeon_or_raid_maps:
+            key=row['encounter_id']
+            boss_entries[map_id].append((key,'gameobject',int(row['gameobject_entry'])))
 
     for map_id,map_row in sorted(dungeon_or_raid_maps.items()):
         difficulty_ids=sorted(difficulty_id for current_map,difficulty_id in catalog['map_difficulties'] if current_map==map_id)
@@ -2462,7 +2490,7 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
             previous=None
             for boss in bosses:
                 encounter_entry=boss['encounter_entry']; target_type=boss['target_type']; loot_entry=boss['loot_entry']
-                encounter_id=f'boss_{encounter_entry:06d}'
+                encounter_id=encounter_entry if isinstance(encounter_entry,str) else f'boss_{encounter_entry:06d}'
                 target={'type':target_type,'entry':loot_entry}
                 if target_type=='creature':
                     target['creature_entry']=boss['effective_entry']
