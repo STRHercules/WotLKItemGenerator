@@ -221,6 +221,33 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(row['profile_created'])
         self.assertEqual(row['excluded_reason'], 'no usable stock equipment loot')
 
+    def test_gameobject_reward_becomes_first_class_encounter_target(self):
+        catalog = _minimal_encounter_catalog(map_id=631, map_type=2,
+                                             instance_type=13)
+        catalog['instance_encounters'] = {
+            1: {'credit_type': 1, 'credit_entry': 7001,
+                'last_encounter_dungeon': 500, 'comment': 'Reward Cache'},
+        }
+        catalog['gameobject_templates'] = {
+            7001: {'entry': 7001, 'type': 3, 'lootid': 97001},
+        }
+        catalog['gameobject_maps'] = {7001: {631}}
+        catalog['gameobject_loot_columns'] = catalog['creature_loot_columns']
+        catalog['gameobject_loot_rows'] = [
+            (97001, 6001, 0, 100.0, 0, 1, 0, 1, 1, 'cache gear'),
+        ]
+        catalog['gameobject_loot_entries'] = {97001}
+        catalog['stock_items'][6001] = _stock_item(6001, 220, 80)
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        self.assertTrue(any(
+            target.get('type') == 'gameobject'
+            for profile in manifest['profiles']
+            for encounter in profile['encounters']
+            for target in encounter['targets']
+        ))
+
 
 def _placement_profile(profile_id, kind, item_level, required_level,
                        target_kind='boss', qualities=(2, 3, 4, 5)):
@@ -320,6 +347,105 @@ class PlacementTests(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             g.assign_plan_encounters(plan, {'sample': profile})
+
+
+class SafetyTests(unittest.TestCase):
+    def test_encounter_validation_rejects_out_of_band_required_level(self):
+        profile = _placement_profile('high_dungeon', 'dungeon', (100, 140), (70, 80))
+        item = {
+            'entry': 1, 'ItemLevel': 120, 'RequiredLevel': 4, 'Quality': 4,
+            'content_profile': 'high_dungeon', 'content_target': 'boss',
+        }
+
+        report = g.validate_encounter_integration(
+            [item], {'profiles': [profile]}, [], {})
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('RequiredLevel' in error
+                            for error in report['errors']))
+
+    def test_encounter_validation_rejects_split_set(self):
+        profile = _placement_profile('sample', 'dungeon', (200, 240), (70, 80))
+        other_profile = _placement_profile('other', 'dungeon', (200, 240), (70, 80))
+        items = _set_items(2)
+        items[0]['content_profile'] = 'sample'
+        items[0]['content_target'] = 'boss'
+        items[1]['content_profile'] = 'other'
+        items[1]['content_target'] = 'boss'
+
+        report = g.validate_encounter_integration(
+            items, {'profiles': [profile, other_profile]}, [], {})
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('set' in error.lower() for error in report['errors']))
+
+
+class ReportTests(unittest.TestCase):
+    def test_gameobject_encounter_sql_uses_gameobject_table(self):
+        records = {
+            'profile_id': 'sample',
+            'encounters': {
+                'cache': {
+                    'pool_id': 3100000, 'item_count': 1, 'rank': 0,
+                    'band': (200, 200), 'chance': 2.0, 'quantity': 1,
+                    'loot_mode': 1,
+                    'targets': [{'type': 'gameobject', 'entry': 7001}],
+                },
+            },
+            'pool_rows': [{'pool_id': 3100000, 'item': 7002,
+                           'comment': 'Generated cache item'}],
+            'attachments': [{'parent_type': 'gameobject', 'parent_entry': 7001,
+                             'pool_id': 3100000, 'encounter': 'cache',
+                             'chance': 2.0, 'quantity': 1, 'loot_mode': 1}],
+        }
+
+        sql, cleanup = g.render_encounter_loot_sql(records)
+
+        self.assertIn('INSERT INTO `gameobject_loot_template`', sql)
+        self.assertIn('DELETE FROM `gameobject_loot_template`', cleanup)
+
+    def test_encounter_reports_include_evidence_columns(self):
+        items = [{
+            'entry': 7001, 'name': 'Generated', 'RequiredLevel': 80,
+            'ItemLevel': 220, 'Quality': 4, 'set_id': 9000,
+            'content_profile': 'sample', 'content_target': 'boss',
+            'placement_score': (0, 0), 'placement_reason': 'direct evidence',
+            'placement_band_source': 'direct',
+        }]
+        loot = {
+            'pools': [{'pool_id': 3000004, 'bracket': '70-79',
+                       'level_min': 70, 'level_max': 79, 'item_count': 1}],
+            'pool_rows': [{'pool_id': 3000004, 'item': 7001,
+                           'comment': 'Generated'}],
+            'attachments': [{'parent_reference': 9000, 'pool_id': 3000004,
+                             'world_level': 70, 'bracket': '70-79'}],
+        }
+        profile = {
+            'id': 'sample', 'map_id': 631, 'map_type': 2,
+            'difficulty_id': 0, 'required_level_min': 80,
+            'required_level_max': 80,
+            'encounters': [{
+                'id': 'boss', 'kind': 'boss', 'loot_mode': 1,
+                'item_level': [220, 220],
+                'targets': [{'type': 'creature', 'entry': 8001}],
+            }],
+        }
+        records = [g.build_encounter_loot_records(
+            items, profile, {'creature': {8001}, 'reference': set()},
+            pool_base=3100000)]
+        with tempfile.TemporaryDirectory() as directory:
+            paths = g.write_placement_reports(
+                items, loot, records, pathlib.Path(directory),
+                {'profiles': [profile]},
+                {'creature_templates': {8001: {'name': 'Test Boss'}},
+                 'instance_encounters': {}},
+            )
+            header = paths['encounter'].read_text(encoding='utf-8').splitlines()[0]
+
+        self.assertIn('profile_required_level_min', header)
+        self.assertIn('band_source', header)
+        self.assertIn('placement_score', header)
+        self.assertIn('set_atomic_profile', header)
 
 
 class ManifestTests(unittest.TestCase):
