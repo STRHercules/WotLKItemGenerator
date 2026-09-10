@@ -69,6 +69,19 @@ DEFAULT_DUNGEON_MAP_DBC_SOURCE = _default_data_source('DungeonMap.dbc')
 DEFAULT_CREATURE_SOURCE = _default_data_source('creature.sql')
 DEFAULT_CREATURE_TEMPLATE_SOURCE = _default_data_source('creature_template.sql')
 DEFAULT_INSTANCE_ENCOUNTERS_SOURCE = _default_data_source('instance_encounters.sql')
+DEFAULT_GAMEOBJECT_SOURCE = _default_data_source('gameobject.sql')
+DEFAULT_GAMEOBJECT_TEMPLATE_SOURCE = _default_data_source('gameobject_template.sql')
+DEFAULT_GAMEOBJECT_LOOT_SOURCE = _default_data_source('gameobject_loot_template.sql')
+
+def resolve_optional_gameobject_sources(explicit_paths=None, data_dir=DATA_DIR):
+    explicit=tuple(explicit_paths or (None, None, None))
+    if any(path is not None for path in explicit):
+        if not all(path is not None for path in explicit):
+            raise ValueError('gameobject sources must be supplied together')
+        return tuple(Path(path).expanduser().resolve() for path in explicit)
+    defaults=tuple(Path(data_dir) / name for name in (
+        'gameobject.sql', 'gameobject_template.sql', 'gameobject_loot_template.sql'))
+    return defaults if all(path.is_file() for path in defaults) else None
 
 NEW_FEATURES = (
     'sets', 'spell-effects', 'chance-on-hit', 'on-use', 'socket-bonuses', 'disenchant',
@@ -1628,6 +1641,7 @@ def parse_args(argv=None):
     parser.add_argument('--gameobject-source',type=Path,default=None,metavar='PATH',help='Optional gameobject.sql source for verifiable chest/cache encounter targets.')
     parser.add_argument('--gameobject-template-source',type=Path,default=None,metavar='PATH',help='Optional gameobject_template.sql source for encounter target loot IDs.')
     parser.add_argument('--gameobject-loot-source',type=Path,default=None,metavar='PATH',help='Optional gameobject_loot_template.sql source for encounter target validation.')
+    parser.add_argument('--azerothcore-source-root',type=Path,default=None,metavar='PATH',help='Optional AzerothCore source root containing discoverable encounter SQL sources.')
     parser.add_argument('--item-template-source',type=Path,default=DEFAULT_ITEM_TEMPLATE_SOURCE,metavar='PATH',help=f'item_template.sql used to harvest the full stock appearance catalog (default: {DEFAULT_ITEM_TEMPLATE_SOURCE}).')
     parser.add_argument('--item-dbc-source',dest='item_dbc_sources',type=Path,action='append',default=None,metavar='PATH',help=f'Complete or additive WotLK Item.dbc source; repeat for every client DBC baseline (default: {DEFAULT_ITEM_DBC_SOURCE}, {DEFAULT_ITEM_DBC_CUSTOM_SOURCE}).')
     parser.add_argument('--item-dbc-overwrite',action='store_true',help='Replace conflicting generated-ID rows in --item-dbc-source instead of failing.')
@@ -1700,10 +1714,8 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     encounter_source_paths=None
     gameobject_source_paths=None
     requested_gameobject_paths=(args.gameobject_source,args.gameobject_template_source,args.gameobject_loot_source)
-    if any(path is not None for path in requested_gameobject_paths):
-        if not all(path is not None for path in requested_gameobject_paths):
-            raise ValueError('--gameobject-source, --gameobject-template-source, and --gameobject-loot-source must be supplied together')
-        gameobject_source_paths=tuple(Path(path).expanduser().resolve() for path in requested_gameobject_paths)
+    source_root=Path(args.azerothcore_source_root).expanduser().resolve() if args.azerothcore_source_root else DATA_DIR
+    gameobject_source_paths=resolve_optional_gameobject_sources(requested_gameobject_paths, data_dir=source_root)
     if content_manifest is None or any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',())):
         encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
                          DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
@@ -1873,6 +1885,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         'default_encounter_profile_count':0 if DEFAULT_ENCOUNTER_MANIFEST is None else len(DEFAULT_ENCOUNTER_MANIFEST['profiles']),
         'encounter_source_paths':ENCOUNTER_SOURCE_PATHS,
         'gameobject_source_paths':GAMEOBJECT_SOURCE_PATHS,
+        'azerothcore_source_root':source_root,
         'class_counts':dict(CLASS_ITEM_COUNTS),'loot_chance':LOOT_CHANCE,
         'world_loot_source':WORLD_LOOT_SOURCE,'reference_loot_source':REFERENCE_LOOT_SOURCE,
         'item_template_source':ITEM_TEMPLATE_SOURCE,'item_dbc_sources':ITEM_DBC_SOURCES,
@@ -2130,7 +2143,7 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
             meta=_stock_item_metadata(fields)
             if meta is not None: stock_items[meta['entry']]=meta
 
-    gameobject_templates={}; gameobject_maps=defaultdict(set); gameobject_loot_columns=[]; gameobject_loot_rows=[]
+    gameobject_templates={}; gameobject_spawns=[]; gameobject_maps=defaultdict(set); gameobject_loot_columns=[]; gameobject_loot_rows=[]
     if gameobject_path is not None:
         gameobject_template_columns,gameobject_template_rows=_load_sql_table_rows(gameobject_template_path)
         gameobject_template_index=_sql_column_indexes(gameobject_template_columns)
@@ -2138,6 +2151,7 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
             entry=_sql_int(_sql_row_value(row,gameobject_template_index,'entry'),-1)
             if entry<0: continue
             gameobject_templates[entry]={'entry':entry,
+                                         'name':str(_sql_row_value(row,gameobject_template_index,'name') or '').strip("'").replace("''", "'"),
                                          'type':_sql_int(_sql_row_value(row,gameobject_template_index,'type')),
                                          'lootid':_sql_int(_sql_row_value(row,gameobject_template_index,'data1','data0'))}
         gameobject_columns,gameobject_rows=_load_sql_table_rows(gameobject_path)
@@ -2145,7 +2159,11 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
         for row in gameobject_rows:
             entry=_sql_int(_sql_row_value(row,gameobject_index,'id','entry'),-1)
             map_id=_sql_int(_sql_row_value(row,gameobject_index,'map','mapid'),-1)
-            if entry>=0 and map_id>=0: gameobject_maps[entry].add(map_id)
+            if entry>=0 and map_id>=0:
+                gameobject_maps[entry].add(map_id)
+                gameobject_spawns.append({'guid':_sql_int(_sql_row_value(row,gameobject_index,'guid')),
+                                          'id':entry, 'map':map_id,
+                                          'spawn_mask':_sql_int(_sql_row_value(row,gameobject_index,'spawnmask','spawn_mask'),1)})
         gameobject_loot_columns,gameobject_loot_rows=_load_sql_table_rows(gameobject_loot_path)
 
     return {'maps':maps,'map_difficulties':difficulties,'dungeon_maps':dungeon_rows,'creature_templates':creature_templates,
@@ -2154,7 +2172,7 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
             'reference_loot_columns':reference_loot_columns,'reference_loot_rows':reference_loot_rows,
             'creature_loot_entries':{_sql_int(row[0]) for row in creature_loot_rows},
             'reference_loot_entries':{_sql_int(row[0]) for row in reference_loot_rows},
-            'gameobject_templates':gameobject_templates,'gameobject_maps':gameobject_maps,
+            'gameobject_templates':gameobject_templates,'gameobject_spawns':gameobject_spawns,'gameobject_maps':gameobject_maps,
             'gameobject_loot_columns':gameobject_loot_columns,'gameobject_loot_rows':gameobject_loot_rows,
             'gameobject_loot_entries':{_sql_int(row[0]) for row in gameobject_loot_rows},
             'stock_items':stock_items,
@@ -2164,7 +2182,8 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
                             'difficulty_template_count':sum(any(template.get('difficulty_entries',())) for template in creature_templates.values()),
                             'instance_encounter_count':len(encounters),'gameobject_template_count':len(gameobject_templates),
                             'gameobject_count':len(gameobject_maps),'stock_item_count':len(stock_items),
-                            'gameobject_support':'exercised' if gameobject_path is not None else 'not_exercised'}}
+                            'gameobject_support':'exercised' if gameobject_path is not None else 'not_exercised',
+                            'script_reward_mapping':'not_exercised'}}
 
 def loot_mode_for_difficulty(map_type=None,difficulty_id=None):
     if map_type is not None and int(map_type) not in (1,2):

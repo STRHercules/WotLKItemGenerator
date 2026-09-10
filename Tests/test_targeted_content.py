@@ -1261,6 +1261,25 @@ INSERT INTO `quest_template` VALUES
 
 
 class SourceTests(unittest.TestCase):
+    def test_complete_default_gameobject_trio_is_discoverable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            for name in ('gameobject.sql', 'gameobject_template.sql',
+                         'gameobject_loot_template.sql'):
+                (root / name).write_text('source', encoding='utf-8')
+
+            paths = g.resolve_optional_gameobject_sources(
+                data_dir=root, explicit_paths=(None, None, None))
+
+        self.assertEqual(paths, tuple(root / name for name in (
+            'gameobject.sql', 'gameobject_template.sql',
+            'gameobject_loot_template.sql')))
+
+    def test_incomplete_explicit_gameobject_trio_is_rejected(self):
+        with self.assertRaises(ValueError):
+            g.resolve_optional_gameobject_sources(
+                explicit_paths=(pathlib.Path('gameobject.sql'), None, None))
+
     def test_scripted_boss_uses_instance_encounter_without_static_spawn(self):
         catalog = _minimal_encounter_catalog(
             difficulty_ids=(0, 1, 2, 3), boss_spawn=False,
@@ -1330,13 +1349,17 @@ INSERT INTO `gameobject_loot_template` VALUES (97001,19001,0,1);
                 g.DATA_DIR / 'instance_encounters.sql',
                 g.DATA_DIR / 'creature_loot_template.sql',
                 g.DATA_DIR / 'reference_loot_template.sql',
-                gameobject_path=gameobject_path,
-                gameobject_template_path=gameobject_template_path,
-                gameobject_loot_path=gameobject_loot_path,
-            )
+            gameobject_path=gameobject_path,
+            gameobject_template_path=gameobject_template_path,
+            gameobject_loot_path=gameobject_loot_path,
+        )
 
         self.assertIn(7001, catalog['gameobject_templates'])
         self.assertIn(97001, catalog['gameobject_loot_entries'])
+        self.assertEqual(catalog['gameobject_templates'][7001]['lootid'], 97001)
+        self.assertEqual(catalog['gameobject_templates'][7001]['type'], 3)
+        self.assertEqual(catalog['gameobject_spawns'][0]['spawn_mask'], 1)
+        self.assertEqual(catalog['gameobject_maps'][7001], {631})
 
     def test_default_encounter_manifest_maps_source_backed_trash_and_boss_loot(self):
         catalog = {
