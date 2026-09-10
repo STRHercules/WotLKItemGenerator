@@ -5410,9 +5410,13 @@ def write_outputs(items,ui=None,name_changes=()):
                                             if key not in ('errors','warnings')},
             'encounter_source_audit':None if ENCOUNTER_SOURCE_CATALOG is None else {
                 'source_paths':[_portable_source_path(path) for path in (ENCOUNTER_SOURCE_PATHS or ())],
+                'gameobject_source_paths':[_portable_source_path(path) for path in (GAMEOBJECT_SOURCE_PATHS or ())],
                 'map_count':len(ENCOUNTER_SOURCE_CATALOG['maps']),'map_difficulty_count':len(ENCOUNTER_SOURCE_CATALOG['map_difficulties']),
                 'creature_template_count':len(ENCOUNTER_SOURCE_CATALOG['creature_templates']),'spawn_creature_count':len(ENCOUNTER_SOURCE_CATALOG['creature_maps']),
                 'instance_encounter_count':len(ENCOUNTER_SOURCE_CATALOG['instance_encounters']),
+                'gameobject_template_count':len(ENCOUNTER_SOURCE_CATALOG.get('gameobject_templates',{})),
+                'gameobject_count':len(ENCOUNTER_SOURCE_CATALOG.get('gameobject_maps',{})),
+                'stock_item_count':len(ENCOUNTER_SOURCE_CATALOG.get('stock_items',{})),
                 'profile_count':0 if DEFAULT_ENCOUNTER_MANIFEST is None else len(DEFAULT_ENCOUNTER_MANIFEST['profiles']),
             },
             'quest_reward_count':len(quest_records),'quest_rewards':quest_records,
@@ -5439,10 +5443,11 @@ Generated loot pools: `{len(loot['pools'])}` (`{len(loot['pool_rows'])}` item ro
 World-loot attachments: `{len(loot['attachments'])}` at `{LOOT_CHANCE}%`<br>
 Loot destinations: `world` plus `{len(encounter_pool_ids)}` dungeon/raid encounter pools<br>
 Dungeon/raid LootMode: `1 << MapDifficulty difficulty_id`<br>
-Placement reports: `world_item_placements.csv`, `dungeon_raid_item_placements.csv`<br>
+Placement reports: `world_item_placements.csv`, `dungeon_raid_item_placements.csv`, `encounter_profile_coverage.csv`, `encounter_profiles.csv`, `difficulty_band_comparison.csv`, `encounter_band_rejections.csv`, `set_manifest.csv`<br>
 World-loot source: `{_portable_source_path(WORLD_LOOT_SOURCE)}`<br>
 Reference-loot source: `{_portable_source_path(REFERENCE_LOOT_SOURCE)}`<br>
 Dungeon/raid source files: `{', '.join(_portable_source_path(path) for path in (ENCOUNTER_SOURCE_PATHS or ())) or 'none'}`<br>
+Optional gameobject source files: `{', '.join(_portable_source_path(path) for path in (GAMEOBJECT_SOURCE_PATHS or ())) or 'none'}`<br>
 Item-template source: `{_portable_source_path(ITEM_TEMPLATE_SOURCE)}`<br>
 Client Item.dbc sources: `{', '.join(_portable_source_path(path) for path in ITEM_DBC_SOURCES)}`<br>
 ItemSet.dbc source: `{_portable_source_path(ITEM_SET_DBC_SOURCE)}`<br>
@@ -5474,6 +5479,7 @@ Target: AzerothCore / WotLK 3.3.5a
 - `py generate_pack.py --item-dbc-source PATH --item-dbc-source PATH` - merge every complete or additive WotLK `Item.dbc` source supplied; repeat the option for each client baseline.
 - Add `--item-dbc-overwrite` only when intentionally replacing conflicting generated-ID rows in that source DBC.
 - `py generate_pack.py --disable sets chance-on-hit` - disable selected new features; `effects` disables all three item spell triggers and `all-new` disables every new feature.
+- Encounter integration is source-backed and fail-closed. If validation is invalid, diagnostic reports remain available but encounter SQL is omitted from `sql/IMPORT_ORDER.txt`; item and world-loot output still completes.
 - `--set-rate`, `--set-min-level`, `--set-size` - tune complete class/role set generation; five pieces is the default.
 - `--spell-effect-rate-multiplier`, `--proc-rate-multiplier`, `--on-use-rate-multiplier`, `--effect-ilvl-window`, `--max-special-effects` - tune stock effect-package selection; low-level effects still obey the stricter 5/10/15 progression windows.
 - `--socket-bonus-rate`, `--disenchant-rate` - tune validated stock socket and disenchant assignment.
@@ -5509,6 +5515,7 @@ Flags can be combined in any order. The default remains 100,000 total and world-
 - Generated items are placed into up to six centralized `reference_loot_template` pools by required-level bracket.
 - Pool rows use `Chance = 0`, `GroupId = 1` to select one generated item; attachments use `GroupId = 0` and the configured independent roll.
 - Existing creature loot rows are not rewritten. World-loot levels 81–82 use the level-80 pool, and the generated pool is shared across classes.
+- Encounter placement requires both ItemLevel and RequiredLevel evidence, respects each MapDifficulty LootMode, rejects unsafe shared references/outliers, and keeps generated sets in one map+difficulty.
 - Generated reference pool IDs are reserved at `3000000`–`3000005`; attachment keys use the reserved `2000000000 + parent_reference` range.
 - Item entries use the `200000-399999` namespace, split into 20,000-ID blocks per class.
 - The default 100,000-item pack uses the first 10,000 IDs of each class block; larger runs fill those blocks up to 200,000 items.
@@ -5517,7 +5524,7 @@ Flags can be combined in any order. The default remains 100,000 total and world-
 
 1. Run `00_SCHEMA_CHECK.sql` and confirm the columns match your AzerothCore schema.
 2. Run `00_PREIMPORT_COLLISION_CHECK.sql`. Do not import unless every reported collision count is 0.
-3. Import files in `sql/IMPORT_ORDER.txt`.
+3. Import files in `sql/IMPORT_ORDER.txt`. Encounter SQL appears there only when encounter integration validation succeeds.
 4. When sets are enabled, copy `server/dbc/ItemSet.dbc` into the AzerothCore worldserver DBC directory.
 5. Restart worldserver after the SQL import and server DBC copy.
 6. With the client closed, clear `Cache/WDB/<locale>/itemcache.wdb` if item names/icons are stale, then retest.

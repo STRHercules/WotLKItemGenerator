@@ -2093,15 +2093,17 @@ The generator validates that the resulting value fits within an unsigned 32-bit 
 
 # Targeted Dungeon, Raid, and Quest Content
 
-The normal no-argument run automatically integrates generated items into source-backed dungeon and raid trash/boss loot tables. It reads the root `Map.dbc`, `MapDifficulty.dbc`, `DungeonMap.dbc`, `creature.sql`, `creature_template.sql`, and `instance_encounters.sql` files, then reports those source paths and generated placements. World-loot pools are emitted in the same run.
+The normal no-argument run automatically integrates generated items into source-backed dungeon and raid trash/boss loot tables. It reads `Map.dbc`, `MapDifficulty.dbc`, `DungeonMap.dbc`, `creature.sql`, `creature_template.sql`, `instance_encounters.sql`, stock loot SQL, and `item_template.sql`. Every candidate map+difficulty is audited before placement; valid raid difficulties are not gated on `DungeonMap.dbc` membership or static boss spawns. World-loot pools are emitted in the same run.
 
-Encounter attachments use `LootMode = 1 << MapDifficulty.difficulty_id`. Generated encounter items are filtered to the item-level envelope implied by the spawned creature `minlevel`/`maxlevel` values; items outside every dungeon/raid envelope remain world-loot-only.
+Encounter attachments use `LootMode = 1 << MapDifficulty.difficulty_id`. ItemLevel and RequiredLevel bands are learned independently from filtered equippable stock loot, direct encounter loot, verifiable encounter-specific references, and bounded fallback evidence. Shared references consumed by unrelated maps, non-equipment rows, outliers, and unsafe bands are excluded from progression evidence. Items outside both the ItemLevel and RequiredLevel envelope remain world-loot-only.
 
 Pass `--content-manifest PATH` when explicit recipes, encounter mappings, or quest rewards are needed. The manifest is JSON and keeps recipe counts disjoint by default. Required level and item level ranges are independent; set recipes use `set_count` and `set_size`.
 
-Dungeon and raid profiles are difficulty-specific. Each profile lists exact creature/reference loot targets and an encounter graph using `requires`. The generator resolves a deterministic order, assigns progression ranks, increases item-level bands through the instance, and gives the final boss the profile maximum. Encounter weights allocate exact generated items; each encounter receives its own additive pool and configurable additional-drop chance. One generated item is awarded per successful roll by default.
+Dungeon and raid profiles are difficulty-specific. Each profile lists exact creature, reference, or verifiable gameobject loot targets and an encounter graph using `requires`. The generator resolves a deterministic order, assigns progression ranks, and records source evidence, band method, RequiredLevel range, quality evidence, and rejected references. Encounter weights allocate exact generated items; each encounter receives its own additive pool and configurable additional-drop chance. One generated item is awarded per successful roll by default. Generated sets are selected as one atomic map+difficulty group and are never scattered across instances.
 
-When a manifest profile includes `map_id` and `difficulty_id`, the same source audit verifies map/difficulty identity, creature spawn membership, creature names/loot IDs, boss credit entries, and existing creature/reference loot targets before writing SQL.
+When a manifest profile includes `map_id` and `difficulty_id`, the same source audit verifies map/difficulty identity, creature/gameobject source membership, loot IDs, boss credit entries, and existing creature/reference/gameobject loot targets before writing SQL. Gameobject sources are optional: `--gameobject-source`, `--gameobject-template-source`, and `--gameobject-loot-source` must be supplied together; absent sources produce explicit coverage exclusions rather than guessed chest mappings.
+
+The generated encounter subsystem validates profile integrity, independent difficulty bands, placement eligibility, set atomicity, target-table identity, and generic high-end destination sanity. If that optional validation fails, diagnostic reports are still written, but encounter SQL and encounter cleanup are omitted from `sql/IMPORT_ORDER.txt`; item SQL and world-loot output continue.
 
 Quest targets reference generated recipes and support both fixed and choice rewards. Provide `--quest-template-source PATH` when the manifest contains `quest_targets`. Existing quest rewards are preserved and empty slots are filled first. Generated quest SQL and cleanup SQL update only mapped fields.
 
@@ -2114,7 +2116,7 @@ py .\generate_pack.py `
   --seed 424242
 ```
 
-The generated report records resolved encounter order, rank, item-level band, weights, chances, quantities, and quest assignments.
+The generated report records resolved encounter order, rank, ItemLevel and RequiredLevel bands, source evidence, quality limits, weights, chances, quantities, set decisions, coverage exclusions, difficulty comparisons, rejected references, and encounter integration validity.
 
 ---
 
@@ -2645,7 +2647,7 @@ py .\generate_pack.py `
   --seed 424242
 ```
 
-This writes separate encounter loot pools, additive creature-loot attachments, quest reward updates, cleanup SQL, per-item `world_item_placements.csv` and `dungeon_raid_item_placements.csv` reports, and the resolved assignments in `validation_report.json`.
+This writes separate encounter loot pools, additive creature/reference/gameobject attachments when source-backed, quest reward updates, cleanup SQL, and evidence reports. Reports include `world_item_placements.csv`, `dungeon_raid_item_placements.csv`, `encounter_profile_coverage.csv`, `encounter_profiles.csv`, `difficulty_band_comparison.csv`, `encounter_band_rejections.csv`, and `set_manifest.csv`. `validation_report.json` records encounter integration validity and errors. Invalid optional encounter integration emits diagnostics but no encounter import SQL.
 
 ---
 
@@ -2819,6 +2821,11 @@ generated-<seed>/
 ├─ world_item_placements.csv          # one row per generated item
 ├─ encounter_loot.csv                 # generated dungeon/raid target summary
 ├─ dungeon_raid_item_placements.csv  # one row per placed dungeon/raid item
+├─ encounter_profile_coverage.csv     # every candidate map+difficulty
+├─ encounter_profiles.csv             # bands and stock evidence
+├─ difficulty_band_comparison.csv     # independent difficulty audit
+├─ encounter_band_rejections.csv      # excluded stock evidence
+├─ set_manifest.csv                   # atomic set decisions
 ├─ quest_rewards.csv                 # targeted manifests only
 │
 ├─ 00_SCHEMA_CHECK.sql
@@ -2896,6 +2903,7 @@ A per-generation summary containing:
 - entry ranges
 - loot-pool counts
 - per-item world and dungeon/raid placement CSVs
+- encounter profile coverage, stock-band evidence, difficulty comparisons, rejected evidence, and atomic set reports
 - loot chance
 - source file paths
 - appearance-harvest counts
@@ -2943,6 +2951,8 @@ Includes:
 - world-loot bracket distribution
 - generated pool IDs
 - resolved encounter order, ranks, item-level bands, weights, chances, and quantities
+- RequiredLevel bands, LootMode-specific source evidence, encounter integration validity/errors, and fail-closed status
+- coverage exclusions, difficulty-band comparisons, rejected references/outliers, and set atomicity decisions
 - quest reward assignments and preserved source values
 - feature-policy flags
 - validation error count
@@ -3143,6 +3153,8 @@ Contains:
 - generated pool cleanup
 - one pool file per active level bracket
 - world-loot attachment SQL
+- encounter cleanup and encounter SQL only when encounter validation succeeds
+- gameobject-loot attachments when optional gameobject sources prove the target
 
 ---
 
@@ -3167,6 +3179,8 @@ Runs:
 ```sql
 SHOW COLUMNS FROM `acore_world`.`item_template`;
 SHOW COLUMNS FROM `acore_world`.`reference_loot_template`;
+SHOW COLUMNS FROM `acore_world`.`creature_loot_template`;
+SHOW COLUMNS FROM `acore_world`.`gameobject_loot_template`;
 ```
 
 Use this before importing a full pack.
@@ -3181,6 +3195,7 @@ Checks the live world database for collisions involving:
 - reserved pool IDs
 - generated pool references
 - generated attachment keys
+- generated gameobject-loot attachment keys
 
 Every collision count should be zero before a normal import.
 
