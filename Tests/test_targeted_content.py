@@ -11,6 +11,37 @@ g = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(g)
 
 
+def _minimal_encounter_catalog(*, map_id=631, map_type=2, instance_type=13,
+                               difficulty_ids=(0,), boss_spawn=True,
+                               dungeon_map_rows=None):
+    return {
+        'maps': {map_id: {
+            'id': map_id, 'directory': 'TestRaid', 'map_type': map_type,
+            'instance_type': instance_type,
+        }},
+        'map_difficulties': {
+            (map_id, difficulty_id): {
+                'id': difficulty_id + 1, 'map_id': map_id,
+                'difficulty_id': difficulty_id, 'max_players': 10,
+                'item_level': 264,
+            }
+            for difficulty_id in difficulty_ids
+        },
+        'dungeon_maps': dungeon_map_rows or {},
+        'creature_templates': {
+            9001: {'entry': 9001, 'name': 'Scripted Boss', 'lootid': 9100,
+                   'minlevel': 80, 'maxlevel': 80},
+        },
+        'creature_maps': {9001: {map_id}} if boss_spawn else {},
+        'instance_encounters': {
+            1: {'credit_type': 0, 'credit_entry': 9001,
+                'last_encounter_dungeon': 500, 'comment': 'Scripted Boss'},
+        },
+        'creature_loot_entries': {9100},
+        'reference_loot_entries': set(),
+    }
+
+
 class ManifestTests(unittest.TestCase):
     def test_cli_accepts_content_manifest(self):
         args = g.parse_args(['--content-manifest', 'content_manifest.json'])
@@ -565,6 +596,83 @@ INSERT INTO `quest_template` VALUES
 
 
 class SourceTests(unittest.TestCase):
+    def test_scripted_boss_uses_instance_encounter_without_static_spawn(self):
+        catalog = _minimal_encounter_catalog(
+            difficulty_ids=(0, 1, 2, 3), boss_spawn=False,
+            dungeon_map_rows={500: (500, 631)},
+        )
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        self.assertEqual({p['difficulty_id'] for p in manifest['profiles']}, {0, 1, 2, 3})
+        self.assertTrue(any(
+            target.get('creature_entry') == 9001
+            for profile in manifest['profiles']
+            for encounter in profile['encounters']
+            for target in encounter['targets']
+        ))
+
+    def test_raid_profile_does_not_require_dungeon_map_membership(self):
+        catalog = _minimal_encounter_catalog(dungeon_map_rows={})
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        self.assertEqual(len(manifest['profiles']), 1)
+        self.assertEqual(manifest['profiles'][0]['map_id'], 631)
+
+    def test_gameobject_target_is_loaded_when_sources_are_supplied(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            gameobject_path = root / 'gameobject.sql'
+            gameobject_template_path = root / 'gameobject_template.sql'
+            gameobject_loot_path = root / 'gameobject_loot_template.sql'
+            gameobject_path.write_text(
+                """CREATE TABLE `gameobject` (
+  `guid` int,
+  `id` int,
+  `map` int
+) ENGINE=InnoDB;
+INSERT INTO `gameobject` VALUES (1,7001,631);
+""",
+                encoding='utf-8',
+            )
+            gameobject_template_path.write_text(
+                """CREATE TABLE `gameobject_template` (
+  `entry` int,
+  `type` int,
+  `data1` int
+) ENGINE=InnoDB;
+INSERT INTO `gameobject_template` VALUES (7001,3,97001);
+""",
+                encoding='utf-8',
+            )
+            gameobject_loot_path.write_text(
+                """CREATE TABLE `gameobject_loot_template` (
+  `Entry` int,
+  `Item` int,
+  `Reference` int,
+  `LootMode` int
+) ENGINE=InnoDB;
+INSERT INTO `gameobject_loot_template` VALUES (97001,19001,0,1);
+""",
+                encoding='utf-8',
+            )
+
+            catalog = g.load_encounter_source_catalog(
+                g.DATA_DIR / 'Map.dbc', g.DATA_DIR / 'MapDifficulty.dbc',
+                g.DATA_DIR / 'DungeonMap.dbc', g.DATA_DIR / 'creature.sql',
+                g.DATA_DIR / 'creature_template.sql',
+                g.DATA_DIR / 'instance_encounters.sql',
+                g.DATA_DIR / 'creature_loot_template.sql',
+                g.DATA_DIR / 'reference_loot_template.sql',
+                gameobject_path=gameobject_path,
+                gameobject_template_path=gameobject_template_path,
+                gameobject_loot_path=gameobject_loot_path,
+            )
+
+        self.assertIn(7001, catalog['gameobject_templates'])
+        self.assertIn(97001, catalog['gameobject_loot_entries'])
+
     def test_default_encounter_manifest_maps_source_backed_trash_and_boss_loot(self):
         catalog = {
             'maps': {100: {'id': 100, 'directory': 'TestDungeon', 'map_type': 1, 'instance_type': 1}},

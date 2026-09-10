@@ -43,6 +43,7 @@ QUEST_REWARD_ROWS = {}
 ENCOUNTER_SOURCE_CATALOG = None
 DEFAULT_ENCOUNTER_MANIFEST = None
 ENCOUNTER_SOURCE_PATHS = None
+GAMEOBJECT_SOURCE_PATHS = None
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
@@ -1624,6 +1625,9 @@ def parse_args(argv=None):
     parser.add_argument('--loot-chance',type=_loot_chance_arg,default=2.0,metavar='PERCENT',help='Independent generated-item roll on each existing world-loot reference (default: 2).')
     parser.add_argument('--world-loot-source',type=Path,default=DEFAULT_WORLD_LOOT_SOURCE,metavar='PATH',help=f'creature_loot_template.sql to map world-loot levels (default: {DEFAULT_WORLD_LOOT_SOURCE}).')
     parser.add_argument('--reference-loot-source',type=Path,default=DEFAULT_REFERENCE_LOOT_SOURCE,metavar='PATH',help=f'reference_loot_template.sql used to verify shared references (default: {DEFAULT_REFERENCE_LOOT_SOURCE}).')
+    parser.add_argument('--gameobject-source',type=Path,default=None,metavar='PATH',help='Optional gameobject.sql source for verifiable chest/cache encounter targets.')
+    parser.add_argument('--gameobject-template-source',type=Path,default=None,metavar='PATH',help='Optional gameobject_template.sql source for encounter target loot IDs.')
+    parser.add_argument('--gameobject-loot-source',type=Path,default=None,metavar='PATH',help='Optional gameobject_loot_template.sql source for encounter target validation.')
     parser.add_argument('--item-template-source',type=Path,default=DEFAULT_ITEM_TEMPLATE_SOURCE,metavar='PATH',help=f'item_template.sql used to harvest the full stock appearance catalog (default: {DEFAULT_ITEM_TEMPLATE_SOURCE}).')
     parser.add_argument('--item-dbc-source',dest='item_dbc_sources',type=Path,action='append',default=None,metavar='PATH',help=f'Complete or additive WotLK Item.dbc source; repeat for every client DBC baseline (default: {DEFAULT_ITEM_DBC_SOURCE}, {DEFAULT_ITEM_DBC_CUSTOM_SOURCE}).')
     parser.add_argument('--item-dbc-overwrite',action='store_true',help='Replace conflicting generated-ID rows in --item-dbc-source instead of failing.')
@@ -1678,7 +1682,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS
     args=parse_args(argv) if args is None else args
     content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
     if content_manifest is not None and (args.number is not None or args.class_name is not None):
@@ -1693,13 +1697,26 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     encounter_source_catalog=None
     default_encounter_manifest=None
     encounter_source_paths=None
+    gameobject_source_paths=None
+    requested_gameobject_paths=(args.gameobject_source,args.gameobject_template_source,args.gameobject_loot_source)
+    if any(path is not None for path in requested_gameobject_paths):
+        if not all(path is not None for path in requested_gameobject_paths):
+            raise ValueError('--gameobject-source, --gameobject-template-source, and --gameobject-loot-source must be supplied together')
+        gameobject_source_paths=tuple(Path(path).expanduser().resolve() for path in requested_gameobject_paths)
     if content_manifest is None or any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',())):
         encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
                          DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
                          world_loot_source,reference_loot_source)
         missing=[str(path) for path in encounter_paths if not Path(path).is_file()]
+        if gameobject_source_paths:
+            missing.extend(str(path) for path in gameobject_source_paths if not path.is_file())
         if missing: raise FileNotFoundError('targeted encounter source file(s) not found: '+', '.join(missing))
-        encounter_source_catalog=load_encounter_source_catalog(*encounter_paths)
+        encounter_source_catalog=load_encounter_source_catalog(
+            *encounter_paths,
+            gameobject_path=gameobject_source_paths[0] if gameobject_source_paths else None,
+            gameobject_template_path=gameobject_source_paths[1] if gameobject_source_paths else None,
+            gameobject_loot_path=gameobject_source_paths[2] if gameobject_source_paths else None,
+        )
         encounter_source_paths=encounter_paths[:6]
         if content_manifest is None:
             default_encounter_manifest=build_default_encounter_manifest(encounter_source_catalog,args.loot_chance)
@@ -1840,6 +1857,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     ENCOUNTER_SOURCE_CATALOG=encounter_source_catalog
     DEFAULT_ENCOUNTER_MANIFEST=default_encounter_manifest
     ENCOUNTER_SOURCE_PATHS=encounter_source_paths
+    GAMEOBJECT_SOURCE_PATHS=gameobject_source_paths
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
     CLASS_ITEM_COUNTS=counts
@@ -1853,6 +1871,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         'encounter_source_catalog':ENCOUNTER_SOURCE_CATALOG,
         'default_encounter_profile_count':0 if DEFAULT_ENCOUNTER_MANIFEST is None else len(DEFAULT_ENCOUNTER_MANIFEST['profiles']),
         'encounter_source_paths':ENCOUNTER_SOURCE_PATHS,
+        'gameobject_source_paths':GAMEOBJECT_SOURCE_PATHS,
         'class_counts':dict(CLASS_ITEM_COUNTS),'loot_chance':LOOT_CHANCE,
         'world_loot_source':WORLD_LOOT_SOURCE,'reference_loot_source':REFERENCE_LOOT_SOURCE,
         'item_template_source':ITEM_TEMPLATE_SOURCE,'item_dbc_sources':ITEM_DBC_SOURCES,
@@ -2064,32 +2083,82 @@ def _load_sql_table_rows(path):
         raise ValueError(f'SQL table {path} row has {mismatched} values; schema has {len(columns)} columns')
     return columns,rows
 
-def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,creature_path,creature_template_path,instance_encounters_path,creature_loot_path,reference_loot_path):
+def _sql_column_indexes(columns):
+    return {str(name).strip('`').lower():index for index,name in enumerate(columns)}
+
+def _sql_row_value(row,indexes,*names,default=None):
+    for name in names:
+        index=indexes.get(str(name).lower())
+        if index is not None and index<len(row):
+            return row[index]
+    return default
+
+def _dungeon_map_id(dungeon_maps,lfg_dungeon):
+    row=dungeon_maps.get(int(lfg_dungeon))
+    if isinstance(row,dict):
+        return _sql_int(row.get('map_id'),None)
+    if isinstance(row,(tuple,list)) and len(row)>1:
+        return _sql_int(row[1],None)
+    return None
+
+def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,creature_path,creature_template_path,instance_encounters_path,creature_loot_path,reference_loot_path,*,gameobject_path=None,gameobject_template_path=None,gameobject_loot_path=None):
+    if any(path is not None for path in (gameobject_path,gameobject_template_path,gameobject_loot_path)) and not all(path is not None for path in (gameobject_path,gameobject_template_path,gameobject_loot_path)):
+        raise ValueError('gameobject source paths must be supplied together')
     map_rows,map_strings,_,_=_read_wdbc_records(map_path,label='Map.dbc')
     difficulty_rows,_,_,_=_read_wdbc_records(map_difficulty_path,label='MapDifficulty.dbc')
     dungeon_rows,_,_,_=_read_wdbc_records(dungeon_map_path,label='DungeonMap.dbc')
-    maps={entry:{'id':entry,'directory':_dbc_string(map_strings,row[1]),'map_type':row[2],'instance_type':row[3]} for entry,row in map_rows.items()}
+    maps={entry:{'id':entry,'directory':_dbc_string(map_strings,row[1]),'map_type':row[2],'instance_type':row[3],
+                 'expansion':_sql_int(row[63],None) if len(row)>63 else None} for entry,row in map_rows.items()}
     difficulties={(row[1],row[2]):{'id':row[0],'map_id':row[1],'difficulty_id':row[2],'max_players':row[21],'item_level':row[22]} for row in difficulty_rows.values() if len(row)>=23}
-    template_columns,template_rows=_load_sql_table_rows(creature_template_path); template_index={name:index for index,name in enumerate(template_columns)}
+    template_columns,template_rows=_load_sql_table_rows(creature_template_path); template_index=_sql_column_indexes(template_columns)
     creature_templates={_sql_int(row[template_index['entry']]):{'entry':_sql_int(row[template_index['entry']]),'name':str(row[template_index['name']]).strip("'").replace("''","'"),'lootid':_sql_int(row[template_index['lootid']]),
                         'minlevel':_sql_int(row[template_index['minlevel']],1) if 'minlevel' in template_index else 1,
                         'maxlevel':_sql_int(row[template_index['maxlevel']],80) if 'maxlevel' in template_index else 80} for row in template_rows}
-    creature_columns,creature_rows=_load_sql_table_rows(creature_path); creature_index={name:index for index,name in enumerate(creature_columns)}
+    creature_columns,creature_rows=_load_sql_table_rows(creature_path); creature_index=_sql_column_indexes(creature_columns)
     creature_maps=defaultdict(set)
     for row in creature_rows: creature_maps[_sql_int(row[creature_index['id']])].add(_sql_int(row[creature_index['map']]))
-    encounter_columns,encounter_rows=_load_sql_table_rows(instance_encounters_path); encounter_index={name:index for index,name in enumerate(encounter_columns)}
-    encounters={_sql_int(row[encounter_index['entry']]):{'credit_type':_sql_int(row[encounter_index['creditType']]),'credit_entry':_sql_int(row[encounter_index['creditEntry']]),'last_encounter_dungeon':_sql_int(row[encounter_index['lastEncounterDungeon']]),'comment':str(row[encounter_index['comment']]).strip("'").replace("''","'")} for row in encounter_rows}
-    _,creature_loot_rows=_load_sql_table_rows(creature_loot_path); _,reference_loot_rows=_load_sql_table_rows(reference_loot_path)
+    encounter_columns,encounter_rows=_load_sql_table_rows(instance_encounters_path); encounter_index=_sql_column_indexes(encounter_columns)
+    encounters={_sql_int(row[encounter_index['entry']]):{'credit_type':_sql_int(row[encounter_index['credittype']]),'credit_entry':_sql_int(row[encounter_index['creditentry']]),'last_encounter_dungeon':_sql_int(row[encounter_index['lastencounterdungeon']]),'comment':str(row[encounter_index['comment']]).strip("'").replace("''","'")} for row in encounter_rows}
+    creature_loot_columns,creature_loot_rows=_load_sql_table_rows(creature_loot_path)
+    reference_loot_columns,reference_loot_rows=_load_sql_table_rows(reference_loot_path)
+
+    gameobject_templates={}; gameobject_maps=defaultdict(set); gameobject_loot_columns=[]; gameobject_loot_rows=[]
+    if gameobject_path is not None:
+        gameobject_template_columns,gameobject_template_rows=_load_sql_table_rows(gameobject_template_path)
+        gameobject_template_index=_sql_column_indexes(gameobject_template_columns)
+        for row in gameobject_template_rows:
+            entry=_sql_int(_sql_row_value(row,gameobject_template_index,'entry'),-1)
+            if entry<0: continue
+            gameobject_templates[entry]={'entry':entry,
+                                         'type':_sql_int(_sql_row_value(row,gameobject_template_index,'type')),
+                                         'lootid':_sql_int(_sql_row_value(row,gameobject_template_index,'data1','data0'))}
+        gameobject_columns,gameobject_rows=_load_sql_table_rows(gameobject_path)
+        gameobject_index=_sql_column_indexes(gameobject_columns)
+        for row in gameobject_rows:
+            entry=_sql_int(_sql_row_value(row,gameobject_index,'id','entry'),-1)
+            map_id=_sql_int(_sql_row_value(row,gameobject_index,'map','mapid'),-1)
+            if entry>=0 and map_id>=0: gameobject_maps[entry].add(map_id)
+        gameobject_loot_columns,gameobject_loot_rows=_load_sql_table_rows(gameobject_loot_path)
+
     return {'maps':maps,'map_difficulties':difficulties,'dungeon_maps':dungeon_rows,'creature_templates':creature_templates,
             'creature_maps':creature_maps,'instance_encounters':encounters,
+            'creature_loot_columns':creature_loot_columns,'creature_loot_rows':creature_loot_rows,
+            'reference_loot_columns':reference_loot_columns,'reference_loot_rows':reference_loot_rows,
             'creature_loot_entries':{_sql_int(row[0]) for row in creature_loot_rows},
-            'reference_loot_entries':{_sql_int(row[0]) for row in reference_loot_rows}}
+            'reference_loot_entries':{_sql_int(row[0]) for row in reference_loot_rows},
+            'gameobject_templates':gameobject_templates,'gameobject_maps':gameobject_maps,
+            'gameobject_loot_columns':gameobject_loot_columns,'gameobject_loot_rows':gameobject_loot_rows,
+            'gameobject_loot_entries':{_sql_int(row[0]) for row in gameobject_loot_rows},
+            'source_audit':{'map_count':len(maps),'map_difficulty_count':len(difficulties),
+                            'creature_template_count':len(creature_templates),'spawn_creature_count':len(creature_maps),
+                            'instance_encounter_count':len(encounters),'gameobject_template_count':len(gameobject_templates),
+                            'gameobject_count':len(gameobject_maps)}}
 
 def loot_mode_for_difficulty(map_type=None,difficulty_id=None):
     if map_type is not None and int(map_type) not in (1,2):
         raise ValueError(f'loot modes only support dungeon or raid maps: {map_type}')
     difficulty=0 if difficulty_id is None else int(difficulty_id)
-    if not 0<=difficulty<=5:
+    if not 0<=difficulty<=15:
         raise ValueError(f'unsupported map difficulty for loot mode: {difficulty}')
     return 1<<difficulty
 
@@ -2117,18 +2186,32 @@ def _item_level_band_for_creatures(creature_templates):
     if not ranges: return 1,284
     return min(row[0] for row in ranges),max(row[1] for row in ranges)
 
+def _difficulty_label(map_row,difficulty_id,max_players=None):
+    difficulty_id=int(difficulty_id)
+    if map_row.get('map_type')==1:
+        return 'normal' if difficulty_id==0 else 'heroic' if difficulty_id==1 else f'dungeon_{difficulty_id}'
+    players=int(max_players or 0)
+    size=str(players) if players else 'unknown'
+    mode='heroic' if difficulty_id>=2 else 'normal'
+    return f'raid_{size}_{mode}'
+
 def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
-    profiles=[]
+    profiles=[]; coverage=[]
     dungeon_or_raid_maps={map_id:row for map_id,row in catalog['maps'].items()
-                          if row.get('instance_type')==1 and row.get('map_type') in (1,2)}
+                          if row.get('map_type') in (1,2)}
     boss_entries=defaultdict(list)
     for encounter_entry,encounter in sorted(catalog['instance_encounters'].items()):
+        if int(encounter.get('credit_type',0))!=0: continue
         creature_entry=int(encounter['credit_entry'])
         template=catalog['creature_templates'].get(creature_entry)
         if not template: continue
         loot_entry=int(template.get('lootid') or creature_entry)
         if loot_entry not in catalog['creature_loot_entries']: continue
-        for map_id in catalog['creature_maps'].get(creature_entry,set()):
+        candidate_maps=set(catalog['creature_maps'].get(creature_entry,set()))
+        if not candidate_maps and encounter.get('last_encounter_dungeon'):
+            mapped=_dungeon_map_id(catalog.get('dungeon_maps',{}),encounter['last_encounter_dungeon'])
+            if mapped is not None: candidate_maps.add(mapped)
+        for map_id in sorted(candidate_maps):
             if map_id in dungeon_or_raid_maps:
                 boss_entries[map_id].append((int(encounter_entry),creature_entry,loot_entry))
 
@@ -2162,13 +2245,26 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                            'targets':[{'type':'creature','entry':loot_entry,'creature_entry':creature_entry}]}
                 if previous: encounter['requires']=[previous]
                 encounters.append(encounter); previous=encounter['id']
+            coverage_row={'map_id':map_id,'map_name':map_row.get('directory',str(map_id)),
+                          'instance_type':map_row.get('instance_type'),'expansion':map_row.get('expansion'),
+                          'difficulty_id':difficulty_id,
+                          'difficulty_label':_difficulty_label(map_row,difficulty_id,
+                                                               catalog['map_difficulties'].get((map_id,difficulty_id),{}).get('max_players')),
+                          'profile_created':bool(encounters),'boss_count':len(bosses),
+                          'trash_target_count':len(trash),'stock_loot_item_count':0,
+                          'excluded_reason':'' if encounters else 'no encounter targets'}
+            coverage.append(coverage_row)
             if not encounters: continue
             profile_id=f'map_{map_id}_difficulty_{difficulty_id}'
             profiles.append({'id':profile_id,'instance':map_row.get('directory',profile_id),
                              'difficulty_id':difficulty_id,'map_id':map_id,'map_type':map_row.get('map_type'),
+                             'map_name':map_row.get('directory',profile_id),'instance_type':map_row.get('instance_type'),
+                             'expansion':map_row.get('expansion'),
+                             'difficulty_label':coverage_row['difficulty_label'],'valid':True,'invalid_reason':'',
                              'loot_mode':loot_mode,'item_level_min':item_level_min,'item_level_max':item_level_max,
                              'additional_drop_chance':float(additional_drop_chance),'encounters':encounters})
-    manifest={'version':1,'profiles':profiles,'recipes':[],'quest_targets':[]}
+    manifest={'version':1,'profiles':profiles,'coverage':coverage,'recipes':[],'quest_targets':[],
+              'source_audit':dict(catalog.get('source_audit',{}))}
     validate_content_manifest(manifest)
     validate_targeted_source_membership(manifest,catalog)
     return manifest
@@ -2211,7 +2307,13 @@ def validate_targeted_source_membership(manifest,catalog):
                 creature_entry=int(target.get('creature_entry',entry))
                 if creature_entry not in catalog['creature_templates'] or entry not in catalog['creature_loot_entries']:
                     raise ValueError(f'creature loot target {entry} is missing creature or loot data')
-                if map_id not in catalog['creature_maps'].get(creature_entry,set()):
+                spawned=map_id in catalog['creature_maps'].get(creature_entry,set())
+                scripted=any(
+                    int(row.get('credit_entry',-1))==creature_entry
+                    and _dungeon_map_id(catalog.get('dungeon_maps',{}),row.get('last_encounter_dungeon',0))==map_id
+                    for row in catalog['instance_encounters'].values()
+                )
+                if not spawned and not (encounter.get('kind')=='boss' and scripted):
                     raise ValueError(f'creature {creature_entry} is not spawned on map {map_id} for profile {profile["id"]}')
                 if encounter.get('kind')=='boss' and not any(row['credit_entry']==creature_entry for row in catalog['instance_encounters'].values()):
                     raise ValueError(f'boss target {creature_entry} is not present in instance_encounters.sql')
