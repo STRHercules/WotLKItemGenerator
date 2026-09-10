@@ -164,6 +164,8 @@ class BandTests(unittest.TestCase):
         self.assertEqual(evidence['reference_item_count'], 0)
         self.assertEqual(evidence['rejected_reference_count'], 1)
 
+        self.assertFalse(evidence['reference_provenance'][0]['verified_parent'])
+
     def test_loot_mode_keeps_normal_and_heroic_bands_independent(self):
         rows = [
             (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal'),
@@ -459,6 +461,52 @@ class Phase2Tests(unittest.TestCase):
         self.assertEqual(evidence['reference_item_count'], 1)
         self.assertEqual(evidence['item_level_min'], 200)
 
+    def test_verified_difficulty_parent_can_use_shared_reference(self):
+        catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1))
+        catalog['creature_loot_rows'] = [
+            (9102, 0, 9200, 100.0, 0, 2, 0, 1, 1, 'heroic reference'),
+        ]
+        catalog['reference_loot_rows'] = [
+            (9200, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'heroic gear'),
+        ]
+        catalog['reference_loot_entries'] = {9200}
+        catalog['stock_items'][5002] = _stock_item(5002, 200, 80)
+
+        evidence = g.collect_target_stock_evidence(
+            catalog,
+            {'map_id': 100, 'difficulty_id': 1, 'loot_mode': 2,
+             'difficulty_template_source': True},
+            {'type': 'creature', 'entry': 9102,
+             'creature_entry': 9002, 'effective_creature_entry': 9102},
+        )
+
+        self.assertEqual(evidence['reference_item_count'], 1)
+        self.assertEqual(evidence['reference_provenance'][0]['reference_id'], 9200)
+        self.assertTrue(evidence['reference_provenance'][0]['verified_parent'])
+        self.assertEqual(evidence['quality_counts'], {4: 1})
+
+    def test_verified_heroic_culling_reference_is_contextual_not_hardcoded(self):
+        catalog = _phase2_difficulty_catalog(map_id=595, difficulty_ids=(1,))
+        catalog['creature_loot_rows'] = [
+            (9102, 0, 9200, 100.0, 0, 2, 0, 1, 1, 'heroic Culling path'),
+        ]
+        catalog['reference_loot_rows'] = [
+            (9200, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'level 80 gear'),
+        ]
+        catalog['reference_loot_entries'] = {9200}
+        catalog['stock_items'][5002] = _stock_item(5002, 200, 80)
+
+        evidence = g.collect_target_stock_evidence(
+            catalog,
+            {'map_id': 595, 'difficulty_id': 1, 'loot_mode': 2,
+             'difficulty_template_source': True},
+            {'type': 'creature', 'entry': 9102,
+             'creature_entry': 9002, 'effective_creature_entry': 9102},
+        )
+
+        self.assertEqual(evidence['reference_item_count'], 1)
+        self.assertEqual(evidence['reference_provenance'][0]['map_id'], 595)
+
     def test_raid_difficulty_profiles_resolve_all_four_template_variants(self):
         catalog = _phase2_difficulty_catalog(
             map_id=649, map_type=2, instance_type=29,
@@ -744,6 +792,42 @@ class SafetyTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_reference_provenance_report_has_fixed_header_and_sorted_rows(self):
+        catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1))
+        catalog['creature_loot_rows'] = [
+            (9102, 0, 9201, 100.0, 0, 2, 0, 1, 1, 'heroic reference 2'),
+            (9102, 0, 9200, 100.0, 0, 2, 0, 1, 1, 'heroic reference 1'),
+        ]
+        catalog['reference_loot_rows'] = [
+            (9201, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'heroic gear 2'),
+            (9200, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'heroic gear 1'),
+        ]
+        catalog['reference_loot_entries'] = {9200, 9201}
+
+        g.collect_target_stock_evidence(
+            catalog,
+            {'map_id': 100, 'difficulty_id': 1, 'loot_mode': 2,
+             'difficulty_template_source': True},
+            {'type': 'creature', 'entry': 9102,
+             'creature_entry': 9002, 'effective_creature_entry': 9102},
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = g.write_placement_reports(
+                [], {'pools': [], 'attachments': []}, [], pathlib.Path(directory),
+                {'profiles': [], 'reference_provenance':
+                 g.reference_provenance_rows(catalog)}, catalog)
+            with paths['reference_provenance'].open(
+                    newline='', encoding='utf-8') as report:
+                rows = list(csv.DictReader(report))
+            header = paths['reference_provenance'].read_text(
+                encoding='utf-8').splitlines()[0]
+
+        self.assertEqual(rows[0]['reference_id'], '9200')
+        self.assertEqual(
+            header,
+            'reference_id,parent_target_type,parent_target_entry,effective_target_entry,parent_loot_id,map_id,difficulty_id,parent_loot_mode,reference_loot_mode,consumer_map_count,consumer_profile_count,verified_parent')
+
     def test_reward_target_report_has_fixed_header(self):
         with tempfile.TemporaryDirectory() as directory:
             paths = g.write_placement_reports(
@@ -1406,6 +1490,30 @@ INSERT INTO `quest_template` VALUES
 
 
 class SourceTests(unittest.TestCase):
+    def test_gameobject_parent_reference_is_provenance_aware(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['gameobject_loot_columns'] = catalog['creature_loot_columns']
+        catalog['gameobject_loot_rows'] = [
+            (97001, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'chest reference'),
+        ]
+        catalog['reference_loot_rows'] = [
+            (9200, 5002, 0, 100.0, 0, 1, 0, 1, 1, 'chest gear'),
+        ]
+        catalog['reference_loot_entries'] = {9200}
+        catalog['stock_items'][5002] = _stock_item(5002, 200, 80)
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 631, 'difficulty_id': 0, 'loot_mode': 1},
+            {'type': 'gameobject', 'entry': 97001,
+             'gameobject_entry': 7001},
+        )
+
+        self.assertEqual(evidence['reference_item_count'], 1)
+        self.assertEqual(evidence['reference_provenance'][0]['parent_target_type'],
+                         'gameobject')
+        self.assertTrue(evidence['reference_provenance'][0]['verified_parent'])
+        self.assertEqual(catalog['source_audit']['reference_consumer_count'], 1)
+
     def test_all_missing_explicit_gameobject_sources_leave_core_sources_available(self):
         with tempfile.TemporaryDirectory() as directory:
             paths = tuple(pathlib.Path(directory) / name for name in (

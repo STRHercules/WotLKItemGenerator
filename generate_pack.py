@@ -2192,6 +2192,8 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
                             'difficulty_template_count':sum(any(template.get('difficulty_entries',())) for template in creature_templates.values()),
                             'instance_encounter_count':len(encounters),'gameobject_template_count':len(gameobject_templates),
                             'gameobject_count':len(gameobject_maps),'stock_item_count':len(stock_items),
+                            'reference_consumer_count':0,'reference_consumer_map_count':0,
+                            'reference_provenance_count':0,
                             'gameobject_support':'exercised' if gameobject_path is not None else 'not_exercised',
                             'script_reward_mapping':'not_exercised'}}
 
@@ -2382,6 +2384,8 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
             'required_levels':(), 'qualities':(), 'item_count':0,
             'direct_item_count':0, 'reference_item_count':0,
             'rejected_reference_count':sum(e.get('rejected_reference_count',0) for e in evidences),
+            'reference_provenance':[row for evidence in evidences for row in evidence.get('reference_provenance',())],
+            'quality_counts':{}, 'dominant_quality':None,
             'rejections':[row for evidence in evidences for row in evidence.get('rejections',())],
             'required_level_min':None,'required_level_max':None,
         }
@@ -2390,12 +2394,19 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
     prefer_high=encounter_kind.startswith('raid')
     required=_dominant_progression_cluster(required,3,prefer_high=prefer_high)
     qualities=sorted({quality for evidence in usable for quality in evidence.get('qualities',())})
+    quality_counts=defaultdict(int)
+    for evidence in usable:
+        for quality,count in evidence.get('quality_counts',{}).items():
+            quality_counts[int(quality)]+=int(count)
     band=infer_safe_band(levels,source_kind,encounter_kind,prefer_high=prefer_high)
     band.update({'required_levels':tuple(sorted(required)),'qualities':tuple(qualities),
                  'item_count':sum(evidence.get('item_count',0) for evidence in usable),
                  'direct_item_count':sum(evidence.get('direct_item_count',0) for evidence in usable),
                  'reference_item_count':sum(evidence.get('reference_item_count',0) for evidence in usable),
                  'rejected_reference_count':sum(evidence.get('rejected_reference_count',0) for evidence in evidences),
+                 'reference_provenance':[row for evidence in evidences for row in evidence.get('reference_provenance',())],
+                 'quality_counts':dict(sorted(quality_counts.items())),
+                 'dominant_quality':max(quality_counts,key=lambda quality:(quality_counts[quality],quality)) if quality_counts else None,
                  'rejections':[row for evidence in evidences for row in evidence.get('rejections',())],
                  'required_level_min':min(required) if required else None,
                  'required_level_max':max(required) if required else None})
@@ -2878,24 +2889,135 @@ def _reference_consumer_maps(catalog,reference_entry):
     if cache is None:
         cache=defaultdict(set)
         catalog['_reference_consumer_maps_all']=cache
-        columns=catalog.get('creature_loot_columns',()); indexes=_sql_column_indexes(columns)
-        loot_to_maps=catalog.get('_creature_loot_to_maps')
-        if loot_to_maps is None:
-            loot_to_maps=defaultdict(set)
+        records=defaultdict(list)
+        catalog['_reference_consumer_records']=records
+        loot_contexts=defaultdict(list)
+        loot_to_maps=defaultdict(set)
+
+        def add_context(loot_id,target_type,parent_entry,effective_entry,maps,difficulty_specific):
+            loot_id=int(loot_id or 0)
+            if loot_id<=0 or not maps: return
+            context={'parent_target_type':target_type,
+                     'parent_target_entry':int(parent_entry),
+                     'effective_target_entry':int(effective_entry),
+                     'parent_loot_id':loot_id,'map_ids':set(int(map_id) for map_id in maps),
+                     'difficulty_specific':bool(difficulty_specific)}
+            if target_type=='creature':
+                loot_to_maps[loot_id].update(context['map_ids'])
+            key=(context['parent_target_type'],context['parent_target_entry'],
+                 context['effective_target_entry'],context['parent_loot_id'],
+                 tuple(sorted(context['map_ids'])),context['difficulty_specific'])
+            existing_keys={(existing['parent_target_type'],existing['parent_target_entry'],
+                            existing['effective_target_entry'],existing['parent_loot_id'],
+                            tuple(sorted(existing['map_ids'])),existing['difficulty_specific'])
+                           for existing in loot_contexts[loot_id]}
+            if key not in existing_keys:
+                loot_contexts[loot_id].append(context)
+
         for base_entry,template in catalog.get('creature_templates',{}).items():
             maps=catalog.get('creature_maps',{}).get(int(base_entry),())
-            loot_to_maps[int(template.get('lootid',0))].update(maps)
+            add_context(template.get('lootid'), 'creature', base_entry, base_entry, maps, False)
             for variant_entry in template.get('difficulty_entries',()):
                 variant=catalog.get('creature_templates',{}).get(int(variant_entry))
                 if variant is not None:
-                    loot_to_maps[int(variant.get('lootid',0))].update(maps)
-            catalog['_creature_loot_to_maps']=loot_to_maps
-        for row in catalog.get('creature_loot_rows',()):
-            reference=_sql_int(_sql_row_value(row,indexes,'reference'),0)
-            if not reference: continue
-            parent=_sql_int(_sql_row_value(row,indexes,'entry'),-1)
-            cache[reference].update(loot_to_maps.get(parent,()))
+                    add_context(variant.get('lootid'), 'creature', base_entry,
+                                variant_entry, maps, True)
+
+        for entry,template in catalog.get('gameobject_templates',{}).items():
+            if int(template.get('type',0))!=3: continue
+            maps=catalog.get('gameobject_maps',{}).get(int(entry),())
+            add_context(template.get('lootid'), 'gameobject', entry, entry, maps, False)
+
+        for target_type in ('creature','gameobject'):
+            columns=catalog.get(target_type+'_loot_columns',())
+            indexes=_sql_column_indexes(columns)
+            for row in catalog.get(target_type+'_loot_rows',()):
+                reference=_sql_int(_sql_row_value(row,indexes,'reference'),0)
+                parent_loot_id=_sql_int(_sql_row_value(row,indexes,'entry'),-1)
+                if not reference or parent_loot_id<0: continue
+                parent_loot_mode=_sql_int(_sql_row_value(row,indexes,'lootmode'),1)
+                for context in loot_contexts.get(parent_loot_id,()):
+                    record=dict(context)
+                    record.update({'reference_id':reference,
+                                   'parent_loot_mode':parent_loot_mode})
+                    records[reference].append(record)
+                    cache[reference].update(context['map_ids'])
+        for reference,reference_records in records.items():
+            unique=[]
+            unique_keys=set()
+            for record in reference_records:
+                key=(record['parent_target_type'],record['parent_target_entry'],
+                     record['effective_target_entry'],record['parent_loot_id'],
+                     tuple(sorted(record['map_ids'])),record['difficulty_specific'],
+                     record['parent_loot_mode'])
+                if key not in unique_keys:
+                    unique_keys.add(key)
+                    unique.append(record)
+            records[reference]=unique
+        catalog['_creature_loot_to_maps']=loot_to_maps
+        audit=catalog.setdefault('source_audit',{})
+        audit['reference_consumer_count']=sum(len(rows) for rows in records.values())
+        audit['reference_consumer_map_count']=sum(len(maps) for maps in cache.values())
     return set(cache.get(int(reference_entry),()))
+
+def _reference_consumer_records(catalog,reference_entry):
+    _reference_consumer_maps(catalog,reference_entry)
+    return catalog.get('_reference_consumer_records',{}).get(int(reference_entry),())
+
+def _reference_consumer_profile_keys(catalog,records):
+    keys=set()
+    map_difficulties=catalog.get('map_difficulties',{})
+    for record in records:
+        for map_id in record.get('map_ids',()):
+            difficulties=sorted(difficulty_id for current_map,difficulty_id in map_difficulties
+                                if int(current_map)==int(map_id))
+            if not difficulties:
+                keys.add((int(map_id),None)); continue
+            for difficulty_id in difficulties:
+                loot_mode=loot_mode_for_difficulty(None,difficulty_id)
+                if (record.get('difficulty_specific') and record.get('parent_loot_mode')==1) or (record.get('parent_loot_mode',1)&loot_mode):
+                    keys.add((int(map_id),int(difficulty_id)))
+    return keys
+
+def reference_provenance_rows(catalog):
+    rows=[]
+    seen=set()
+    source_rows=catalog.get('_reference_provenance')
+    if source_rows is None:
+        source_rows=catalog.get('reference_provenance',())
+    for row in source_rows:
+        def int_or_empty(value,default=0):
+            return '' if value in (None,'') else int(value)
+        normalized={
+            'reference_id':int(row.get('reference_id',0)),
+            'parent_target_type':str(row.get('parent_target_type','')),
+            'parent_target_entry':int(row.get('parent_target_entry',0)),
+            'effective_target_entry':int(row.get('effective_target_entry',0)),
+            'parent_loot_id':int(row.get('parent_loot_id',0)),
+            'map_id':int_or_empty(row.get('map_id','')),
+            'difficulty_id':int_or_empty(row.get('difficulty_id','')),
+            'parent_loot_mode':int(row.get('parent_loot_mode',1)),
+            'reference_loot_mode':int(row.get('reference_loot_mode',1)),
+            'consumer_map_count':int(row.get('consumer_map_count',0)),
+            'consumer_profile_count':int(row.get('consumer_profile_count',0)),
+            'verified_parent':bool(row.get('verified_parent',False)),
+        }
+        key=tuple(normalized[field] for field in (
+            'reference_id','parent_target_type','parent_target_entry',
+            'effective_target_entry','parent_loot_id','map_id','difficulty_id',
+            'parent_loot_mode','reference_loot_mode','consumer_map_count',
+            'consumer_profile_count','verified_parent'))
+        if key not in seen:
+            seen.add(key); rows.append(normalized)
+    fields=('reference_id','parent_target_type','parent_target_entry',
+            'effective_target_entry','parent_loot_id','map_id','difficulty_id',
+            'parent_loot_mode','reference_loot_mode','consumer_map_count',
+            'consumer_profile_count','verified_parent')
+    def sort_value(value):
+        return (0,int(value)) if value not in ('',None) and not isinstance(value,bool) else (1,str(value))
+    return sorted(rows,key=lambda row:tuple(
+        sort_value(row[field]) if field!='parent_target_type' else (0,str(row[field]))
+        for field in fields))
 def _loot_rows_by_entry(catalog,target_type):
     target_type=str(target_type)
     cache=catalog.setdefault('_loot_rows_by_entry',{})
@@ -2912,15 +3034,63 @@ def collect_target_stock_evidence(catalog,profile_context,target):
     loot_mode=int(profile_context.get('loot_mode',loot_mode_for_difficulty(None,profile_context.get('difficulty_id',0))))
     cache=catalog.setdefault('_encounter_evidence_cache',{})
     cache_key=(profile_context.get('map_id'),profile_context.get('difficulty_id'),loot_mode,
-               str(target.get('type','creature')),int(target.get('entry',0)))
+               str(target.get('type','creature')),int(target.get('entry',0)),
+               int(target.get('creature_entry',target.get('gameobject_entry',0)) or 0),
+               int(target.get('effective_creature_entry',target.get('effective_entry',0)) or 0))
     if cache_key in cache: return cache[cache_key]
     target_type=str(target.get('type','creature'))
     columns,indexes,rows_by_entry=_loot_rows_by_entry(catalog,target_type)
     stock_items=catalog.get('stock_items',{})
     direct=[]; referenced=[]; rejections=[]; rejected_refs=set(); visited=set()
+    provenance=[]
     profile_map=profile_context.get('map_id')
 
-    def collect(parent_entry,table_type=target_type,source_kind='direct'):
+    def add_provenance(row):
+        if row not in provenance: provenance.append(row)
+
+    def target_parent_entry(current_target, current_type):
+        if current_type=='creature':
+            return _sql_int(current_target.get('creature_entry',current_target.get('entry',0)),0)
+        if current_type=='gameobject':
+            return _sql_int(current_target.get('gameobject_entry',current_target.get('entry',0)),0)
+        return _sql_int(current_target.get('entry',0),0)
+
+    def target_effective_entry(current_target, current_type):
+        if current_type=='creature':
+            return _sql_int(current_target.get('effective_creature_entry',current_target.get('creature_entry',current_target.get('entry',0))),0)
+        if current_type=='gameobject':
+            return _sql_int(current_target.get('gameobject_entry',current_target.get('entry',0)),0)
+        return _sql_int(current_target.get('entry',0),0)
+
+    root_parent_entry=target_parent_entry(target,target_type)
+    root_effective_entry=target_effective_entry(target,target_type)
+    _reference_consumer_maps(catalog,0)
+    source_valid=bool(profile_map is not None and int(profile_map) in catalog.get('maps',{}))
+    if catalog.get('map_difficulties') and profile_map is not None:
+        source_valid=source_valid and (int(profile_map),int(profile_context.get('difficulty_id',0))) in catalog['map_difficulties']
+
+    def verified_root_edge(reference,parent_entry):
+        target_source_valid=source_valid
+        if target_type=='creature':
+            target_source_valid=target_source_valid and int(target.get('entry',0)) in catalog.get('creature_loot_entries',set())
+        elif target_type=='gameobject':
+            template=catalog.get('gameobject_templates',{}).get(root_parent_entry,{})
+            target_source_valid=target_source_valid and int(template.get('type',0))==3
+            target_source_valid=target_source_valid and int(template.get('lootid',0))==int(target.get('entry',0))
+            target_source_valid=target_source_valid and int(target.get('entry',0)) in catalog.get('gameobject_loot_entries',set())
+        records=[record for record in _reference_consumer_records(catalog,reference)
+                 if record.get('parent_target_type')==target_type
+                 and int(record.get('parent_loot_id',-1))==int(parent_entry)
+                 and int(profile_map) in record.get('map_ids',set())
+                 and (int(record.get('effective_target_entry',0)) in
+                      {root_parent_entry,root_effective_entry} or
+                      target_type=='gameobject')]
+        consumer_maps=_reference_consumer_maps(catalog,reference)
+        return bool(target_source_valid and records and any(
+            record.get('difficulty_specific') or consumer_maps <= {int(profile_map)}
+            for record in records))
+
+    def collect(parent_entry,table_type=target_type,source_kind='direct',path_context=None):
         parent_entry=int(parent_entry)
         current_columns,current_indexes,current_rows=_loot_rows_by_entry(catalog,table_type)
         for row in current_rows.get(parent_entry,()):
@@ -2929,15 +3099,52 @@ def collect_target_stock_evidence(catalog,profile_context,target):
             item=_sql_int(_sql_row_value(row,current_indexes,'item'),0)
             reference=_sql_int(_sql_row_value(row,current_indexes,'reference'),0)
             if reference:
-                if reference in visited: continue
+                reference_rows_by_entry=_loot_rows_by_entry(catalog,'reference')
+                reference_columns,reference_indexes,reference_entries=reference_rows_by_entry
+                applicable_reference_rows=[] if reference not in catalog.get('reference_loot_entries',set()) else [
+                    reference_row for reference_row in reference_entries.get(reference,())
+                    if _loot_mode_applies(reference_row,reference_indexes,loot_mode,profile_context.get('difficulty_template_source',False))]
+                reference_mode=_sql_int(_sql_row_value(applicable_reference_rows[0],reference_indexes,'lootmode'),1) if applicable_reference_rows else 1
                 consumers=_reference_consumer_maps(catalog,reference)
-                if profile_map is None or not consumers or consumers-{int(profile_map)}:
+                consumer_records=_reference_consumer_records(catalog,reference)
+                consumer_profiles=_reference_consumer_profile_keys(catalog,consumer_records)
+                if path_context is not None:
+                    verified=bool(path_context.get('verified_parent'))
+                    consumer_map_count=int(path_context.get('consumer_map_count',1))
+                    consumer_profile_count=int(path_context.get('consumer_profile_count',1))
+                else:
+                    verified=verified_root_edge(reference,parent_entry)
+                    consumer_map_count=len(consumers)
+                    consumer_profile_count=len(consumer_profiles)
+                provenance_row={
+                    'reference_id':reference,
+                    'parent_target_type':table_type,
+                    'parent_target_entry':root_parent_entry if path_context is None else int(path_context.get('parent_target_entry',reference)),
+                    'effective_target_entry':root_effective_entry if path_context is None else int(path_context.get('effective_target_entry',reference)),
+                    'parent_loot_id':parent_entry,
+                    'map_id':profile_map if profile_map is not None else '',
+                    'difficulty_id':profile_context.get('difficulty_id',''),
+                    'parent_loot_mode':_sql_int(_sql_row_value(row,current_indexes,'lootmode'),1),
+                    'reference_loot_mode':reference_mode,
+                    'consumer_map_count':consumer_map_count,
+                    'consumer_profile_count':consumer_profile_count,
+                    'verified_parent':verified and bool(applicable_reference_rows),
+                }
+                add_provenance(provenance_row)
+                if (not verified or not applicable_reference_rows or
+                        (path_context is None and (profile_map is None or not consumers))):
                     if reference not in rejected_refs:
                         rejected_refs.add(reference)
                         rejections.append({'reference':reference,'reason':'shared or unresolved reference context'})
                     continue
-                visited.add(reference)
-                collect(reference,'reference','reference')
+                visit_key=(reference,profile_map,profile_context.get('difficulty_id'),
+                           target_type,root_parent_entry)
+                if visit_key in visited: continue
+                visited.add(visit_key)
+                collect(reference,'reference','reference',{
+                    'parent_target_entry':reference,'effective_target_entry':reference,
+                    'verified_parent':verified,'consumer_map_count':consumer_map_count,
+                    'consumer_profile_count':consumer_profile_count})
                 continue
             meta=stock_items.get(item)
             if not _stock_equipment(meta):
@@ -2971,14 +3178,22 @@ def collect_target_stock_evidence(catalog,profile_context,target):
         band=infer_safe_band([row['item_level'] for row in retained_items],source_kind,target.get('kind','boss'))
     required=tuple(sorted(int(row.get('required_level',0)) for row in retained_items if int(row.get('required_level',0))>0))
     qualities=tuple(sorted({int(row.get('quality',0)) for row in retained_items if int(row.get('quality',0))>0}))
-    band.update({'required_levels':required,'qualities':qualities,'item_count':len(retained_items),
+    quality_counts=defaultdict(int)
+    for row in retained_items:
+        quality_counts[int(row.get('quality',0))]+=1
+    band.update({'required_levels':required,'qualities':qualities,'quality_counts':dict(sorted(quality_counts.items())),
+                 'dominant_quality':max(quality_counts,key=lambda quality:(quality_counts[quality],quality)) if quality_counts else None,
+                 'item_count':len(retained_items),
                  'direct_item_count':len(direct),'reference_item_count':len(referenced),
                  'rejected_reference_count':len(rejected_refs),'rejected_required_level_count':len(required_rejections),
                  'rejected_required_levels':tuple(sorted({int(row.get('required_level',0)) for row in required_rejections})),
+                 'reference_provenance':reference_provenance_rows({'_reference_provenance':provenance}),
                  'rejections':rejections,
                  'required_level_min':min(required) if required else None,
                  'required_level_max':max(required) if required else None})
     cache[cache_key]=band
+    catalog.setdefault('_reference_provenance',[]).extend(band.get('reference_provenance',()))
+    catalog.setdefault('source_audit',{})['reference_provenance_count']=len(reference_provenance_rows(catalog))
     return band
 
 def item_fits_encounter_profile(item,profile_or_target):
@@ -5337,9 +5552,37 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
         writer=csv.DictWriter(f,fieldnames=reward_fields); writer.writeheader()
         writer.writerows({field:row.get(field,'') for field in reward_fields}
                          for row in (manifest or {}).get('gameobject_reward_targets',()))
+    reference_provenance_path=output_dir/'encounter_reference_provenance.csv'
+    reference_provenance_fields=['reference_id','parent_target_type','parent_target_entry',
+                                 'effective_target_entry','parent_loot_id','map_id',
+                                 'difficulty_id','parent_loot_mode','reference_loot_mode',
+                                 'consumer_map_count','consumer_profile_count','verified_parent']
+    provenance_rows=[]
+    if source_catalog:
+        provenance_rows.extend(reference_provenance_rows(source_catalog))
+        provenance_rows.extend(source_catalog.get('reference_provenance',()))
+    provenance_rows.extend((manifest or {}).get('reference_provenance',()))
+    for profile in profiles:
+        provenance_rows.extend((profile.get('evidence') or {}).get('reference_provenance',()))
+        for encounter in profile.get('encounters',()):
+            provenance_rows.extend((encounter.get('evidence') or {}).get('reference_provenance',()))
+    unique_provenance=[]; seen_provenance=set()
+    for row in provenance_rows:
+        normalized={field:row.get(field,'') for field in reference_provenance_fields}
+        key=tuple(normalized[field] for field in reference_provenance_fields)
+        if key not in seen_provenance:
+            seen_provenance.add(key); unique_provenance.append(normalized)
+    def provenance_sort_value(value):
+        return (0,int(value)) if value not in ('',None) and str(value).lstrip('-').isdigit() else (1,str(value))
+    unique_provenance.sort(key=lambda row:tuple(
+        provenance_sort_value(row[field]) if field!='parent_target_type' else (0,str(row[field]))
+        for field in reference_provenance_fields))
+    with reference_provenance_path.open('w',encoding='utf-8',newline='') as f:
+        writer=csv.DictWriter(f,fieldnames=reference_provenance_fields); writer.writeheader()
+        writer.writerows(unique_provenance)
     return {'world':world_path,'encounter':encounter_path,'coverage':coverage_path,'profiles':profile_path,
             'difficulty_comparison':comparison_path,'rejections':rejection_path,'sets':set_path,
-            'gameobject_rewards':reward_path}
+            'gameobject_rewards':reward_path,'reference_provenance':reference_provenance_path}
 
 def render_encounter_loot_sql(records):
     columns=',\n    '.join(f'`{column}`' for column in LOOT_SQL_COLUMNS)
