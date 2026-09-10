@@ -37,9 +37,289 @@ def _minimal_encounter_catalog(*, map_id=631, map_type=2, instance_type=13,
             1: {'credit_type': 0, 'credit_entry': 9001,
                 'last_encounter_dungeon': 500, 'comment': 'Scripted Boss'},
         },
+        'creature_loot_columns': (
+            'Entry', 'Item', 'Reference', 'Chance', 'QuestRequired',
+            'LootMode', 'GroupId', 'MinCount', 'MaxCount', 'Comment',
+        ),
+        'creature_loot_rows': [
+            (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'boss'),
+            (9100, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'boss'),
+            (9100, 5003, 0, 100.0, 0, 4, 0, 1, 1, 'boss'),
+            (9100, 5004, 0, 100.0, 0, 8, 0, 1, 1, 'boss'),
+        ],
         'creature_loot_entries': {9100},
         'reference_loot_entries': set(),
+        'stock_items': {
+            5001: _stock_item(5001, 150, 60),
+            5002: _stock_item(5002, 165, 65),
+            5003: _stock_item(5003, 180, 70),
+            5004: _stock_item(5004, 200, 75),
+        },
+        'reference_loot_columns': (
+            'Entry', 'Item', 'Reference', 'Chance', 'QuestRequired',
+            'LootMode', 'GroupId', 'MinCount', 'MaxCount', 'Comment',
+        ),
+        'reference_loot_rows': [],
+        'gameobject_templates': {}, 'gameobject_maps': {},
+        'gameobject_loot_columns': [], 'gameobject_loot_rows': [],
+        'gameobject_loot_entries': set(),
     }
+
+
+def _stock_item(entry, item_level, required_level, quality=4):
+    return {
+        'entry': entry, 'class': 4, 'subclass': 2, 'name': f'Stock {entry}',
+        'quality': quality, 'item_level': item_level,
+        'required_level': required_level, 'inventory_type': 5,
+        'class_mask': -1, 'role': 'strength_dps',
+    }
+
+
+def _loot_catalog(rows, reference_rows=(), stock_items=None, maps=None,
+                  creatures=None, creature_maps=None):
+    loot_columns = ('Entry', 'Item', 'Reference', 'Chance', 'QuestRequired',
+                    'LootMode', 'GroupId', 'MinCount', 'MaxCount', 'Comment')
+    maps = maps or {100: {'id': 100, 'directory': 'BandDungeon',
+                          'map_type': 1, 'instance_type': 1}}
+    creatures = creatures or {10: {'entry': 10, 'name': 'Boss', 'lootid': 9100,
+                                   'minlevel': 70, 'maxlevel': 70}}
+    return {
+        'maps': maps,
+        'map_difficulties': {(map_id, difficulty_id): {
+            'id': map_id + difficulty_id, 'map_id': map_id,
+            'difficulty_id': difficulty_id, 'max_players': 5,
+            'item_level': 127,
+        } for map_id in maps for difficulty_id in (0, 1)},
+        'dungeon_maps': {}, 'creature_templates': creatures,
+        'creature_maps': creature_maps or {10: {100}},
+        'instance_encounters': {1: {'credit_type': 0, 'credit_entry': 10,
+                                    'last_encounter_dungeon': 0,
+                                    'comment': 'Boss'}},
+        'creature_loot_columns': loot_columns,
+        'creature_loot_rows': list(rows),
+        'reference_loot_columns': loot_columns,
+        'reference_loot_rows': list(reference_rows),
+        'creature_loot_entries': {int(row[0]) for row in rows},
+        'reference_loot_entries': {int(row[0]) for row in reference_rows},
+        'stock_items': stock_items or {},
+        'gameobject_templates': {}, 'gameobject_maps': {},
+        'gameobject_loot_columns': [], 'gameobject_loot_rows': [],
+        'gameobject_loot_entries': set(),
+    }
+
+
+class BandTests(unittest.TestCase):
+    def test_outlier_rejection_keeps_dominant_equipment_cluster(self):
+        evidence = g.infer_safe_band(
+            (150, 152, 155, 158, 160, 284), 'profile_aggregate', 'boss')
+
+        self.assertLessEqual(evidence['item_level_max'], 160)
+        self.assertIn(284, evidence['rejected_item_levels'])
+
+    def test_shared_reference_is_rejected_from_progression_evidence(self):
+        rows = [
+            (9100, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'shared'),
+            (9101, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'shared'),
+        ]
+        reference_rows = [(9200, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'gear')]
+        catalog = _loot_catalog(
+            rows, reference_rows=reference_rows,
+            stock_items={5001: _stock_item(5001, 180, 70)},
+            maps={
+                100: {'id': 100, 'directory': 'One', 'map_type': 1,
+                      'instance_type': 1},
+                200: {'id': 200, 'directory': 'Two', 'map_type': 1,
+                      'instance_type': 1},
+            },
+            creatures={
+                10: {'entry': 10, 'name': 'One Boss', 'lootid': 9100,
+                     'minlevel': 70, 'maxlevel': 70},
+                20: {'entry': 20, 'name': 'Two Boss', 'lootid': 9101,
+                     'minlevel': 70, 'maxlevel': 70},
+            },
+            creature_maps={10: {100}, 20: {200}},
+        )
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 0, 'loot_mode': 1},
+            {'type': 'creature', 'entry': 9100, 'creature_entry': 10},
+        )
+
+        self.assertEqual(evidence['reference_item_count'], 0)
+        self.assertEqual(evidence['rejected_reference_count'], 1)
+
+    def test_loot_mode_keeps_normal_and_heroic_bands_independent(self):
+        rows = [
+            (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal'),
+            (9100, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'heroic'),
+        ]
+        catalog = _loot_catalog(rows, stock_items={
+            5001: _stock_item(5001, 150, 60),
+            5002: _stock_item(5002, 200, 70),
+        })
+        target = {'type': 'creature', 'entry': 9100, 'creature_entry': 10}
+
+        normal = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 0, 'loot_mode': 1}, target)
+        heroic = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 1, 'loot_mode': 2}, target)
+
+        self.assertNotEqual(
+            (normal['item_level_min'], normal['item_level_max']),
+            (heroic['item_level_min'], heroic['item_level_max']),
+        )
+
+    def test_required_level_is_part_of_band_eligibility(self):
+        profile = {
+            'required_level_min': 70, 'required_level_max': 80,
+            'item_level_min': 170, 'item_level_max': 190,
+            'qualities': (4,),
+        }
+
+        self.assertFalse(g.item_fits_encounter_profile(
+            {'ItemLevel': 180, 'RequiredLevel': 4, 'Quality': 4}, profile))
+
+
+class ProfileTests(unittest.TestCase):
+    def test_default_profiles_use_stock_bands_per_difficulty(self):
+        catalog = _minimal_encounter_catalog(
+            difficulty_ids=(0, 1), map_id=631, map_type=2,
+            instance_type=13,
+        )
+        catalog['creature_loot_columns'] = (
+            'Entry', 'Item', 'Reference', 'Chance', 'QuestRequired',
+            'LootMode', 'GroupId', 'MinCount', 'MaxCount', 'Comment',
+        )
+        catalog['creature_loot_rows'] = [
+            (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal'),
+            (9100, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'heroic'),
+        ]
+        catalog['stock_items'] = {
+            5001: _stock_item(5001, 150, 60),
+            5002: _stock_item(5002, 200, 70),
+        }
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        profiles = {profile['difficulty_id']: profile for profile in manifest['profiles']}
+
+        self.assertNotEqual(
+            (profiles[0]['item_level_min'], profiles[0]['item_level_max']),
+            (profiles[1]['item_level_min'], profiles[1]['item_level_max']),
+        )
+        self.assertEqual(profiles[0]['loot_mode'], 1)
+        self.assertEqual(profiles[1]['loot_mode'], 2)
+
+    def test_coverage_keeps_excluded_candidate_visible(self):
+        catalog = _minimal_encounter_catalog(map_id=631, map_type=2,
+                                             instance_type=13)
+        catalog['stock_items'] = {}
+        catalog['creature_loot_rows'] = []
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+
+        row = next(row for row in manifest['coverage'] if row['map_id'] == 631)
+        self.assertFalse(row['profile_created'])
+        self.assertEqual(row['excluded_reason'], 'no usable stock equipment loot')
+
+
+def _placement_profile(profile_id, kind, item_level, required_level,
+                       target_kind='boss', qualities=(2, 3, 4, 5)):
+    return {
+        'id': profile_id, 'map_id': 100 if kind == 'dungeon' else 631,
+        'instance': profile_id, 'map_type': 1 if kind == 'dungeon' else 2,
+        'difficulty_id': 0, 'loot_mode': 1,
+        'item_level_min': item_level[0], 'item_level_max': item_level[1],
+        'required_level_min': required_level[0],
+        'required_level_max': required_level[1], 'qualities': qualities,
+        'evidence': {'band_source': 'direct', 'band_center': sum(item_level) / 2},
+        'encounters': [{
+            'id': target_kind, 'kind': target_kind, 'weight': 1,
+            'item_level': list(item_level), 'targets': [
+                {'type': 'creature', 'entry': 9001},
+            ],
+        }],
+    }
+
+
+def _placement_manifest(profiles):
+    return {'version': 1, 'profiles': profiles, 'recipes': [],
+            'quest_targets': []}
+
+
+def _set_items(count, item_level=220, required_level=80, item_levels=None):
+    levels=item_levels or [item_level] * count
+    return [{
+        'entry': 200000 + index, 'ItemLevel': level,
+        'RequiredLevel': required_level, 'Quality': 4,
+        'itemset': 9000, 'set_id': 9000,
+        'slot': ('hands', 'shoulder', 'chest', 'head', 'legs')[index],
+    } for index,level in enumerate(levels)]
+
+
+class PlacementTests(unittest.TestCase):
+    def setUp(self):
+        g.SEED = 424242
+
+    def test_required_level_mismatch_remains_world_only(self):
+        item = {'entry': 1, 'ItemLevel': 120, 'RequiredLevel': 4, 'Quality': 4}
+        manifest = _placement_manifest([_placement_profile(
+            'high_dungeon', 'dungeon', (100, 140), (70, 80))])
+
+        g.assign_default_encounter_items([item], manifest)
+
+        self.assertNotIn('content_profile', item)
+
+    def test_set_members_share_one_profile(self):
+        items = _set_items(5)
+        manifest = _placement_manifest([
+            _placement_profile('wide_dungeon', 'dungeon', (200, 240), (70, 80)),
+            _placement_profile('raid_10', 'raid', (220, 220), (80, 80)),
+        ])
+
+        g.assign_default_encounter_items(items, manifest)
+
+        self.assertEqual({item['content_profile'] for item in items}, {'raid_10'})
+
+    def test_set_members_stay_world_only_without_common_profile(self):
+        items = _set_items(5, item_levels=[210, 220, 230, 240, 250])
+        manifest = _placement_manifest([
+            _placement_profile('early', 'dungeon', (210, 230), (70, 80)),
+            _placement_profile('late', 'raid', (240, 250), (80, 80)),
+        ])
+
+        g.assign_default_encounter_items(items, manifest)
+
+        self.assertTrue(all('content_profile' not in item for item in items))
+
+    def test_legendary_never_uses_trash(self):
+        item = {'entry': 1, 'ItemLevel': 284, 'RequiredLevel': 80, 'Quality': 5}
+        manifest = _placement_manifest([_placement_profile(
+            'trash_only', 'raid', (250, 284), (80, 80),
+            target_kind='trash', qualities=(5,))])
+
+        g.assign_default_encounter_items([item], manifest)
+
+        self.assertNotIn('content_target', item)
+
+    def test_explicit_manifest_cannot_split_a_set(self):
+        profile = {
+            'id': 'sample', 'item_level_min': 200, 'item_level_max': 240,
+            'encounters': [
+                {'id': 'boss_a', 'kind': 'boss', 'targets': [{'type': 'creature', 'entry': 1}]},
+                {'id': 'boss_b', 'kind': 'boss', 'targets': [{'type': 'creature', 'entry': 2}]},
+            ],
+        }
+        plan = [
+            {'recipe_id': 'set', 'set_request_index': 0, 'index': 0,
+             'content_profile': 'sample', 'content_target': 'boss_a',
+             'target_kind': 'dungeon', 'item_level_min': 200, 'item_level_max': 220},
+            {'recipe_id': 'set', 'set_request_index': 0, 'index': 1,
+             'content_profile': 'sample', 'content_target': 'boss_b',
+             'target_kind': 'dungeon', 'item_level_min': 200, 'item_level_max': 220},
+        ]
+
+        with self.assertRaises(ValueError):
+            g.assign_plan_encounters(plan, {'sample': profile})
 
 
 class ManifestTests(unittest.TestCase):
