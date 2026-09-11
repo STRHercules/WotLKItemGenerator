@@ -2386,13 +2386,19 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
             'direct_item_count':0, 'reference_item_count':0,
             'rejected_reference_count':sum(e.get('rejected_reference_count',0) for e in evidences),
             'reference_provenance':[row for evidence in evidences for row in evidence.get('reference_provenance',())],
+            '_stock_item_records':tuple(row for evidence in evidences for row in evidence.get('_stock_item_records',())),
+            '_candidate_item_records':tuple(row for evidence in evidences for row in evidence.get('_candidate_item_records',())),
             'quality_counts':{}, 'dominant_quality':None,
+            'candidate_clusters':[], 'required_clusters':[],
             'rejections':[row for evidence in evidences for row in evidence.get('rejections',())],
             'required_level_min':None,'required_level_max':None,
         }
-    levels=[level for evidence in usable for level in evidence.get('retained_item_levels',())]
+    candidate_records=[row for evidence in usable for row in evidence.get('_candidate_item_records',())]
+    levels=[row.get('item_level') for row in candidate_records] or [level for evidence in usable for level in evidence.get('retained_item_levels',())]
     required=[level for evidence in usable for level in evidence.get('required_levels',())]
+    candidate_required=[row.get('required_level') for row in candidate_records if int(row.get('required_level',0))>0]
     prefer_high=encounter_kind.startswith('raid')
+    required_clusters=progression_clusters(candidate_required or required,3,prefer_high=prefer_high)
     required=_dominant_progression_cluster(required,3,prefer_high=prefer_high)
     qualities=sorted({quality for evidence in usable for quality in evidence.get('qualities',())})
     quality_counts=defaultdict(int)
@@ -2408,6 +2414,10 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
                  'reference_provenance':[row for evidence in evidences for row in evidence.get('reference_provenance',())],
                  'quality_counts':dict(sorted(quality_counts.items())),
                  'dominant_quality':max(quality_counts,key=lambda quality:(quality_counts[quality],quality)) if quality_counts else None,
+                 'candidate_clusters':band.get('candidate_clusters',()),
+                 'required_clusters':required_clusters,
+                 '_stock_item_records':tuple(row for evidence in evidences for row in evidence.get('_stock_item_records',())),
+                 '_candidate_item_records':tuple(row for evidence in evidences for row in evidence.get('_candidate_item_records',())),
                  'rejections':[row for evidence in evidences for row in evidence.get('rejections',())],
                  'required_level_min':min(required) if required else None,
                  'required_level_max':max(required) if required else None})
@@ -2644,23 +2654,9 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                              'difficulty_resolution':resolution_evidence,
                              'evidence':profile_evidence,'additional_drop_chance':float(additional_drop_chance),
                              'encounters':encounters})
-    difficulty_comparisons=[]
-    by_map=defaultdict(list)
-    for profile in profiles: by_map[profile['map_id']].append(profile)
-    for map_id,rows in sorted(by_map.items()):
-        rows=sorted(rows,key=lambda profile:profile['difficulty_id'])
-        for left_index,left in enumerate(rows):
-            for right in rows[left_index+1:]:
-                identical=(left['item_level_min'],left['item_level_max'],left.get('required_level_min'),left.get('required_level_max'))==(right['item_level_min'],right['item_level_max'],right.get('required_level_min'),right.get('required_level_max'))
-                difficulty_comparisons.append({'map_id':map_id,'instance':left.get('instance',str(map_id)),
-                                               'difficulty_a':left['difficulty_id'],'difficulty_b':right['difficulty_id'],
-                                               'stock_item_count_a':left.get('evidence',{}).get('item_count',0),
-                                               'stock_item_count_b':right.get('evidence',{}).get('item_count',0),
-                                               'band_a':[left['item_level_min'],left['item_level_max']],
-                                               'band_b':[right['item_level_min'],right['item_level_max']],
-                                               'identical':identical,
-                                               'reason':'filtered source evidence is identical' if identical else 'independently filtered source evidence'})
+    profiles,difficulty_comparisons,sibling_conflicts=apply_sibling_progression_coherence(profiles)
     manifest={'version':1,'profiles':profiles,'coverage':coverage,'difficulty_comparisons':difficulty_comparisons,
+              'sibling_conflicts':sibling_conflicts,
               'gameobject_reward_targets':catalog.get('gameobject_reward_targets',()),'recipes':[],'quest_targets':[],
               'source_audit':dict(catalog.get('source_audit',{}))}
     validate_content_manifest(manifest)
@@ -2836,7 +2832,7 @@ def _stock_equipment(meta):
         return inventory_type in {1,2,3,5,6,7,8,9,10,11,12,13,14,16,20,28}
     return False
 
-def _dominant_progression_cluster(values,gap,prefer_high=False):
+def progression_clusters(values,gap=15,prefer_high=False):
     ordered=tuple(sorted(int(value) for value in values))
     if not ordered: return ()
     clusters=[]; current=[ordered[0]]
@@ -2846,23 +2842,32 @@ def _dominant_progression_cluster(values,gap,prefer_high=False):
         else:
             current.append(value)
     clusters.append(tuple(current))
-    return max(clusters,key=lambda cluster:(len(cluster),cluster[0],cluster[-1]) if prefer_high else (len(cluster),-cluster[0],-cluster[-1]))
+    rows=[{'values':tuple(cluster),'width':cluster[-1]-cluster[0],
+           'center':sum(cluster)/len(cluster),'count':len(cluster)}
+          for cluster in clusters]
+    return tuple(rows)
+
+
+def _dominant_progression_cluster(values,gap,prefer_high=False):
+    clusters=progression_clusters(values,gap,prefer_high=prefer_high)
+    if not clusters: return ()
+    selected=max(clusters,key=lambda cluster:(cluster['count'],
+                    cluster['values'][0],cluster['values'][-1])
+                 if prefer_high else
+                 (cluster['count'],-cluster['values'][0],-cluster['values'][-1]))
+    return selected['values']
 
 def infer_safe_band(values,source_kind='profile_aggregate',encounter_kind='boss',prefer_high=False):
     ordered=tuple(sorted(int(value) for value in values))
     if not ordered:
         return {'item_levels':(), 'retained_item_levels':(), 'rejected_item_levels':(),
                 'item_level_min':None,'item_level_max':None,'band_center':None,
+                'candidate_clusters':(),
                 'band_source':source_kind,'valid':False,'invalid_reason':'no stock equipment evidence'}
-    clusters=[]; current=[ordered[0]]
-    for value in ordered[1:]:
-        if value-current[-1]>15:
-            clusters.append(tuple(current)); current=[value]
-        else:
-            current.append(value)
-    clusters.append(tuple(current))
-    retained=max(clusters,key=lambda cluster:(len(cluster),cluster[0],cluster[-1]) if prefer_high else (len(cluster),-cluster[0],-cluster[-1]))
-    retained_set=list(retained)
+    clusters=progression_clusters(ordered,15,prefer_high=prefer_high)
+    retained=max(clusters,key=lambda cluster:(cluster['count'],cluster['values'][0],cluster['values'][-1])
+                 if prefer_high else (cluster['count'],-cluster['values'][0],-cluster['values'][-1]))
+    retained_set=list(retained['values'])
     rejected=list(ordered)
     for value in retained_set:
         rejected.remove(value)
@@ -2877,7 +2882,220 @@ def infer_safe_band(values,source_kind='profile_aggregate',encounter_kind='boss'
             'band_center':sum(retained_set)/len(retained_set),'band_source':source_kind,
             'progression_cluster':{'retained':tuple(retained_set),'rejected':tuple(rejected),
                                    'method':'largest_gap_cluster','gap':15,'prefer_high':prefer_high},
+            'candidate_clusters':clusters,
             'valid':not invalid_reason,'invalid_reason':invalid_reason}
+
+
+def _profile_active_families(profile):
+    for key in ('active_encounter_family','encounter_family','source_family'):
+        value=profile.get(key)
+        if value not in (None,'',()):
+            values=value if isinstance(value,(list,tuple,set)) else (value,)
+            return frozenset(str(item) for item in values)
+    families=set()
+    for encounter in profile.get('encounters',()):
+        if encounter.get('kind')=='trash': continue
+        for key in ('active_encounter_family','encounter_family','source_family'):
+            value=encounter.get(key)
+            if value not in (None,'',()):
+                families.add(str(value)); break
+        else:
+            families.add(str(encounter.get('id','')))
+    return frozenset(family for family in families if family)
+
+
+def _profile_cluster_rows(profile,field='candidate_clusters'):
+    evidence=profile.get('evidence') or {}
+    rows=evidence.get(field) or ()
+    normalized=[]
+    for row in rows:
+        if isinstance(row,dict):
+            values=tuple(sorted(int(value) for value in row.get('values',())))
+        else:
+            values=tuple(sorted(int(value) for value in row))
+        if values:
+            normalized.append({'values':values,'width':values[-1]-values[0],
+                               'center':sum(values)/len(values),'count':len(values)})
+    if normalized: return tuple(normalized)
+    cluster=evidence.get('progression_cluster') or {}
+    values=tuple(sorted(int(value) for value in cluster.get('retained',())))
+    if not values and profile.get('item_level_min') is not None:
+        values=tuple(sorted({int(profile['item_level_min']),int(profile['item_level_max'])}))
+    if not values: return ()
+    return ({'values':values,'width':values[-1]-values[0],
+             'center':sum(values)/len(values),'count':len(values)},)
+
+
+def _required_cluster_for(profile,center=None):
+    rows=_profile_cluster_rows(profile,'required_clusters')
+    if not rows:
+        minimum=profile.get('required_level_min'); maximum=profile.get('required_level_max')
+        if minimum is None or maximum is None: return None
+        values=tuple(sorted({int(minimum),int(maximum)}))
+        return {'values':values,'width':values[-1]-values[0],
+                'center':sum(values)/len(values),'count':len(values)}
+    return min(rows,key=lambda row:(abs(row['center']-center),-row['count'])) if center is not None else max(rows,key=lambda row:(row['count'],row['center']))
+
+
+def _recompute_evidence_cluster(evidence,cluster,required_cluster=None,encounter_kind='profile'):
+    records=tuple(evidence.get('_candidate_item_records') or evidence.get('_stock_item_records',()))
+    values=set(cluster.get('values',()))
+    selected=[row for row in records if int(row.get('item_level',0)) in values]
+    if not selected:
+        return None
+    source_kind=evidence.get('band_source','profile_aggregate')
+    band=infer_safe_band([row['item_level'] for row in selected],source_kind,
+                         encounter_kind,prefer_high=bool((evidence.get('progression_cluster') or {}).get('prefer_high',False)))
+    required_values=set(required_cluster.get('values',())) if required_cluster else set()
+    if required_values:
+        matching=[row for row in selected if int(row.get('required_level',0)) in required_values]
+        if matching: selected=matching
+    required=tuple(sorted(int(row.get('required_level',0)) for row in selected if int(row.get('required_level',0))>0))
+    required_rows=progression_clusters(required,3,prefer_high=bool((evidence.get('progression_cluster') or {}).get('prefer_high',False)))
+    if required_rows:
+        required_set=set(max(required_rows,key=lambda row:(row['count'],row['center']))['values'])
+        selected=[row for row in selected if int(row.get('required_level',0)) in required_set]
+        required=tuple(sorted(int(row.get('required_level',0)) for row in selected if int(row.get('required_level',0))>0))
+        band=infer_safe_band([row['item_level'] for row in selected],source_kind,
+                             encounter_kind,prefer_high=bool((evidence.get('progression_cluster') or {}).get('prefer_high',False)))
+    quality_counts=defaultdict(int)
+    for row in selected: quality_counts[int(row.get('quality',0))]+=1
+    result=dict(band)
+    result.update({'required_levels':required,'qualities':tuple(sorted({int(row.get('quality',0)) for row in selected if int(row.get('quality',0))>0})),
+                   'quality_counts':dict(sorted(quality_counts.items())),
+                   'dominant_quality':max(quality_counts,key=lambda quality:(quality_counts[quality],quality)) if quality_counts else None,
+                   'item_count':len(selected),
+                   'direct_item_count':sum(row.get('source_kind')=='direct' for row in selected),
+                   'reference_item_count':sum(row.get('source_kind')=='reference' for row in selected),
+                   'rejected_reference_count':evidence.get('rejected_reference_count',0),
+                   '_stock_item_records':tuple(selected),
+                   '_candidate_item_records':tuple(selected),
+                   'reference_provenance':evidence.get('reference_provenance',()),
+                   'rejections':list(evidence.get('rejections',())),
+                   'required_level_min':min(required) if required else None,
+                   'required_level_max':max(required) if required else None,
+                   'required_clusters':required_rows,
+                   'candidate_clusters':evidence.get('candidate_clusters',band.get('candidate_clusters',()))})
+    return result
+
+
+def _sibling_cluster_support(profile,cluster,sibling):
+    if cluster['count']<3 or cluster['width']>30: return None
+    sibling_clusters=_profile_cluster_rows(sibling)
+    if not sibling_clusters: return None
+    active=(sibling.get('evidence') or {}).get('progression_cluster',{})
+    active_values=tuple(sorted(int(value) for value in active.get('retained',())))
+    active_row=next((row for row in sibling_clusters if row['values']==active_values),None)
+    active_row=active_row or max(sibling_clusters,key=lambda row:(row['count'],-row['width']))
+    if active_row['count']<3: return None
+    if abs(cluster['center']-active_row['center'])>max(15,cluster['width'],active_row['width']): return None
+    sibling_required=_required_cluster_for(sibling)
+    candidate_required_rows=_profile_cluster_rows(profile,'required_clusters')
+    if sibling_required and candidate_required_rows:
+        if min(abs(row['center']-sibling_required['center']) for row in candidate_required_rows)>15:
+            return None
+    return {'profile_id':sibling.get('id'),'reason':'shared active encounter family supports coherent alternate cluster',
+            'cluster':cluster['values']}
+
+
+def apply_sibling_progression_coherence(profiles):
+    profiles=list(profiles or ())
+    independent={profile.get('id'): (
+        (profile.get('item_level_min'),profile.get('item_level_max')),
+        (profile.get('required_level_min'),profile.get('required_level_max')))
+                 for profile in profiles}
+    groups=defaultdict(list)
+    for profile in profiles:
+        for family in _profile_active_families(profile):
+            groups[(int(profile.get('map_id',-1)),family)].append(profile)
+    for group in groups.values():
+        for profile in group:
+            candidates=_profile_cluster_rows(profile)
+            profile_evidence=profile.get('evidence') or {}
+            active_values=tuple(sorted(int(value) for value in
+                (profile_evidence.get('progression_cluster',{}) or {}).get('retained',())))
+            choices=[]
+            for candidate in candidates:
+                if candidate['values']==active_values: continue
+                supporters=[]
+                for sibling in group:
+                    if sibling is profile: continue
+                    support=_sibling_cluster_support(profile,candidate,sibling)
+                    if support: supporters.append(support)
+                if supporters:
+                    choices.append((len(supporters),-min(abs(candidate['center']-
+                        _profile_cluster_rows(sibling)[-1]['center']) for sibling in group if sibling is not profile),candidate,supporters))
+            if not choices: continue
+            _,_,chosen,supporters=max(choices,key=lambda row:(row[0],row[1]))
+            required=_required_cluster_for(profile,chosen['center'])
+            new_encounters=[]
+            for encounter in profile.get('encounters',()):
+                evidence=encounter.get('evidence')
+                if evidence:
+                    filtered=_recompute_evidence_cluster(evidence,chosen,required,encounter.get('kind','boss'))
+                    if filtered is None and evidence.get('_stock_item_records'):
+                        continue
+                    if filtered is not None:
+                        encounter['evidence']=filtered
+                        encounter['item_level']=[filtered['item_level_min'],filtered['item_level_max']]
+                        encounter['required_level_min']=filtered.get('required_level_min')
+                        encounter['required_level_max']=filtered.get('required_level_max')
+                new_encounters.append(encounter)
+            profile['encounters']=new_encounters
+            source_encounters=[encounter for encounter in new_encounters
+                               if encounter.get('kind')!='trash'] if profile.get('map_type')==2 else new_encounters
+            evidence_rows=[encounter.get('evidence') for encounter in source_encounters if encounter.get('evidence')]
+            if evidence_rows:
+                source_kind=profile_evidence.get('band_source','profile_aggregate')
+                recomputed=_merge_stock_evidence(evidence_rows,source_kind,
+                    'raid_profile' if profile.get('map_type')==2 else 'profile')
+                original_candidates=profile_evidence.get('candidate_clusters',candidates)
+                recomputed['candidate_clusters']=original_candidates
+                recomputed['progression_cluster']={'retained':chosen['values'],
+                    'rejected':tuple(sorted(set(value for row in original_candidates for value in row.get('values',()))-set(chosen['values']))),
+                    'method':'sibling_supported_cluster','gap':15,
+                    'prefer_high':bool((profile_evidence.get('progression_cluster') or {}).get('prefer_high',False))}
+                recomputed['sibling_support']=list(profile_evidence.get('sibling_support',()))+supporters
+                profile['evidence']=recomputed
+                profile['item_level_min']=recomputed.get('item_level_min')
+                profile['item_level_max']=recomputed.get('item_level_max')
+                profile['required_level_min']=recomputed.get('required_level_min')
+                profile['required_level_max']=recomputed.get('required_level_max')
+                profile['qualities']=recomputed.get('qualities',())
+            rebuild_encounter_prerequisites(profile.get('encounters',()))
+    conflicts=[]
+    comparisons=[]
+    for group_key,group in groups.items():
+        group=sorted(group,key=lambda row:int(row.get('difficulty_id',0)))
+        for left_index,left in enumerate(group):
+            for right in group[left_index+1:]:
+                final_left=(left.get('item_level_min'),left.get('item_level_max'))
+                final_right=(right.get('item_level_min'),right.get('item_level_max'))
+                req_left=(left.get('required_level_min'),left.get('required_level_max'))
+                req_right=(right.get('required_level_min'),right.get('required_level_max'))
+                radical=(None not in final_left+final_right and abs(sum(final_left)/2-sum(final_right)/2)>45) or (None not in req_left+req_right and abs(sum(req_left)/2-sum(req_right)/2)>15)
+                reason='sibling progression era conflict' if radical else 'independently filtered source evidence'
+                if radical:
+                    conflict={'reason':'sibling_progression_era_conflict','map_id':group_key[0],
+                              'family':group_key[1],'profile_ids':[left.get('id'),right.get('id')]}
+                    conflicts.append(conflict)
+                    for profile in (left,right):
+                        profile['evidence']=profile.get('evidence') or {}
+                        profile['evidence'].setdefault('sibling_progression_era_conflict',[]).append(conflict)
+                elif (left.get('evidence') or {}).get('sibling_support') or (right.get('evidence') or {}).get('sibling_support'):
+                    reason='sibling-supported alternate progression cluster'
+                comparisons.append({'map_id':group_key[0],'instance':left.get('instance',str(group_key[0])),
+                    'difficulty_a':left.get('difficulty_id'),'difficulty_b':right.get('difficulty_id'),
+                    'stock_item_count_a':(left.get('evidence') or {}).get('item_count',0),
+                    'stock_item_count_b':(right.get('evidence') or {}).get('item_count',0),
+                    'independent_band_a':list(independent.get(left.get('id'),((),()))[0]),
+                    'independent_band_b':list(independent.get(right.get('id'),((),()))[0]),
+                    'final_band_a':list(final_left),'final_band_b':list(final_right),
+                    'band_a':list(final_left),'band_b':list(final_right),
+                    'loot_mode_a':left.get('loot_mode'),'loot_mode_b':right.get('loot_mode'),
+                    'identical':final_left==final_right and req_left==req_right,'reason':reason})
+    comparisons.sort(key=lambda row:(int(row.get('map_id',-1)),int(row.get('difficulty_a',-1)),int(row.get('difficulty_b',-1))))
+    return profiles,comparisons,conflicts
 
 def _loot_mode_applies(row,columns_or_indexes,loot_mode,difficulty_template=False):
     indexes=columns_or_indexes if isinstance(columns_or_indexes,dict) else _sql_column_indexes(columns_or_indexes)
@@ -3216,7 +3434,15 @@ def collect_target_stock_evidence(catalog,profile_context,target):
         referenced=[row for row in referenced if context_ok(row)]
     selected=direct or referenced
     source_kind='direct' if direct else 'encounter_reference' if referenced else 'profile_aggregate'
+    candidate_item_records=tuple({
+        'entry':int(row.get('entry',0)),
+        'item_level':int(row.get('item_level',0)),
+        'required_level':int(row.get('required_level',0)),
+        'quality':int(row.get('quality',0)),
+        'source_kind':'reference' if row in referenced else 'direct',
+    } for row in selected)
     band=infer_safe_band([row['item_level'] for row in selected],source_kind,target.get('kind','boss'))
+    candidate_clusters=band.get('candidate_clusters',())
     retained=set(band.get('retained_item_levels',()))
     retained_items=[row for row in selected if row['item_level'] in retained]
     required_cluster=_dominant_progression_cluster(
@@ -3227,11 +3453,19 @@ def collect_target_stock_evidence(catalog,profile_context,target):
         rejections.extend({'item':row.get('entry'),'reason':'RequiredLevel outlier'} for row in required_rejections)
         retained_items=[row for row in retained_items if row not in required_rejections]
         band=infer_safe_band([row['item_level'] for row in retained_items],source_kind,target.get('kind','boss'))
+        band['candidate_clusters']=candidate_clusters
     required=tuple(sorted(int(row.get('required_level',0)) for row in retained_items if int(row.get('required_level',0))>0))
     qualities=tuple(sorted({int(row.get('quality',0)) for row in retained_items if int(row.get('quality',0))>0}))
     quality_counts=defaultdict(int)
     for row in retained_items:
         quality_counts[int(row.get('quality',0))]+=1
+    stock_item_records=tuple({
+        'entry':int(row.get('entry',0)),
+        'item_level':int(row.get('item_level',0)),
+        'required_level':int(row.get('required_level',0)),
+        'quality':int(row.get('quality',0)),
+        'source_kind':'reference' if row in referenced else 'direct',
+    } for row in retained_items)
     band.update({'required_levels':required,'qualities':qualities,'quality_counts':dict(sorted(quality_counts.items())),
                  'dominant_quality':max(quality_counts,key=lambda quality:(quality_counts[quality],quality)) if quality_counts else None,
                  'item_count':len(retained_items),
@@ -3239,6 +3473,8 @@ def collect_target_stock_evidence(catalog,profile_context,target):
                  'rejected_reference_count':len(rejected_refs),'rejected_required_level_count':len(required_rejections),
                  'rejected_required_levels':tuple(sorted({int(row.get('required_level',0)) for row in required_rejections})),
                  'reference_provenance':reference_provenance_rows({'_reference_provenance':provenance}),
+                 '_stock_item_records':stock_item_records,
+                 '_candidate_item_records':candidate_item_records,
                  'rejections':rejections,
                  'required_level_min':min(required) if required else None,
                  'required_level_max':max(required) if required else None})
@@ -3980,9 +4216,30 @@ def build_manifest_encounter_loot_records(items,manifest,world_path,reference_pa
         raise ValueError('generated encounter pool ID collides with an existing reference-loot entry')
     return records
 
+
+def _sibling_conflict_is_active(conflict,profiles):
+    profile_ids=tuple(conflict.get('profile_ids',()))
+    selected=[profiles.get(profile_id) for profile_id in profile_ids if profile_id in profiles]
+    if len(selected)<2: return False
+    if len({int(profile.get('map_id',-1)) for profile in selected})!=1: return False
+    families=[_profile_active_families(profile) for profile in selected]
+    return bool(families[0] & families[1])
+
+
 def validate_encounter_integration(items,manifest,records,catalog):
     profiles={profile['id']:profile for profile in (manifest or {}).get('profiles',())}
     errors=[]; warnings=[]; pool_ids=[]; record_targets=set()
+    sibling_conflicts=list((manifest or {}).get('sibling_conflicts',()))
+    for profile in profiles.values():
+        sibling_conflicts.extend((profile.get('evidence') or {}).get('sibling_progression_era_conflict',()))
+    seen_conflicts=set()
+    for conflict in sibling_conflicts:
+        key=(conflict.get('reason'),tuple(conflict.get('profile_ids',())))
+        if key in seen_conflicts: continue
+        seen_conflicts.add(key)
+        message='sibling_progression_era_conflict for profiles '+','.join(str(profile_id) for profile_id in conflict.get('profile_ids',()))
+        if _sibling_conflict_is_active(conflict,profiles): errors.append(message)
+        else: warnings.append(message+' (diagnostic only)')
     encounter_map={(profile['id'],encounter['id']):encounter
                    for profile in profiles.values() for encounter in profile.get('encounters',())}
     for profile in profiles.values():

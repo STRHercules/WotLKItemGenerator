@@ -67,6 +67,57 @@ def _minimal_encounter_catalog(*, map_id=631, map_type=2, instance_type=13,
     }
 
 
+def _onyxia_style_catalog():
+    catalog = _minimal_encounter_catalog(
+        map_id=249, map_type=2, instance_type=29, difficulty_ids=(0, 1))
+    catalog['creature_templates'][9001]['difficulty_entries'] = [9002]
+    catalog['creature_templates'][9002] = {
+        'entry': 9002, 'name': 'Modern Onyxia', 'lootid': 9102,
+        'minlevel': 80, 'maxlevel': 80, 'difficulty_entries': [0],
+    }
+    catalog['creature_loot_entries'].add(9102)
+    catalog['creature_loot_rows'] = [
+        (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'legacy 1'),
+        (9100, 5002, 0, 100.0, 0, 1, 0, 1, 1, 'legacy 2'),
+        (9100, 5003, 0, 100.0, 0, 1, 0, 1, 1, 'legacy 3'),
+        (9100, 5004, 0, 100.0, 0, 1, 0, 1, 1, 'legacy 4'),
+        (9100, 5005, 0, 100.0, 0, 1, 0, 1, 1, 'modern 1'),
+        (9100, 5006, 0, 100.0, 0, 1, 0, 1, 1, 'modern 2'),
+        (9100, 5007, 0, 100.0, 0, 1, 0, 1, 1, 'modern 3'),
+        (9102, 5005, 0, 100.0, 0, 2, 0, 1, 1, 'modern heroic 1'),
+        (9102, 5006, 0, 100.0, 0, 2, 0, 1, 1, 'modern heroic 2'),
+        (9102, 5007, 0, 100.0, 0, 2, 0, 1, 1, 'modern heroic 3'),
+    ]
+    catalog['stock_items'].update({
+        5001: _stock_item(5001, 60, 60),
+        5002: _stock_item(5002, 61, 60),
+        5003: _stock_item(5003, 62, 60),
+        5004: _stock_item(5004, 63, 60),
+        5005: _stock_item(5005, 213, 80),
+        5006: _stock_item(5006, 214, 80),
+        5007: _stock_item(5007, 215, 80),
+    })
+    return catalog
+
+
+def _low_level_with_one_outlier_catalog():
+    catalog = _minimal_encounter_catalog(
+        map_id=249, map_type=2, instance_type=29, difficulty_ids=(0,))
+    catalog['creature_loot_rows'] = [
+        (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'low 1'),
+        (9100, 5002, 0, 100.0, 0, 1, 0, 1, 1, 'low 2'),
+        (9100, 5003, 0, 100.0, 0, 1, 0, 1, 1, 'low 3'),
+        (9100, 5004, 0, 100.0, 0, 1, 0, 1, 1, 'unrelated outlier'),
+    ]
+    catalog['stock_items'].update({
+        5001: _stock_item(5001, 120, 60),
+        5002: _stock_item(5002, 121, 60),
+        5003: _stock_item(5003, 122, 60),
+        5004: _stock_item(5004, 200, 80),
+    })
+    return catalog
+
+
 def _catalog_with_gameobject_sources():
     catalog = _minimal_encounter_catalog(map_id=631, map_type=2,
                                          instance_type=13)
@@ -228,6 +279,25 @@ class BandTests(unittest.TestCase):
 
 
 class ProfileTests(unittest.TestCase):
+    def test_sibling_modern_cluster_overrides_legacy_only_with_real_support(self):
+        catalog = _onyxia_style_catalog()
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        profile = next(row for row in manifest['profiles']
+                       if row['difficulty_id'] == 0)
+
+        self.assertGreaterEqual(profile['item_level_min'], 200)
+        self.assertTrue(profile['evidence']['sibling_support'])
+
+    def test_single_high_level_outlier_does_not_replace_low_level_sibling_cluster(self):
+        catalog = _low_level_with_one_outlier_catalog()
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        profile = manifest['profiles'][0]
+
+        self.assertLess(profile['item_level_max'], 150)
+        self.assertFalse(profile['evidence'].get('sibling_support'))
+
     def test_map_only_gameobject_audit_never_becomes_encounter_target(self):
         catalog = _catalog_with_gameobject_sources()
         catalog['instance_encounters'] = {}
@@ -446,6 +516,16 @@ def _phase2_difficulty_catalog(*, map_id=100, map_type=1, instance_type=1,
 
 
 class Phase2Tests(unittest.TestCase):
+    def test_unexplained_sibling_era_conflict_is_reported(self):
+        profiles = [_placement_profile('normal', 'raid', (60, 76), (58, 60)),
+                    _placement_profile('heroic', 'raid', (245, 245), (80, 80))]
+        profiles[0]['map_id'] = profiles[1]['map_id'] = 249
+
+        _, _, conflicts = g.apply_sibling_progression_coherence(profiles)
+
+        self.assertTrue(any(row['reason'] == 'sibling_progression_era_conflict'
+                            for row in conflicts))
+
     def test_difficulty_profile_uses_effective_creature_template_and_loot(self):
         catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1))
 
@@ -830,6 +910,24 @@ class PlacementTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
+    def test_active_sibling_era_conflict_invalidates_encounter_integration(self):
+        profiles = [_placement_profile('normal', 'raid', (60, 76), (58, 60)),
+                    _placement_profile('heroic', 'raid', (245, 245), (80, 80))]
+        profiles[0]['map_id'] = profiles[1]['map_id'] = 249
+        for profile in profiles:
+            profile['active_encounter_family'] = 'onyxia'
+            profile['evidence']['sibling_progression_era_conflict'] = [{
+                'reason': 'sibling_progression_era_conflict',
+                'profile_ids': ['normal', 'heroic'],
+            }]
+
+        report = g.validate_encounter_integration(
+            [], {'profiles': profiles}, [], {})
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('sibling_progression_era_conflict' in error
+                            for error in report['errors']))
+
     def test_encounter_validation_rejects_out_of_band_required_level(self):
         profile = _placement_profile('high_dungeon', 'dungeon', (100, 140), (70, 80))
         item = {
