@@ -3085,6 +3085,9 @@ def apply_sibling_progression_coherence(profiles):
                     if filtered is None and evidence.get('_stock_item_records'):
                         continue
                     if filtered is not None:
+                        if not filtered.get('valid',True):
+                            profile['valid']=False
+                            profile['invalid_reason']=filtered.get('invalid_reason') or 'sibling-adjusted encounter evidence is invalid'
                         encounter['evidence']=filtered
                         encounter['item_level']=[filtered['item_level_min'],filtered['item_level_max']]
                         encounter['required_level_min']=filtered.get('required_level_min')

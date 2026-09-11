@@ -292,6 +292,77 @@ Exact output:
 
 ```
 
+## Round 3 fix report
+
+### Scope
+
+Sibling-adjusted encounter evidence that exceeds the existing boss width limit now invalidates its profile before aggregate re-merge can hide the invalidity. Mixed raid width-26 rejection, aggregate/profile width behavior, paired ItemLevel/RequiredLevel evidence, rejection metadata, and prior Task 2/3 behavior are unchanged.
+
+### TDD RED
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.Phase2Tests.test_width_21_sibling_boss_evidence_invalidates_profile -v
+```
+
+Exact output:
+
+```text
+test_width_21_sibling_boss_evidence_invalidates_profile (Tests.test_targeted_content.Phase2Tests.test_width_21_sibling_boss_evidence_invalidates_profile) ... FAIL
+
+----------------------------------------------------------------------
+Ran 1 test in 0.001s
+
+FAILED (failures=1)
+```
+
+### Covering verification
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.ProfileTests Tests.test_targeted_content.Phase2Tests Tests.test_targeted_content.SafetyTests -v
+```
+
+Exact result:
+
+```text
+Ran 34 tests in 0.012s
+
+OK
+```
+
+### Full suite
+
+Command:
+
+```text
+rtk py -m unittest discover -s Tests -p "test_*.py"
+```
+
+Exact result:
+
+```text
+Ran 119 tests in 59.637s
+
+OK
+```
+
+### Additional checks
+
+Command:
+
+```text
+rtk py -m py_compile generate_pack.py Tests/test_targeted_content.py
+```
+
+Exact output:
+
+```text
+
+```
+
 Command:
 
 ```text
