@@ -1136,16 +1136,22 @@ class PlacementTests(unittest.TestCase):
         self.assertIn('distribution_score', choice)
 
     def test_required_level_band_width_blocks_equivalence_grouping(self):
-        profiles = [
-            _placement_profile('narrow', 'dungeon', (220, 220), (80, 80)),
-            _placement_profile('broad', 'dungeon', (220, 220), (70, 90)),
-        ]
-        item = {'entry': 4000, 'ItemLevel': 220,
-                'RequiredLevel': 80, 'Quality': 4}
+        narrow = _placement_profile('narrow', 'dungeon', (220, 220), (80, 80))
+        within_ten = _placement_profile('within_ten', 'dungeon', (220, 220),
+                                        (75, 85))
+        broad = _placement_profile('broad', 'dungeon', (220, 220), (70, 90))
 
-        g.assign_default_encounter_items([item], _placement_manifest(profiles))
+        within_item = {'entry': 4000, 'ItemLevel': 220,
+                       'RequiredLevel': 80, 'Quality': 4}
+        g.assign_default_encounter_items(
+            [within_item], _placement_manifest([narrow, within_ten]))
+        self.assertEqual(within_item['encounter_eligible_profile_count'], 2)
 
-        self.assertEqual(item['encounter_eligible_profile_count'], 1)
+        broad_item = {'entry': 4001, 'ItemLevel': 220,
+                      'RequiredLevel': 80, 'Quality': 4}
+        g.assign_default_encounter_items(
+            [broad_item], _placement_manifest([narrow, broad]))
+        self.assertEqual(broad_item['encounter_eligible_profile_count'], 1)
 
     def test_set_distribution_rejects_non_first_member_band_conflict(self):
         def profile(profile_id, bands):

@@ -2768,7 +2768,7 @@ def _encounter_candidates_are_equivalent(left,right,required_fallback=None):
     right_required=(right_band[2]+right_band[3])/2
     if abs(left_center-right_center)>15 or abs(left_required-right_required)>3:
         return False
-    if abs((left_band[3]-left_band[2])-(right_band[3]-right_band[2]))>3:
+    if abs((left_band[3]-left_band[2])-(right_band[3]-right_band[2]))>10:
         return False
     if abs((left_band[1]-left_band[0])-(right_band[1]-right_band[0]))>10:
         return False
