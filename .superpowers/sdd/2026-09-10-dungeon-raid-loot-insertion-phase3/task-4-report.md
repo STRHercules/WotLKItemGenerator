@@ -103,6 +103,112 @@ Exact output:
 
 ```
 
+## Round 1 fix report
+
+### Scope
+
+Addressed the review findings without changing Task 2 scanner/gameobject behavior, Task 3 reference behavior, or distribution/output gating. Sibling alternate support now derives RequiredLevel evidence from the same stock records as the candidate ItemLevel cluster; candidate width validation reuses the centralized encounter/profile threshold logic; and sibling recomputation preserves rejection reasons and required-level rejection metadata.
+
+### TDD RED
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.Phase2Tests.test_sibling_alternate_requires_paired_item_and_required_level_evidence Tests.test_targeted_content.Phase2Tests.test_sibling_profile_cluster_uses_profile_band_width_limit Tests.test_targeted_content.Phase2Tests.test_sibling_recompute_preserves_rejection_metadata -v
+```
+
+Exact output:
+
+```text
+test_sibling_alternate_requires_paired_item_and_required_level_evidence (Tests.test_targeted_content.Phase2Tests.test_sibling_alternate_requires_paired_item_and_required_level_evidence) ... FAIL
+test_sibling_profile_cluster_uses_profile_band_width_limit (Tests.test_targeted_content.Phase2Tests.test_sibling_profile_cluster_uses_profile_band_width_limit) ... FAIL
+test_sibling_recompute_preserves_rejection_metadata (Tests.test_targeted_content.Phase2Tests.test_sibling_recompute_preserves_rejection_metadata) ... FAIL
+
+----------------------------------------------------------------------
+Ran 3 tests in 0.002s
+
+FAILED (failures=3)
+```
+
+### Focused verification
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.ProfileTests Tests.test_targeted_content.Phase2Tests Tests.test_targeted_content.SafetyTests -v
+```
+
+Exact output:
+
+```text
+Ran 32 tests in 0.009s
+
+OK
+```
+
+### Full suite
+
+Command:
+
+```text
+rtk py -m unittest discover -s Tests -p "test_*.py"
+```
+
+Exact output:
+
+```text
+...........................................................................................
+..........................
+----------------------------------------------------------------------
+Ran 117 tests in 49.322s
+
+OK
+```
+
+### Final verification after the null-safe helper adjustment
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.ProfileTests Tests.test_targeted_content.Phase2Tests Tests.test_targeted_content.SafetyTests -v
+```
+
+Exact result:
+
+```text
+Ran 32 tests in 0.022s
+
+OK
+```
+
+Command:
+
+```text
+rtk py -m unittest discover -s Tests -p "test_*.py"
+```
+
+Exact result:
+
+```text
+Ran 117 tests in 74.414s
+
+OK
+```
+
+### Additional checks
+
+Command:
+
+```text
+rtk py -m py_compile generate_pack.py Tests/test_targeted_content.py
+```
+
+Exact output:
+
+```text
+
+```
+
 Command:
 
 ```text

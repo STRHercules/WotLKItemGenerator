@@ -2385,6 +2385,8 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
             'required_levels':(), 'qualities':(), 'item_count':0,
             'direct_item_count':0, 'reference_item_count':0,
             'rejected_reference_count':sum(e.get('rejected_reference_count',0) for e in evidences),
+            'rejected_required_level_count':sum(e.get('rejected_required_level_count',0) for e in evidences),
+            'rejected_required_levels':tuple(sorted({int(level) for e in evidences for level in e.get('rejected_required_levels',())})),
             'reference_provenance':[row for evidence in evidences for row in evidence.get('reference_provenance',())],
             '_stock_item_records':tuple(row for evidence in evidences for row in evidence.get('_stock_item_records',())),
             '_candidate_item_records':tuple(row for evidence in evidences for row in evidence.get('_candidate_item_records',())),
@@ -2411,6 +2413,8 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
                  'direct_item_count':sum(evidence.get('direct_item_count',0) for evidence in usable),
                  'reference_item_count':sum(evidence.get('reference_item_count',0) for evidence in usable),
                  'rejected_reference_count':sum(evidence.get('rejected_reference_count',0) for evidence in evidences),
+                 'rejected_required_level_count':sum(evidence.get('rejected_required_level_count',0) for evidence in evidences),
+                 'rejected_required_levels':tuple(sorted({int(level) for evidence in evidences for level in evidence.get('rejected_required_levels',())})),
                  'reference_provenance':[row for evidence in evidences for row in evidence.get('reference_provenance',())],
                  'quality_counts':dict(sorted(quality_counts.items())),
                  'dominant_quality':max(quality_counts,key=lambda quality:(quality_counts[quality],quality)) if quality_counts else None,
@@ -2848,6 +2852,14 @@ def progression_clusters(values,gap=15,prefer_high=False):
     return tuple(rows)
 
 
+def _progression_band_width_limit(encounter_kind):
+    if encounter_kind in ('profile','aggregate'):
+        return 30
+    if encounter_kind=='boss':
+        return 20
+    return 25
+
+
 def _dominant_progression_cluster(values,gap,prefer_high=False):
     clusters=progression_clusters(values,gap,prefer_high=prefer_high)
     if not clusters: return ()
@@ -2873,7 +2885,7 @@ def infer_safe_band(values,source_kind='profile_aggregate',encounter_kind='boss'
         rejected.remove(value)
     lo=min(retained_set); hi=max(retained_set)
     width=hi-lo
-    hard_limit=30 if encounter_kind in ('profile','aggregate') else 20 if encounter_kind=='boss' else 25
+    hard_limit=_progression_band_width_limit(encounter_kind)
     invalid_reason=''
     if source_kind in ('profile_aggregate','nearby_fallback') and width>hard_limit:
         invalid_reason=f'unsafe {encounter_kind} band width {width} > {hard_limit}'
@@ -2937,6 +2949,32 @@ def _required_cluster_for(profile,center=None):
     return min(rows,key=lambda row:(abs(row['center']-center),-row['count'])) if center is not None else max(rows,key=lambda row:(row['count'],row['center']))
 
 
+def _profile_stock_records(profile,item_cluster):
+    evidence=profile.get('evidence') or {}
+    records=tuple(evidence.get('_candidate_item_records') or evidence.get('_stock_item_records',()))
+    values=set(item_cluster.get('values',()))
+    return tuple(row for row in records if int(row.get('item_level',0)) in values)
+
+
+def _paired_required_cluster(profile,item_cluster):
+    records=_profile_stock_records(profile,item_cluster)
+    required=[int(row.get('required_level',0)) for row in records
+              if int(row.get('required_level',0))>0]
+    if not required:
+        return None
+    prefer_high=bool(((profile.get('evidence') or {}).get('progression_cluster') or {}).get('prefer_high',False))
+    clusters=progression_clusters(required,3,prefer_high=prefer_high)
+    return max(clusters,key=lambda row:(row['count'],row['values'][0],row['values'][-1])
+               if prefer_high else
+               (row['count'],-row['values'][0],-row['values'][-1]))
+
+
+def _sibling_profile_band_kind(profile):
+    kinds={encounter.get('kind') for encounter in profile.get('encounters',())
+           if encounter.get('kind') in ('boss','trash')}
+    return next(iter(kinds)) if len(kinds)==1 else 'profile'
+
+
 def _recompute_evidence_cluster(evidence,cluster,required_cluster=None,encounter_kind='profile'):
     records=tuple(evidence.get('_candidate_item_records') or evidence.get('_stock_item_records',()))
     values=set(cluster.get('values',()))
@@ -2949,7 +2987,8 @@ def _recompute_evidence_cluster(evidence,cluster,required_cluster=None,encounter
     required_values=set(required_cluster.get('values',())) if required_cluster else set()
     if required_values:
         matching=[row for row in selected if int(row.get('required_level',0)) in required_values]
-        if matching: selected=matching
+        if not matching: return None
+        selected=matching
     required=tuple(sorted(int(row.get('required_level',0)) for row in selected if int(row.get('required_level',0))>0))
     required_rows=progression_clusters(required,3,prefer_high=bool((evidence.get('progression_cluster') or {}).get('prefer_high',False)))
     if required_rows:
@@ -2968,6 +3007,8 @@ def _recompute_evidence_cluster(evidence,cluster,required_cluster=None,encounter
                    'direct_item_count':sum(row.get('source_kind')=='direct' for row in selected),
                    'reference_item_count':sum(row.get('source_kind')=='reference' for row in selected),
                    'rejected_reference_count':evidence.get('rejected_reference_count',0),
+                   'rejected_required_level_count':evidence.get('rejected_required_level_count',0),
+                   'rejected_required_levels':tuple(sorted({int(level) for level in evidence.get('rejected_required_levels',())})),
                    '_stock_item_records':tuple(selected),
                    '_candidate_item_records':tuple(selected),
                    'reference_provenance':evidence.get('reference_provenance',()),
@@ -2980,7 +3021,12 @@ def _recompute_evidence_cluster(evidence,cluster,required_cluster=None,encounter
 
 
 def _sibling_cluster_support(profile,cluster,sibling):
-    if cluster['count']<3 or cluster['width']>30: return None
+    if cluster['count']<3: return None
+    band=infer_safe_band(cluster['values'],'profile_aggregate',
+                         _sibling_profile_band_kind(profile))
+    if not band.get('valid'): return None
+    candidate_records=_profile_stock_records(profile,cluster)
+    if len(candidate_records)<3: return None
     sibling_clusters=_profile_cluster_rows(sibling)
     if not sibling_clusters: return None
     active=(sibling.get('evidence') or {}).get('progression_cluster',{})
@@ -2988,12 +3034,13 @@ def _sibling_cluster_support(profile,cluster,sibling):
     active_row=next((row for row in sibling_clusters if row['values']==active_values),None)
     active_row=active_row or max(sibling_clusters,key=lambda row:(row['count'],-row['width']))
     if active_row['count']<3: return None
+    sibling_records=_profile_stock_records(sibling,active_row)
+    if len(sibling_records)<3: return None
     if abs(cluster['center']-active_row['center'])>max(15,cluster['width'],active_row['width']): return None
-    sibling_required=_required_cluster_for(sibling)
-    candidate_required_rows=_profile_cluster_rows(profile,'required_clusters')
-    if sibling_required and candidate_required_rows:
-        if min(abs(row['center']-sibling_required['center']) for row in candidate_required_rows)>15:
-            return None
+    sibling_required=_paired_required_cluster(sibling,active_row)
+    candidate_required=_paired_required_cluster(profile,cluster)
+    if sibling_required is None or candidate_required is None: return None
+    if abs(candidate_required['center']-sibling_required['center'])>15: return None
     return {'profile_id':sibling.get('id'),'reason':'shared active encounter family supports coherent alternate cluster',
             'cluster':cluster['values']}
 
@@ -3027,7 +3074,7 @@ def apply_sibling_progression_coherence(profiles):
                         _profile_cluster_rows(sibling)[-1]['center']) for sibling in group if sibling is not profile),candidate,supporters))
             if not choices: continue
             _,_,chosen,supporters=max(choices,key=lambda row:(row[0],row[1]))
-            required=_required_cluster_for(profile,chosen['center'])
+            required=_paired_required_cluster(profile,chosen)
             new_encounters=[]
             for encounter in profile.get('encounters',()):
                 evidence=encounter.get('evidence')
@@ -3056,6 +3103,18 @@ def apply_sibling_progression_coherence(profiles):
                     'method':'sibling_supported_cluster','gap':15,
                     'prefer_high':bool((profile_evidence.get('progression_cluster') or {}).get('prefer_high',False))}
                 recomputed['sibling_support']=list(profile_evidence.get('sibling_support',()))+supporters
+                prior_rejections=list(profile_evidence.get('rejections',()))
+                merged_rejections=[]
+                for rejection in prior_rejections+list(recomputed.get('rejections',())):
+                    if rejection not in merged_rejections:
+                        merged_rejections.append(rejection)
+                recomputed['rejections']=merged_rejections
+                recomputed['rejected_required_level_count']=max(
+                    int(profile_evidence.get('rejected_required_level_count',0) or 0),
+                    int(recomputed.get('rejected_required_level_count',0) or 0))
+                recomputed['rejected_required_levels']=tuple(sorted(
+                    {int(level) for level in profile_evidence.get('rejected_required_levels',())}
+                    | {int(level) for level in recomputed.get('rejected_required_levels',())}))
                 profile['evidence']=recomputed
                 profile['item_level_min']=recomputed.get('item_level_min')
                 profile['item_level_max']=recomputed.get('item_level_max')

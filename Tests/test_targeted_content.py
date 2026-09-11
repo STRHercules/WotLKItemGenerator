@@ -516,6 +516,136 @@ def _phase2_difficulty_catalog(*, map_id=100, map_type=1, instance_type=1,
 
 
 class Phase2Tests(unittest.TestCase):
+    def test_sibling_alternate_requires_paired_item_and_required_level_evidence(self):
+        profiles = [_placement_profile('normal', 'raid', (60, 62), (60, 60)),
+                    _placement_profile('heroic', 'raid', (213, 215), (80, 80))]
+        profiles[0]['map_id'] = profiles[1]['map_id'] = 249
+        for profile in profiles:
+            profile['active_encounter_family'] = 'onyxia'
+        profiles[0]['evidence'].update({
+            'progression_cluster': {'retained': (60, 61, 62)},
+            'candidate_clusters': (
+                {'values': (60, 61, 62), 'width': 2, 'center': 61, 'count': 3},
+                {'values': (213, 214, 215), 'width': 2, 'center': 214, 'count': 3},
+            ),
+            'required_clusters': (
+                {'values': (60,), 'width': 0, 'center': 60, 'count': 3},
+                {'values': (80,), 'width': 0, 'center': 80, 'count': 3},
+            ),
+            '_candidate_item_records': tuple({
+                'item_level': level, 'required_level': 60, 'quality': 4,
+                'source_kind': 'direct',
+            } for level in (60, 61, 62, 213, 214, 215)),
+        })
+        profiles[0]['encounters'][0]['evidence'] = dict(profiles[0]['evidence'])
+        profiles[1]['evidence'].update({
+            'progression_cluster': {'retained': (213, 214, 215)},
+            'candidate_clusters': (
+                {'values': (213, 214, 215), 'width': 2, 'center': 214, 'count': 3},
+            ),
+            'required_clusters': (
+                {'values': (80,), 'width': 0, 'center': 80, 'count': 3},
+            ),
+            '_candidate_item_records': tuple({
+                'item_level': level, 'required_level': 80, 'quality': 4,
+                'source_kind': 'direct',
+            } for level in (213, 214, 215)),
+        })
+
+        g.apply_sibling_progression_coherence(profiles)
+
+        self.assertFalse(profiles[0]['evidence'].get('sibling_support'))
+        self.assertEqual((profiles[0]['item_level_min'], profiles[0]['item_level_max']),
+                         (60, 62))
+
+    def test_sibling_profile_cluster_uses_profile_band_width_limit(self):
+        profiles = [_placement_profile('normal', 'raid', (60, 62), (60, 60)),
+                    _placement_profile('heroic', 'raid', (213, 215), (80, 80))]
+        profiles[0]['map_id'] = profiles[1]['map_id'] = 249
+        for profile in profiles:
+            profile['active_encounter_family'] = 'onyxia'
+        profiles[0]['evidence'].update({
+            'progression_cluster': {'retained': (60, 61, 62)},
+            'candidate_clusters': (
+                {'values': (60, 61, 62), 'width': 2, 'center': 61, 'count': 3},
+                {'values': (213, 225, 238), 'width': 25, 'center': 225.333333,
+                 'count': 3},
+            ),
+            'required_clusters': (
+                {'values': (60,), 'width': 0, 'center': 60, 'count': 3},
+                {'values': (80,), 'width': 0, 'center': 80, 'count': 3},
+            ),
+            '_candidate_item_records': tuple({
+                'item_level': level, 'required_level': 80, 'quality': 4,
+                'source_kind': 'direct',
+            } for level in (60, 61, 62, 213, 225, 238)),
+        })
+        profiles[0]['encounters'][0]['evidence'] = dict(profiles[0]['evidence'])
+        profiles[1]['evidence'].update({
+            'progression_cluster': {'retained': (213, 215)},
+            'candidate_clusters': (
+                {'values': (213, 214, 215), 'width': 2, 'center': 214, 'count': 3},
+            ),
+            'required_clusters': (
+                {'values': (80,), 'width': 0, 'center': 80, 'count': 3},
+            ),
+            '_candidate_item_records': tuple({
+                'item_level': level, 'required_level': 80, 'quality': 4,
+                'source_kind': 'direct',
+            } for level in (213, 214, 215)),
+        })
+
+        g.apply_sibling_progression_coherence(profiles)
+
+        self.assertFalse(profiles[0]['evidence'].get('sibling_support'))
+
+    def test_sibling_recompute_preserves_rejection_metadata(self):
+        profiles = [_placement_profile('normal', 'raid', (60, 62), (60, 60)),
+                    _placement_profile('heroic', 'raid', (213, 215), (80, 80))]
+        profiles[0]['map_id'] = profiles[1]['map_id'] = 249
+        for profile in profiles:
+            profile['active_encounter_family'] = 'onyxia'
+        profiles[0]['evidence'].update({
+            'progression_cluster': {'retained': (60, 61, 62)},
+            'candidate_clusters': (
+                {'values': (60, 61, 62), 'width': 2, 'center': 61, 'count': 3},
+                {'values': (213, 214, 215), 'width': 2, 'center': 214, 'count': 3},
+            ),
+            'required_clusters': (
+                {'values': (60,), 'width': 0, 'center': 60, 'count': 3},
+                {'values': (80,), 'width': 0, 'center': 80, 'count': 3},
+            ),
+            'rejections': [{'item': 99, 'reason': 'prior RequiredLevel outlier'}],
+            'rejected_required_level_count': 2,
+            'rejected_required_levels': (58, 59),
+            '_candidate_item_records': tuple({
+                'item_level': level, 'required_level': 80, 'quality': 4,
+                'source_kind': 'direct',
+            } for level in (60, 61, 62, 213, 214, 215)),
+        })
+        profiles[0]['encounters'][0]['evidence'] = dict(profiles[0]['evidence'])
+        profiles[1]['evidence'].update({
+            'progression_cluster': {'retained': (213, 214, 215)},
+            'candidate_clusters': (
+                {'values': (213, 214, 215), 'width': 2, 'center': 214, 'count': 3},
+            ),
+            'required_clusters': (
+                {'values': (80,), 'width': 0, 'center': 80, 'count': 3},
+            ),
+            '_candidate_item_records': tuple({
+                'item_level': level, 'required_level': 80, 'quality': 4,
+                'source_kind': 'direct',
+            } for level in (213, 214, 215)),
+        })
+
+        g.apply_sibling_progression_coherence(profiles)
+
+        evidence = profiles[0]['evidence']
+        self.assertIn({'item': 99, 'reason': 'prior RequiredLevel outlier'},
+                      evidence.get('rejections', ()))
+        self.assertEqual(evidence.get('rejected_required_level_count'), 2)
+        self.assertEqual(evidence.get('rejected_required_levels'), (58, 59))
+
     def test_unexplained_sibling_era_conflict_is_reported(self):
         profiles = [_placement_profile('normal', 'raid', (60, 76), (58, 60)),
                     _placement_profile('heroic', 'raid', (245, 245), (80, 80))]
