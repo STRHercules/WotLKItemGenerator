@@ -2727,48 +2727,53 @@ def _encounter_profile_candidates(item,profiles):
         choices=_eligible_encounters(item,profile)
         if not choices: continue
         encounter,score=min(choices,key=lambda row:row[1])
-        candidates.append({'profile':profile,'encounter':encounter,'score':score})
+        candidates.append({'profile':profile,'encounter':encounter,'score':score,
+                           'item_required_level':int(item.get('RequiredLevel',item.get('required_level',0)) or 0)})
     return candidates
 
 def choose_encounter_profile(item,profiles):
     candidates=_encounter_profile_candidates(item,profiles)
     if not candidates: return None
-    return min(candidates,key=lambda row:(row['score'],str(row['profile'].get('id',''))))
+    choice=min(candidates,key=lambda row:(row['score'],str(row['profile'].get('id',''))))
+    return {key:choice[key] for key in ('profile','encounter','score')}
 
-def _encounter_candidate_band(candidate):
+def _encounter_candidate_band(candidate,required_fallback=None):
     profile=candidate['profile']; encounter=candidate['encounter']
     resolved=resolve_encounter_order(profile)
     lo,hi=encounter_item_level_band(profile,encounter,resolved)
     evidence=_encounter_source_evidence(profile,encounter)
-    required=int(candidate.get('item_required_level',0))
+    required=int(candidate.get('item_required_level',required_fallback) or 0)
     req_min=encounter.get('required_level_min',evidence.get('required_level_min',profile.get('required_level_min')))
     req_max=encounter.get('required_level_max',evidence.get('required_level_max',profile.get('required_level_max')))
     if req_min is None: req_min=required
     if req_max is None: req_max=required
     return (int(lo),int(hi),int(req_min),int(req_max))
 
-def _encounter_candidate_cluster(candidate):
+def _encounter_candidate_cluster(candidate,required_fallback=None):
     profile=candidate['profile']; evidence=profile.get('evidence') or {}
     active=(evidence.get('progression_cluster') or {}).get('retained',())
     if active: return tuple(sorted(int(value) for value in active))
-    band=_encounter_candidate_band(candidate)
+    band=_encounter_candidate_band(candidate,required_fallback)
     rows=_profile_cluster_rows(profile)
     if not rows: return ()
     center=(band[0]+band[1])/2
     return min(rows,key=lambda row:(abs(row['center']-center),-row['count']))['values']
 
-def _encounter_candidates_are_equivalent(left,right):
-    left_band=_encounter_candidate_band(left); right_band=_encounter_candidate_band(right)
+def _encounter_candidates_are_equivalent(left,right,required_fallback=None):
+    left_band=_encounter_candidate_band(left,required_fallback)
+    right_band=_encounter_candidate_band(right,required_fallback)
     left_center=(left_band[0]+left_band[1])/2
     right_center=(right_band[0]+right_band[1])/2
     left_required=(left_band[2]+left_band[3])/2
     right_required=(right_band[2]+right_band[3])/2
     if abs(left_center-right_center)>15 or abs(left_required-right_required)>3:
         return False
+    if abs((left_band[3]-left_band[2])-(right_band[3]-right_band[2]))>3:
+        return False
     if abs((left_band[1]-left_band[0])-(right_band[1]-right_band[0]))>10:
         return False
-    left_cluster=_encounter_candidate_cluster(left)
-    right_cluster=_encounter_candidate_cluster(right)
+    left_cluster=_encounter_candidate_cluster(left,required_fallback)
+    right_cluster=_encounter_candidate_cluster(right,required_fallback)
     if left_cluster and right_cluster:
         if abs(sum(left_cluster)/len(left_cluster)-sum(right_cluster)/len(right_cluster))>15:
             return False
@@ -2777,9 +2782,9 @@ def _encounter_candidates_are_equivalent(left,right):
     return True
 
 def encounter_profile_equivalence_group(item,candidates):
-    bands=sorted(set(_encounter_candidate_band(candidate) for candidate in candidates))
     item_level=int(item.get('ItemLevel',item.get('item_level',0)))
     required=int(item.get('RequiredLevel',item.get('required_level',0)))
+    bands=sorted(set(_encounter_candidate_band(candidate,required) for candidate in candidates))
     normalized=','.join('-'.join(str(value) for value in band) for band in bands) or 'none'
     return f'item-level={item_level};required-level={required};candidate-band={normalized}'
 
@@ -2822,16 +2827,18 @@ def choose_distributed_encounter_profile(item,candidates,stable_key=None):
                        weight,group))
     score,_,candidate,weight,group=max(
         scored,key=lambda row:(row[0],row[1]))
-    return {**candidate,'equivalence_group':group,
+    return {'profile':candidate['profile'],'encounter':candidate['encounter'],
+            'score':candidate['score'],'equivalence_group':group,
             'eligible_profile_count':len(candidates),
             'distribution_weight':weight,
             'distribution_score':score}
 
 def _encounter_candidate_groups(item,candidates):
+    required=int(item.get('RequiredLevel',item.get('required_level',0)) or 0)
     groups=[]
     for candidate in sorted(candidates,key=lambda row:str(row['profile'].get('id',''))):
         for group in groups:
-            if all(_encounter_candidates_are_equivalent(candidate,member) for member in group):
+            if all(_encounter_candidates_are_equivalent(candidate,member,required) for member in group):
                 group.append(candidate)
                 break
         else:
@@ -2876,14 +2883,36 @@ def assign_default_encounter_items(items,manifest):
         for profile in profiles:
             choices=[_eligible_encounters(item,profile,only_bosses=True) for item in members]
             if not all(choices): continue
-            best_score=max(min(score for _,score in rows) for rows in choices)
-            encounter,score=min(choices[0],key=lambda row:row[1])
+            candidates=[]
+            for item,rows in zip(members,choices):
+                encounter,score=min(rows,key=lambda row:row[1])
+                candidates.append({'profile':profile,'encounter':encounter,'score':score,
+                                   'item_required_level':int(item.get('RequiredLevel',item.get('required_level',0)) or 0)})
+            best_score=max(candidate['score'] for candidate in candidates)
+            encounter=candidates[0]['encounter']
             options.append({'profile':profile,'encounter':encounter,
-                            'score':best_score,'choices':choices})
+                            'score':best_score,'choices':choices,
+                            'member_candidates':candidates})
         if not options:
             for item in members: _clear_encounter_metadata(item)
             continue
         option_groups=_encounter_candidate_groups(members[0],options)
+        incompatible=False
+        for group in option_groups:
+            for left_index,left in enumerate(group):
+                for right in group[left_index+1:]:
+                    if any(not _encounter_candidates_are_equivalent(
+                            left['member_candidates'][member_index],
+                            right['member_candidates'][member_index],
+                            int(members[member_index].get('RequiredLevel',members[member_index].get('required_level',0)) or 0))
+                           for member_index in range(len(members))):
+                        incompatible=True
+                        break
+                if incompatible: break
+            if incompatible: break
+        if incompatible:
+            for item in members: _clear_encounter_metadata(item)
+            continue
         common_group=min(option_groups,key=lambda rows:(
             min((row['score'],str(row['profile'].get('id',''))) for row in rows),
             encounter_profile_equivalence_group(members[0],rows)))

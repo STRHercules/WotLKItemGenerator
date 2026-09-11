@@ -1135,6 +1135,40 @@ class PlacementTests(unittest.TestCase):
         self.assertLessEqual(choice['distribution_weight'], 1.25)
         self.assertIn('distribution_score', choice)
 
+    def test_required_level_band_width_blocks_equivalence_grouping(self):
+        profiles = [
+            _placement_profile('narrow', 'dungeon', (220, 220), (80, 80)),
+            _placement_profile('broad', 'dungeon', (220, 220), (70, 90)),
+        ]
+        item = {'entry': 4000, 'ItemLevel': 220,
+                'RequiredLevel': 80, 'Quality': 4}
+
+        g.assign_default_encounter_items([item], _placement_manifest(profiles))
+
+        self.assertEqual(item['encounter_eligible_profile_count'], 1)
+
+    def test_set_distribution_rejects_non_first_member_band_conflict(self):
+        def profile(profile_id, bands):
+            row = _placement_profile(profile_id, 'dungeon', (210, 230),
+                                     (80, 80))
+            row['encounters'] = [
+                {'id': f'boss_{index}', 'kind': 'boss', 'weight': 1,
+                 'item_level': list(band),
+                 'targets': [{'type': 'creature', 'entry': 9100 + index}]}
+                for index, band in enumerate(bands)
+            ]
+            return row
+
+        profiles = [
+            profile('profile_a', ((215, 225), (210, 230))),
+            profile('profile_b', ((210, 220), (230, 230))),
+        ]
+        items = _set_items(2, item_levels=[220, 230])
+
+        g.assign_default_encounter_items(items, _placement_manifest(profiles))
+
+        self.assertTrue(all('content_profile' not in item for item in items))
+
     def test_set_members_share_one_profile(self):
         items = _set_items(5)
         manifest = _placement_manifest([
