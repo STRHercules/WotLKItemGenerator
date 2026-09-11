@@ -312,6 +312,16 @@ data/sql/base/db_world/spell_script_names.sql
 
 Targeted quest rewards additionally require an explicit `--quest-template-source PATH`.
 
+Encounter integration also recognizes an optional complete gameobject source trio:
+
+```text
+Data/gameobject.sql
+Data/gameobject_template.sql
+Data/gameobject_loot_template.sql
+```
+
+The trio is automatically discovered from `Data/` when all three files are present. Explicit `--gameobject-source PATH`, `--gameobject-template-source PATH`, and `--gameobject-loot-source PATH` overrides replace that automatic discovery and must be supplied together; a partial explicit trio fails clearly. If the optional trio is absent, its source status is `not_exercised` and the generator keeps the resulting coverage exclusion auditable. In `gameobject_template`, `Data1` is the loot relationship: only type-3 gameobjects whose `Data1` loot entry exists in `gameobject_loot_template.sql` are supported reward-object candidates.
+
 These are used for:
 
 - world-loot level mapping
@@ -380,7 +390,10 @@ WotLKItemGenerator/
 │  ├─ DungeonMap.dbc
 │  ├─ creature.sql
 │  ├─ creature_template.sql
-│  └─ instance_encounters.sql
+│  ├─ instance_encounters.sql
+│  ├─ gameobject.sql                    # optional complete trio
+│  ├─ gameobject_template.sql            # optional complete trio
+│  └─ gameobject_loot_template.sql       # optional complete trio
 ├─ Docs/
 │  ├─ CLI_UI.md
 │  └─ content_manifest.example.json
@@ -2093,7 +2106,7 @@ The generator validates that the resulting value fits within an unsigned 32-bit 
 
 # Targeted Dungeon, Raid, and Quest Content
 
-The normal no-argument run automatically integrates generated items into source-backed dungeon and raid trash/boss loot tables. It reads `Map.dbc`, `MapDifficulty.dbc`, `DungeonMap.dbc`, `creature.sql`, `creature_template.sql`, `instance_encounters.sql`, stock loot SQL, and `item_template.sql`. Every candidate map+difficulty is audited before placement; valid raid difficulties are not gated on `DungeonMap.dbc` membership or static boss spawns. World-loot pools are emitted in the same run.
+The normal no-argument run automatically integrates generated items into source-backed dungeon and raid trash/boss loot tables. It reads `Map.dbc`, `MapDifficulty.dbc`, `DungeonMap.dbc`, `creature.sql`, `creature_template.sql`, `instance_encounters.sql`, stock loot SQL, and `item_template.sql`; the complete optional gameobject trio is auto-discovered from `Data/` when available. Every candidate map+difficulty is audited before placement; valid raid difficulties are not gated on `DungeonMap.dbc` membership or static boss spawns. World-loot pools are emitted in the same run.
 
 Encounter attachments use `LootMode = 1 << MapDifficulty.difficulty_id`. ItemLevel and RequiredLevel bands are learned independently from filtered equippable stock loot, direct encounter loot, verifiable encounter-specific references, and bounded fallback evidence. Shared references consumed by unrelated maps, non-equipment rows, outliers, and unsafe bands are excluded from progression evidence. Items outside both the ItemLevel and RequiredLevel envelope remain world-loot-only.
 
@@ -2101,9 +2114,11 @@ Pass `--content-manifest PATH` when explicit recipes, encounter mappings, or que
 
 Dungeon and raid profiles are difficulty-specific. Each profile lists exact creature, reference, or verifiable gameobject loot targets and an encounter graph using `requires`. The generator resolves a deterministic order, assigns progression ranks, and records source evidence, band method, RequiredLevel range, quality evidence, and rejected references. Encounter weights allocate exact generated items; each encounter receives its own additive pool and configurable additional-drop chance. One generated item is awarded per successful roll by default. Generated sets are selected as one atomic map+difficulty group and are never scattered across instances.
 
-When a manifest profile includes `map_id` and `difficulty_id`, the same source audit verifies map/difficulty identity, creature/gameobject source membership, loot IDs, boss credit entries, and existing creature/reference/gameobject loot targets before writing SQL. Gameobject sources are optional: `--gameobject-source`, `--gameobject-template-source`, and `--gameobject-loot-source` must be supplied together; absent sources produce explicit coverage exclusions rather than guessed chest mappings.
+When a manifest profile includes `map_id` and `difficulty_id`, the same source audit verifies map/difficulty identity, creature/gameobject source membership, loot IDs, boss credit entries, and existing creature/reference/gameobject loot targets before writing SQL. Gameobject sources are optional and use the trio rules above. `gameobject_template.Data1` maps a type-3 object to `gameobject_loot_template.Entry`; the object is usable only when that loot entry is present. A static map/spawn row is map-only evidence and remains in `gameobject_reward_targets.csv`; it is never guessed as a boss reward. Encounter association requires an explicit instance mapping or a `SummonGameObject` completion path with explicit completion evidence. Same-file symbol co-occurrence is insufficient, and the script source status records whether this audit was `exercised` or `not_exercised`.
 
-The generated encounter subsystem validates profile integrity, independent difficulty bands, placement eligibility, set atomicity, target-table identity, and generic high-end destination sanity. If that optional validation fails, diagnostic reports are still written, but encounter SQL and encounter cleanup are omitted from `sql/IMPORT_ORDER.txt`; item SQL and world-loot output continue.
+Shared references are accepted only with verified parent provenance: the consumer, parent target, exact map, exact difficulty context, and applicable LootMode must agree. Context-free or unrelated-map references remain rejected evidence. Sibling progression coherence requires a real alternate cluster for the same map; `sibling_progression` diagnostics protect the retained band from one-row high-level outliers and report active conflicts as an integration failure. Equivalent safe profiles use deterministic BLAKE2b rendezvous distribution, so input order cannot change the selected destination. Distribution concentration, `reference_provenance`, and gameobject association audits are always emitted, including when encounter SQL is gated.
+
+The generated encounter subsystem validates profile integrity, independent ItemLevel and RequiredLevel bands, placement eligibility, set atomicity, target-table identity, sibling/outlier safety, distribution concentration, and generic high-end destination sanity. If encounter validation is invalid, diagnostic reports are still written, item and world-loot output still completes, and encounter SQL plus encounter cleanup are omitted from `sql/IMPORT_ORDER.txt`. Encounter imports therefore fail closed without discarding the valid item/world output; items outside the retained encounter envelope remain world-only.
 
 Quest targets reference generated recipes and support both fixed and choice rewards. Provide `--quest-template-source PATH` when the manifest contains `quest_targets`. Existing quest rewards are preserved and empty slots are filled first. Generated quest SQL and cleanup SQL update only mapped fields.
 
@@ -2116,7 +2131,7 @@ py .\generate_pack.py `
   --seed 424242
 ```
 
-The generated report records resolved encounter order, rank, ItemLevel and RequiredLevel bands, source evidence, quality limits, weights, chances, quantities, set decisions, coverage exclusions, difficulty comparisons, rejected references, and encounter integration validity.
+The generated report records resolved encounter order, rank, ItemLevel and RequiredLevel bands, source evidence, quality limits, weights, chances, quantities, set decisions, coverage exclusions, difficulty comparisons, rejected references, sibling coherence/outlier diagnostics, deterministic distribution audits, reference provenance, gameobject reward-target status, `script_reward_mapping` status, and encounter integration validity.
 
 ---
 
@@ -2424,6 +2439,12 @@ Use [Docs/content_manifest.example.json](Docs/content_manifest.example.json) as 
 ## --quest-template-source PATH
 
 Supplies the AzerothCore `quest_template.sql` source used to verify mapped quest IDs, inspect existing fixed/choice reward slots, and generate reversible updates. It is required only when the manifest contains `quest_targets`.
+
+---
+
+## --gameobject-source PATH, --gameobject-template-source PATH, --gameobject-loot-source PATH
+
+Overrides the automatically discovered `Data/gameobject.sql`, `Data/gameobject_template.sql`, and `Data/gameobject_loot_template.sql` trio. These three options are one logical override and must be supplied together; a partial explicit input fails clearly. With no explicit override, the complete trio is used only when all three files exist. If it is absent, optional gameobject support is `not_exercised` and static map-only candidates remain diagnostics rather than encounter associations.
 
 ---
 
@@ -2825,6 +2846,9 @@ generated-<seed>/
 ├─ encounter_profiles.csv             # bands and stock evidence
 ├─ difficulty_band_comparison.csv     # independent difficulty audit
 ├─ encounter_band_rejections.csv      # excluded stock evidence
+├─ encounter_distribution_audit.csv   # equivalent-profile concentration audit
+├─ encounter_reference_provenance.csv # verified shared-reference parents
+├─ gameobject_reward_targets.csv      # Data1 and association audit
 ├─ set_manifest.csv                   # atomic set decisions
 ├─ quest_rewards.csv                 # targeted manifests only
 │
@@ -2943,6 +2967,7 @@ Includes:
 - loot-pool counts
 - loot attachment counts
 - per-item world and dungeon/raid placement reports
+- equivalent-profile distribution, reference provenance, and gameobject reward-target audits
 - loot chance
 - source paths
 - DBC merge report
@@ -2953,6 +2978,7 @@ Includes:
 - resolved encounter order, ranks, item-level bands, weights, chances, and quantities
 - RequiredLevel bands, LootMode-specific source evidence, encounter integration validity/errors, and fail-closed status
 - coverage exclusions, difficulty-band comparisons, rejected references/outliers, and set atomicity decisions
+- optional gameobject/script source statuses, sibling coherence diagnostics, deterministic distribution audits, and verified-reference provenance
 - quest reward assignments and preserved source values
 - feature-policy flags
 - validation error count
@@ -3154,7 +3180,10 @@ Contains:
 - one pool file per active level bracket
 - world-loot attachment SQL
 - encounter cleanup and encounter SQL only when encounter validation succeeds
-- gameobject-loot attachments when optional gameobject sources prove the target
+- encounter attachments mapped by parent type: `creature` -> `creature_loot_template`, `reference` -> `reference_loot_template`, and `gameobject` -> `gameobject_loot_template`
+- gameobject-loot attachments only when the type-3 object, its `gameobject_template.Data1` loot entry, and source-backed association prove the target
+
+Encounter pools themselves are written to `reference_loot_template`. Generated encounter attachments use the exact parent `Entry`, `Item = 1`, and generated `Reference` predicate. The encounter cleanup file repeats those table-specific predicates, so rollback removes only generator-owned encounter rows. If encounter validation is invalid, neither encounter SQL nor encounter cleanup is added to `sql/IMPORT_ORDER.txt`; item SQL, world-loot SQL, reports, and validation output remain available.
 
 ---
 
@@ -3210,6 +3239,7 @@ Removes:
 - generated item-template rows from this run's entry ranges
 - generated reference pools
 - references to generated pools
+- generated encounter attachments from their owning `creature_loot_template`, `reference_loot_template`, or `gameobject_loot_template` table
 
 This does not automatically revert the client `Item.dbc`.
 
