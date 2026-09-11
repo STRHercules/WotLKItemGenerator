@@ -166,6 +166,22 @@ class BandTests(unittest.TestCase):
 
         self.assertFalse(evidence['reference_provenance'][0]['verified_parent'])
 
+    def test_one_map_normal_parent_is_not_verified_reference_provenance(self):
+        catalog = _loot_catalog(
+            [(9100, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'normal reference')],
+            reference_rows=[(9200, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal gear')],
+            stock_items={5001: _stock_item(5001, 180, 70)},
+        )
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 0, 'loot_mode': 1},
+            {'type': 'creature', 'entry': 9100, 'creature_entry': 10},
+        )
+
+        self.assertEqual(evidence['reference_item_count'], 0)
+        self.assertEqual(evidence['rejected_reference_count'], 1)
+        self.assertFalse(evidence['reference_provenance'][0]['verified_parent'])
+
     def test_loot_mode_keeps_normal_and_heroic_bands_independent(self):
         rows = [
             (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal'),
@@ -506,6 +522,59 @@ class Phase2Tests(unittest.TestCase):
 
         self.assertEqual(evidence['reference_item_count'], 1)
         self.assertEqual(evidence['reference_provenance'][0]['map_id'], 595)
+
+    def test_difficulty_reference_requires_exact_consumer_difficulty(self):
+        catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1, 2))
+        catalog['creature_loot_rows'] = [
+            (9102, 0, 9200, 100.0, 0, 6, 0, 1, 1, 'difficulty 1 reference'),
+        ]
+        catalog['reference_loot_rows'] = [
+            (9200, 5002, 0, 100.0, 0, 6, 0, 1, 1, 'difficulty 1 gear'),
+        ]
+        catalog['reference_loot_entries'] = {9200}
+        catalog['stock_items'][5002] = _stock_item(5002, 200, 80)
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 2, 'loot_mode': 4,
+                      'difficulty_template_source': True},
+            {'type': 'creature', 'entry': 9102,
+             'creature_entry': 9002, 'effective_creature_entry': 9102},
+        )
+
+        self.assertEqual(evidence['reference_item_count'], 0)
+        self.assertFalse(evidence['reference_provenance'][0]['verified_parent'])
+
+    def test_nested_reference_provenance_recomputes_consumer_counts(self):
+        catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1))
+        catalog['creature_templates'][9003]['difficulty_entries'] = [0, 0, 0]
+        catalog['creature_templates'][9010] = {
+            'entry': 9010, 'name': 'Other Boss', 'lootid': 9110,
+            'minlevel': 80, 'maxlevel': 80, 'difficulty_entries': [0, 0, 0],
+        }
+        catalog['creature_maps'][9010] = {595}
+        catalog['creature_loot_entries'].add(9110)
+        catalog['creature_loot_rows'] = [
+            (9102, 0, 9200, 100.0, 0, 2, 0, 1, 1, 'outer'),
+            (9110, 0, 9300, 100.0, 0, 1, 0, 1, 1, 'other direct'),
+        ]
+        catalog['reference_loot_rows'] = [
+            (9200, 0, 9300, 100.0, 0, 2, 0, 1, 1, 'nested'),
+            (9300, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'gear'),
+        ]
+        catalog['reference_loot_entries'] = {9200, 9300}
+        catalog['stock_items'][5002] = _stock_item(5002, 200, 80)
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 1, 'loot_mode': 2,
+                      'difficulty_template_source': True},
+            {'type': 'creature', 'entry': 9102,
+             'creature_entry': 9002, 'effective_creature_entry': 9102},
+        )
+
+        nested = next(row for row in evidence['reference_provenance']
+                      if row['reference_id'] == 9300)
+        self.assertEqual(nested['parent_target_type'], 'reference')
+        self.assertEqual(nested['consumer_map_count'], 2)
 
     def test_raid_difficulty_profiles_resolve_all_four_template_variants(self):
         catalog = _phase2_difficulty_catalog(
