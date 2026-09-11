@@ -103,6 +103,89 @@ Exact output:
 
 ```
 
+## Round 2 fix report
+
+### Scope
+
+Mixed raid profiles now use the final `raid_profile` width limit for sibling candidates, so a width-26 alternate is rejected before it can override a valid profile. If sibling-adjusted evidence is invalid for any remaining reason, the affected profile is marked invalid with its evidence reason. Existing paired ItemLevel/RequiredLevel coherence and rejection metadata are preserved.
+
+### TDD RED
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.Phase2Tests.test_mixed_raid_sibling_width_cannot_become_valid_profile -v
+```
+
+Exact output:
+
+```text
+test_mixed_raid_sibling_width_cannot_become_valid_profile (Tests.test_targeted_content.Phase2Tests.test_mixed_raid_sibling_width_cannot_become_valid_profile) ... FAIL
+
+----------------------------------------------------------------------
+Ran 1 test in 0.001s
+
+FAILED (failures=1)
+```
+
+### Covering verification
+
+Command:
+
+```text
+rtk py -m unittest Tests.test_targeted_content.ProfileTests Tests.test_targeted_content.Phase2Tests Tests.test_targeted_content.SafetyTests -v
+```
+
+Exact result:
+
+```text
+Ran 33 tests in 0.009s
+
+OK
+```
+
+### Full suite
+
+Command:
+
+```text
+rtk py -m unittest discover -s Tests -p "test_*.py"
+```
+
+Exact result:
+
+```text
+Ran 118 tests in 55.952s
+
+OK
+```
+
+### Additional checks
+
+Command:
+
+```text
+rtk py -m py_compile generate_pack.py Tests/test_targeted_content.py
+```
+
+Exact output:
+
+```text
+
+```
+
+Command:
+
+```text
+rtk git diff --check
+```
+
+Exact output:
+
+```text
+
+```
+
 ## Round 1 fix report
 
 ### Scope

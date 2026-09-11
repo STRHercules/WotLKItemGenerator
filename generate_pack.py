@@ -2972,6 +2972,8 @@ def _paired_required_cluster(profile,item_cluster):
 def _sibling_profile_band_kind(profile):
     kinds={encounter.get('kind') for encounter in profile.get('encounters',())
            if encounter.get('kind') in ('boss','trash')}
+    if int(profile.get('map_type',0) or 0)==2 and len(kinds)>1:
+        return 'raid_profile'
     return next(iter(kinds)) if len(kinds)==1 else 'profile'
 
 
@@ -3116,6 +3118,9 @@ def apply_sibling_progression_coherence(profiles):
                     {int(level) for level in profile_evidence.get('rejected_required_levels',())}
                     | {int(level) for level in recomputed.get('rejected_required_levels',())}))
                 profile['evidence']=recomputed
+                if not recomputed.get('valid',True):
+                    profile['valid']=False
+                    profile['invalid_reason']=recomputed.get('invalid_reason') or 'sibling-adjusted evidence is invalid'
                 profile['item_level_min']=recomputed.get('item_level_min')
                 profile['item_level_max']=recomputed.get('item_level_max')
                 profile['required_level_min']=recomputed.get('required_level_min')

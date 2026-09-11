@@ -516,6 +516,46 @@ def _phase2_difficulty_catalog(*, map_id=100, map_type=1, instance_type=1,
 
 
 class Phase2Tests(unittest.TestCase):
+    def test_mixed_raid_sibling_width_cannot_become_valid_profile(self):
+        profiles = [_placement_profile('normal', 'raid', (60, 62), (60, 60)),
+                    _placement_profile('heroic', 'raid', (213, 215), (80, 80))]
+        profiles[0]['map_id'] = profiles[1]['map_id'] = 249
+        profiles[0]['encounters'].append({'id': 'trash', 'kind': 'trash',
+                                          'weight': 1, 'targets': []})
+        for profile in profiles:
+            profile['active_encounter_family'] = 'onyxia'
+        profiles[0]['evidence'].update({
+            'band_source': 'profile_aggregate',
+            'progression_cluster': {'retained': (60, 61, 62)},
+            'candidate_clusters': (
+                {'values': (60, 61, 62), 'width': 2, 'center': 61, 'count': 3},
+                {'values': (213, 226, 239), 'width': 26, 'center': 226,
+                 'count': 3},
+            ),
+            '_candidate_item_records': tuple({
+                'item_level': level, 'required_level': required, 'quality': 4,
+                'source_kind': 'direct',
+            } for level, required in (
+                (60, 60), (61, 60), (62, 60), (213, 80), (226, 80), (239, 80))),
+        })
+        profiles[0]['encounters'][0]['evidence'] = dict(profiles[0]['evidence'])
+        profiles[1]['evidence'].update({
+            'progression_cluster': {'retained': (213, 214, 215)},
+            'candidate_clusters': (
+                {'values': (213, 214, 215), 'width': 2, 'center': 214, 'count': 3},
+            ),
+            '_candidate_item_records': tuple({
+                'item_level': level, 'required_level': 80, 'quality': 4,
+                'source_kind': 'direct',
+            } for level in (213, 214, 215)),
+        })
+
+        g.apply_sibling_progression_coherence(profiles)
+
+        self.assertFalse(profiles[0]['evidence'].get('sibling_support'))
+        self.assertEqual((profiles[0]['item_level_min'], profiles[0]['item_level_max']),
+                         (60, 62))
+
     def test_sibling_alternate_requires_paired_item_and_required_level_evidence(self):
         profiles = [_placement_profile('normal', 'raid', (60, 62), (60, 60)),
                     _placement_profile('heroic', 'raid', (213, 215), (80, 80))]
