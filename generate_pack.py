@@ -4452,12 +4452,88 @@ def _sibling_conflict_is_active(conflict,profiles):
     if len(selected)<2: return False
     if len({int(profile.get('map_id',-1)) for profile in selected})!=1: return False
     families=[_profile_active_families(profile) for profile in selected]
-    return bool(families[0] & families[1])
+    return any(left & right for index,left in enumerate(families)
+               for right in families[index+1:])
+
+
+def build_encounter_distribution_audit(items):
+    groups=defaultdict(list)
+    for item in items or ():
+        equivalence_group=item.get('encounter_equivalence_group')
+        profile=item.get('content_profile')
+        if equivalence_group in (None,'') or profile in (None,''):
+            continue
+        key=(str(equivalence_group),
+             int(item.get('RequiredLevel',item.get('required_level',0)) or 0),
+             int(item.get('ItemLevel',item.get('item_level',0)) or 0),
+             int(item.get('Quality',item.get('quality',0)) or 0))
+        groups[key].append(item)
+
+    rows=[]
+    for (equivalence_group,required_level,item_level,quality),group in sorted(groups.items()):
+        profiles=Counter(item.get('content_profile') for item in group)
+        dominant_profile,dominant_count=max(
+            profiles.items(),key=lambda row:(row[1],str(row[0])))
+        items_placed=len(group)
+        shares=[count/items_placed for count in profiles.values()]
+        entropy=-sum(share*math.log(share) for share in shares if share)
+        eligible_counts=[int(item.get('encounter_eligible_profile_count',0) or 0)
+                         for item in group]
+        eligible_profile_count=max(eligible_counts+[len(profiles)])
+        dominant_share=dominant_count/items_placed
+        warning=(eligible_profile_count>=3 and items_placed>=100 and
+                 (dominant_share>0.80 or len(profiles)<eligible_profile_count))
+        rows.append({'equivalence_group':equivalence_group,
+                     'RequiredLevel':required_level,'ItemLevel':item_level,
+                     'quality':quality,
+                     'eligible_profile_count':eligible_profile_count,
+                     'items_placed':items_placed,
+                     'dominant_profile':dominant_profile,
+                     'dominant_profile_share':dominant_share,
+                     'distribution_entropy':entropy,'warning':warning})
+    return rows
+
+
+def _encounter_reference_provenance_summary(manifest,catalog):
+    rows=[]
+    catalog=catalog or {}
+    rows.extend(catalog.get('_reference_provenance',()))
+    rows.extend(catalog.get('reference_provenance',()))
+    manifest=manifest or {}
+    rows.extend(manifest.get('reference_provenance',()))
+    for profile in manifest.get('profiles',()):
+        evidence=profile.get('evidence') or {}
+        rows.extend(evidence.get('reference_provenance',()))
+        for encounter in profile.get('encounters',()):
+            rows.extend((encounter.get('evidence') or {}).get('reference_provenance',()))
+    return reference_provenance_rows({'_reference_provenance':rows})
+
+
+def _encounter_gameobject_reward_summary(manifest,catalog):
+    manifest=manifest or {}; catalog=catalog or {}
+    if 'gameobject_reward_targets' in manifest:
+        return list(manifest.get('gameobject_reward_targets') or ())
+    return list(catalog.get('gameobject_reward_targets') or ())
 
 
 def validate_encounter_integration(items,manifest,records,catalog):
     profiles={profile['id']:profile for profile in (manifest or {}).get('profiles',())}
     errors=[]; warnings=[]; pool_ids=[]; record_targets=set()
+    distribution_audit=build_encounter_distribution_audit(items)
+    for row in distribution_audit:
+        if row['warning']:
+            warnings.append(
+                f"distribution concentration warning for {row['equivalence_group']} "
+                f"({row['items_placed']} items, {row['eligible_profile_count']} equivalent profiles, "
+                f"dominant share {row['dominant_profile_share']:.2%})")
+        if (row['eligible_profile_count']>=5 and row['items_placed']>=250 and
+                row['dominant_profile_share']>0.95):
+            errors.append(
+                f"distribution concentration failure for {row['equivalence_group']} "
+                f"({row['items_placed']} items, {row['eligible_profile_count']} equivalent profiles, "
+                f"dominant share {row['dominant_profile_share']:.2%})")
+    reference_provenance=_encounter_reference_provenance_summary(manifest,catalog)
+    gameobject_reward_targets=_encounter_gameobject_reward_summary(manifest,catalog)
     sibling_conflicts=list((manifest or {}).get('sibling_conflicts',()))
     for profile in profiles.values():
         sibling_conflicts.extend((profile.get('evidence') or {}).get('sibling_progression_era_conflict',()))
@@ -4487,6 +4563,19 @@ def validate_encounter_integration(items,manifest,records,catalog):
                 errors.append(f'profile {profile["id"]}/{encounter["id"]} ItemLevel range contradicts the profile range')
             if evidence.get('required_level_min') is not None and profile.get('required_level_min') is not None and (int(evidence['required_level_min'])<int(profile['required_level_min']) or int(evidence['required_level_max'])>int(profile.get('required_level_max',evidence['required_level_max']))):
                 errors.append(f'profile {profile["id"]}/{encounter["id"]} RequiredLevel range contradicts the profile range')
+            for target in encounter.get('targets',()):
+                if target.get('type')!='gameobject':
+                    continue
+                gameobject_entry=int(target.get('gameobject_entry',target.get('entry',0)))
+                loot_entry=int(target.get('entry',0))
+                matching=[row for row in gameobject_reward_targets
+                          if int(row.get('map_id',-1))==int(profile.get('map_id',-1))
+                          and int(row.get('gameobject_entry',-1))==gameobject_entry
+                          and int(row.get('loot_entry',-1))==loot_entry
+                          and row.get('difficulty_id','') in ('',profile.get('difficulty_id'))]
+                if not any(row.get('valid') for row in matching):
+                    errors.append(f'gameobject reward target {gameobject_entry}/{loot_entry} '
+                                  f'for {profile["id"]}/{encounter["id"]} is not valid')
     for record in records or ():
         if record.get('profile_id') not in profiles:
             errors.append(f'unknown encounter record profile {record.get("profile_id")}')
@@ -4547,7 +4636,10 @@ def validate_encounter_integration(items,manifest,records,catalog):
             'set_summary':{str(set_id):{'profiles':tuple(sorted(profile_ids)),
                                         'targets':tuple(sorted(set_targets.get(set_id,()))) }
                            for set_id,profile_ids in sorted(set_profiles.items())},
-            'placement_summary':{'count':len(placed_entries)}}
+            'placement_summary':{'count':len(placed_entries)},
+            'distribution_audit':distribution_audit,
+            'reference_provenance':reference_provenance,
+            'gameobject_reward_targets':gameobject_reward_targets}
 
 def assign_plan_encounters(plan,profiles):
     set_profiles=defaultdict(set)

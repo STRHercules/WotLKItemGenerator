@@ -1229,6 +1229,23 @@ class PlacementTests(unittest.TestCase):
 
 
 class SafetyTests(unittest.TestCase):
+    def test_broken_selector_fails_distribution_safety_gate(self):
+        profile = _placement_profile('heroic_a', 'dungeon', (220, 220), (80, 80))
+        manifest = {'profiles': [profile], 'coverage': []}
+        items = [{
+            'entry': 4000 + index, 'RequiredLevel': 80,
+            'ItemLevel': 220, 'Quality': 4,
+            'content_profile': 'heroic_a', 'content_target': 'boss',
+            'encounter_equivalence_group': '80-220',
+            'encounter_eligible_profile_count': 5,
+        } for index in range(300)]
+
+        report = g.validate_encounter_integration(items, manifest, [], {})
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('distribution' in error.lower()
+                            for error in report['errors']))
+
     def test_active_sibling_era_conflict_invalidates_encounter_integration(self):
         profiles = [_placement_profile('normal', 'raid', (60, 76), (58, 60)),
                     _placement_profile('heroic', 'raid', (245, 245), (80, 80))]
@@ -1278,6 +1295,26 @@ class SafetyTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_distribution_audit_reports_entropy_and_dominant_share(self):
+        items = []
+        for index in range(120):
+            items.append({
+                'entry': 3000 + index,
+                'RequiredLevel': 80,
+                'ItemLevel': 220,
+                'Quality': 4,
+                'content_profile': 'heroic_a' if index < 70 else 'heroic_b',
+                'encounter_equivalence_group': '80-220',
+                'encounter_eligible_profile_count': 3,
+            })
+
+        rows = g.build_encounter_distribution_audit(items)
+
+        self.assertEqual(rows[0]['items_placed'], 120)
+        self.assertEqual(rows[0]['dominant_profile'], 'heroic_a')
+        self.assertGreater(rows[0]['distribution_entropy'], 0)
+        self.assertTrue(rows[0]['warning'])
+
     def test_reference_provenance_report_has_fixed_header_and_sorted_rows(self):
         catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1))
         catalog['creature_loot_rows'] = [
