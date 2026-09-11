@@ -2668,7 +2668,9 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
     return manifest
 
 def _clear_encounter_metadata(item):
-    for key in ('content_profile','content_target','target_kind','placement_score','placement_reason','placement_band_source'):
+    for key in ('content_profile','content_target','target_kind','placement_score','placement_reason','placement_band_source',
+                'set_atomic_profile','encounter_equivalence_group','encounter_eligible_profile_count',
+                'encounter_distribution_weight','encounter_distribution_score'):
         item.pop(key,None)
 
 def _encounter_source_evidence(profile,encounter):
@@ -2719,23 +2721,143 @@ def _eligible_encounters(item,profile,only_bosses=False):
             rows.append((encounter,encounter_placement_score(item,profile,encounter,resolved)))
     return rows
 
-def choose_encounter_profile(item,profiles):
+def _encounter_profile_candidates(item,profiles):
     candidates=[]
     for profile in sorted(profiles,key=lambda row:str(row.get('id',''))):
         choices=_eligible_encounters(item,profile)
         if not choices: continue
         encounter,score=min(choices,key=lambda row:row[1])
-        candidates.append((score,profile['id'],profile,encounter))
-    if not candidates: return None
-    score,_,profile,encounter=min(candidates,key=lambda row:(row[0],row[1]))
-    return {'profile':profile,'encounter':encounter,'score':score}
+        candidates.append({'profile':profile,'encounter':encounter,'score':score})
+    return candidates
 
-def _assign_encounter_metadata(item,profile,encounter,score,reason='source evidence'):
+def choose_encounter_profile(item,profiles):
+    candidates=_encounter_profile_candidates(item,profiles)
+    if not candidates: return None
+    return min(candidates,key=lambda row:(row['score'],str(row['profile'].get('id',''))))
+
+def _encounter_candidate_band(candidate):
+    profile=candidate['profile']; encounter=candidate['encounter']
+    resolved=resolve_encounter_order(profile)
+    lo,hi=encounter_item_level_band(profile,encounter,resolved)
+    evidence=_encounter_source_evidence(profile,encounter)
+    required=int(candidate.get('item_required_level',0))
+    req_min=encounter.get('required_level_min',evidence.get('required_level_min',profile.get('required_level_min')))
+    req_max=encounter.get('required_level_max',evidence.get('required_level_max',profile.get('required_level_max')))
+    if req_min is None: req_min=required
+    if req_max is None: req_max=required
+    return (int(lo),int(hi),int(req_min),int(req_max))
+
+def _encounter_candidate_cluster(candidate):
+    profile=candidate['profile']; evidence=profile.get('evidence') or {}
+    active=(evidence.get('progression_cluster') or {}).get('retained',())
+    if active: return tuple(sorted(int(value) for value in active))
+    band=_encounter_candidate_band(candidate)
+    rows=_profile_cluster_rows(profile)
+    if not rows: return ()
+    center=(band[0]+band[1])/2
+    return min(rows,key=lambda row:(abs(row['center']-center),-row['count']))['values']
+
+def _encounter_candidates_are_equivalent(left,right):
+    left_band=_encounter_candidate_band(left); right_band=_encounter_candidate_band(right)
+    left_center=(left_band[0]+left_band[1])/2
+    right_center=(right_band[0]+right_band[1])/2
+    left_required=(left_band[2]+left_band[3])/2
+    right_required=(right_band[2]+right_band[3])/2
+    if abs(left_center-right_center)>15 or abs(left_required-right_required)>3:
+        return False
+    if abs((left_band[1]-left_band[0])-(right_band[1]-right_band[0]))>10:
+        return False
+    left_cluster=_encounter_candidate_cluster(left)
+    right_cluster=_encounter_candidate_cluster(right)
+    if left_cluster and right_cluster:
+        if abs(sum(left_cluster)/len(left_cluster)-sum(right_cluster)/len(right_cluster))>15:
+            return False
+        if abs((left_cluster[-1]-left_cluster[0])-(right_cluster[-1]-right_cluster[0]))>10:
+            return False
+    return True
+
+def encounter_profile_equivalence_group(item,candidates):
+    bands=sorted(set(_encounter_candidate_band(candidate) for candidate in candidates))
+    item_level=int(item.get('ItemLevel',item.get('item_level',0)))
+    required=int(item.get('RequiredLevel',item.get('required_level',0)))
+    normalized=','.join('-'.join(str(value) for value in band) for band in bands) or 'none'
+    return f'item-level={item_level};required-level={required};candidate-band={normalized}'
+
+def encounter_profile_weight(item,profile,encounter):
+    resolved=resolve_encounter_order(profile)
+    lo,hi=encounter_item_level_band(profile,encounter,resolved)
+    evidence=_encounter_source_evidence(profile,encounter)
+    quality=int(item.get('Quality',item.get('quality',0)))
+    weight=1.0
+    quality_counts=evidence.get('quality_counts') or {}
+    dominant=evidence.get('dominant_quality')
+    if dominant is not None and int(dominant)==quality:
+        weight+=0.08
+    elif quality in {int(value) for value in quality_counts}:
+        weight+=0.02
+    if evidence.get('band_source')=='direct' or int(evidence.get('direct_item_count',0) or 0)>0:
+        weight+=0.04
+    elif evidence.get('band_source')=='encounter_reference' or int(evidence.get('reference_item_count',0) or 0)>0:
+        weight+=0.02
+    item_level=int(item.get('ItemLevel',item.get('item_level',0)))
+    center=float(evidence.get('band_center',(lo+hi)/2))
+    fit=1-min(abs(item_level-center)/max(15,hi-lo),1)
+    weight+=0.05*fit
+    if encounter.get('kind')=='boss': weight+=0.04
+    return max(0.75,min(1.25,float(weight)))
+
+def choose_distributed_encounter_profile(item,candidates,stable_key=None):
+    if not candidates: return None
+    group=encounter_profile_equivalence_group(item,candidates)
+    stable=stable_key if stable_key is not None else item.get('entry')
+    scored=[]
+    for candidate in candidates:
+        profile=candidate['profile']
+        weight=encounter_profile_weight(
+            item,profile,candidate['encounter'])
+        fraction=r01(SEED,stable,group,profile['id'],
+                     profile.get('difficulty_id',0),
+                     'encounter-distribution')
+        scored.append((fraction*weight,profile['id'],candidate,
+                       weight,group))
+    score,_,candidate,weight,group=max(
+        scored,key=lambda row:(row[0],row[1]))
+    return {**candidate,'equivalence_group':group,
+            'eligible_profile_count':len(candidates),
+            'distribution_weight':weight,
+            'distribution_score':score}
+
+def _encounter_candidate_groups(item,candidates):
+    groups=[]
+    for candidate in sorted(candidates,key=lambda row:str(row['profile'].get('id',''))):
+        for group in groups:
+            if all(_encounter_candidates_are_equivalent(candidate,member) for member in group):
+                group.append(candidate)
+                break
+        else:
+            groups.append([candidate])
+    return groups
+
+def _choose_distributed_encounter_profile(item,profiles,stable_key=None):
+    candidates=_encounter_profile_candidates(item,profiles)
+    groups=_encounter_candidate_groups(item,candidates)
+    if not groups: return None
+    group=min(groups,key=lambda rows:(
+        min((row['score'],str(row['profile'].get('id',''))) for row in rows),
+        encounter_profile_equivalence_group(item,rows)))
+    return choose_distributed_encounter_profile(item,group,stable_key)
+
+def _assign_encounter_metadata(item,profile,encounter,score,reason='source evidence',distribution=None):
     evidence=_encounter_source_evidence(profile,encounter)
     item['content_profile']=profile['id']; item['content_target']=encounter['id']
     item['target_kind']='raid' if profile.get('map_type')==2 else 'dungeon'
     item['placement_score']=score; item['placement_reason']=reason
     item['placement_band_source']=evidence.get('band_source','explicit')
+    if distribution is not None:
+        item['encounter_equivalence_group']=distribution['equivalence_group']
+        item['encounter_eligible_profile_count']=distribution['eligible_profile_count']
+        item['encounter_distribution_weight']=distribution['distribution_weight']
+        item['encounter_distribution_score']=distribution['distribution_score']
     if item.get('set_id') or item.get('itemset'):
         item['set_atomic_profile']=profile['id']
 
@@ -2755,11 +2877,20 @@ def assign_default_encounter_items(items,manifest):
             choices=[_eligible_encounters(item,profile,only_bosses=True) for item in members]
             if not all(choices): continue
             best_score=max(min(score for _,score in rows) for rows in choices)
-            options.append((best_score,profile['id'],profile,choices))
+            encounter,score=min(choices[0],key=lambda row:row[1])
+            options.append({'profile':profile,'encounter':encounter,
+                            'score':best_score,'choices':choices})
         if not options:
             for item in members: _clear_encounter_metadata(item)
             continue
-        _,_,profile,choices=min(options,key=lambda row:(row[0],row[1]))
+        option_groups=_encounter_candidate_groups(members[0],options)
+        common_group=min(option_groups,key=lambda rows:(
+            min((row['score'],str(row['profile'].get('id',''))) for row in rows),
+            encounter_profile_equivalence_group(members[0],rows)))
+        distribution=choose_distributed_encounter_profile(
+            members[0],common_group,stable_key=set_id)
+        selected=next(row for row in options if row['profile']['id']==distribution['profile']['id'])
+        profile=selected['profile']; choices=selected['choices']
         resolved=resolve_encounter_order(profile)
         bosses=[encounter for encounter in resolved if encounter.get('kind')=='boss' and encounter.get('targets')]
         ordered_members=sorted(members,key=lambda item:(SET_SLOT_ORDER.index(item.get('slot')) if item.get('slot') in SET_SLOT_ORDER else 99,item.get('entry')))
@@ -2771,14 +2902,16 @@ def assign_default_encounter_items(items,manifest):
                 break
             desired=min(index,len(bosses)-1)
             encounter=min(candidates,key=lambda row:(abs(bosses.index(row)-desired),bosses.index(row),row['id']))
-            _assign_encounter_metadata(item,profile,encounter,eligible[encounter['id']][1],f'atomic set {set_id}')
+            _assign_encounter_metadata(item,profile,encounter,eligible[encounter['id']][1],
+                                       f'atomic set {set_id}',distribution)
 
     for item in sorted(ordinary,key=lambda row:h64(SEED,row.get('entry'),'default_encounter_profile')):
-        choice=choose_encounter_profile(item,profiles)
+        choice=_choose_distributed_encounter_profile(item,profiles)
         if choice is None:
             _clear_encounter_metadata(item)
             continue
-        _assign_encounter_metadata(item,choice['profile'],choice['encounter'],choice['score'])
+        _assign_encounter_metadata(item,choice['profile'],choice['encounter'],choice['score'],
+                                   distribution=choice)
     return items
 
 def validate_targeted_source_membership(manifest,catalog):

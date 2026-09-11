@@ -1067,6 +1067,74 @@ class PlacementTests(unittest.TestCase):
 
         self.assertNotIn('content_profile', item)
 
+    def test_equivalent_profiles_receive_deterministic_distribution(self):
+        profiles = [_placement_profile(f'heroic_{index}', 'dungeon',
+                                       (220, 220), (80, 80))
+                    for index in range(4)]
+        manifest = _placement_manifest(profiles)
+        items = [{'entry': 1000 + index, 'ItemLevel': 220,
+                  'RequiredLevel': 80, 'Quality': 4}
+                 for index in range(300)]
+
+        g.assign_default_encounter_items(items, manifest)
+        first = {item['entry']: item['content_profile'] for item in items}
+
+        reversed_items = [dict(item) for item in reversed(items)]
+        for item in reversed_items:
+            for key in ('content_profile', 'content_target', 'target_kind',
+                        'placement_score', 'placement_reason',
+                        'placement_band_source', 'set_atomic_profile',
+                        'encounter_equivalence_group',
+                        'encounter_eligible_profile_count',
+                        'encounter_distribution_weight',
+                        'encounter_distribution_score'):
+                item.pop(key, None)
+        g.assign_default_encounter_items(reversed_items, manifest)
+        second = {item['entry']: item['content_profile'] for item in reversed_items}
+
+        self.assertGreater(len(set(first.values())), 1)
+        self.assertEqual(first, second)
+
+    def test_quality_evidence_is_soft_not_a_dungeon_raid_rule(self):
+        dungeon = _placement_profile('dungeon', 'dungeon', (220, 220), (80, 80),
+                                     qualities=(3, 4))
+        raid = _placement_profile('raid', 'raid', (220, 220), (80, 80),
+                                  qualities=(4,))
+        dungeon['evidence']['quality_counts'] = {3: 20, 4: 2}
+        dungeon['evidence']['dominant_quality'] = 3
+        raid['evidence']['quality_counts'] = {4: 20}
+        raid['evidence']['dominant_quality'] = 4
+        manifest = _placement_manifest([dungeon, raid])
+
+        items = [{'entry': 2000 + index, 'ItemLevel': 220,
+                  'RequiredLevel': 80, 'Quality': 3 if index < 100 else 4}
+                 for index in range(200)]
+        g.assign_default_encounter_items(items, manifest)
+
+        rare_destinations = {item['content_profile'] for item in items[:100]}
+        epic_destinations = {item['content_profile'] for item in items[100:]}
+        self.assertIn('dungeon', rare_destinations)
+        self.assertIn('raid', epic_destinations)
+
+    def test_distributed_choice_exposes_bounded_metadata(self):
+        profiles = [_placement_profile(f'heroic_{index}', 'dungeon',
+                                       (220, 220), (80, 80))
+                    for index in range(2)]
+        item = {'entry': 3000, 'ItemLevel': 220,
+                'RequiredLevel': 80, 'Quality': 4}
+        candidates = [g.choose_encounter_profile(item, [profile])
+                      for profile in profiles]
+
+        group = g.encounter_profile_equivalence_group(item, candidates)
+        choice = g.choose_distributed_encounter_profile(item, candidates)
+
+        self.assertIsInstance(group, str)
+        self.assertEqual(choice['equivalence_group'], group)
+        self.assertEqual(choice['eligible_profile_count'], 2)
+        self.assertGreaterEqual(choice['distribution_weight'], 0.75)
+        self.assertLessEqual(choice['distribution_weight'], 1.25)
+        self.assertIn('distribution_score', choice)
+
     def test_set_members_share_one_profile(self):
         items = _set_items(5)
         manifest = _placement_manifest([
