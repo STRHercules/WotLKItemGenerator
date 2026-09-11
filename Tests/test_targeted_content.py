@@ -1295,6 +1295,40 @@ class SafetyTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_phase3_reports_have_fixed_headers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = g.write_placement_reports(
+                [], {'pools': [], 'attachments': []}, [],
+                pathlib.Path(directory),
+                {'profiles': [], 'distribution_audit': [],
+                 'reference_provenance': [],
+                 'gameobject_reward_targets': []}, {})
+
+            distribution_header = paths['distribution'].read_text(
+                encoding='utf-8').splitlines()[0]
+            provenance_header = paths['reference_provenance'].read_text(
+                encoding='utf-8').splitlines()[0]
+            gameobject_header = paths['gameobject_rewards'].read_text(
+                encoding='utf-8').splitlines()[0]
+
+        self.assertIn('dominant_profile_share', distribution_header)
+        self.assertIn('verified_parent', provenance_header)
+        self.assertIn('association_method', gameobject_header)
+
+    def test_placement_report_has_distribution_metadata_columns(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = g.write_placement_reports(
+                [], {'pools': [], 'attachments': []}, [],
+                pathlib.Path(directory), {'profiles': []}, {})
+            header = paths['encounter'].read_text(
+                encoding='utf-8').splitlines()[0]
+
+        for field in ('encounter_equivalence_group',
+                      'encounter_eligible_profile_count',
+                      'encounter_distribution_weight',
+                      'encounter_distribution_score'):
+            self.assertIn(field, header)
+
     def test_distribution_audit_reports_entropy_and_dominant_share(self):
         items = []
         for index in range(120):
@@ -1723,6 +1757,25 @@ INSERT INTO `quest_template` VALUES
         items = g.finish_items(g.build_runtime_skeletons())
 
         self.assertEqual(g.validate(items), [])
+
+    def test_output_sql_has_gameobject_safety_contract(self):
+        self._configure_example()
+        items = g.finish_items(g.build_runtime_skeletons())
+        with tempfile.TemporaryDirectory() as directory:
+            old_out, old_sqldir = g.OUT, g.SQLDIR
+            g.OUT = pathlib.Path(directory) / 'generated'
+            g.SQLDIR = g.OUT / 'sql'
+            try:
+                g.write_outputs(items)
+                collision = (g.OUT / '00_PREIMPORT_COLLISION_CHECK.sql').read_text()
+                schema = (g.OUT / '00_SCHEMA_CHECK.sql').read_text()
+                rollback = (g.OUT / '99_REMOVE_GENERATED_ITEMS.sql').read_text()
+            finally:
+                g.OUT, g.SQLDIR = old_out, old_sqldir
+
+        self.assertIn('generated_encounter_gameobject_attachment_collision_count', collision)
+        self.assertIn('SHOW COLUMNS FROM `acore_world`.`gameobject_loot_template`', schema)
+        self.assertIn('DELETE FROM `gameobject_loot_template`', rollback)
 
 
 class LootTests(unittest.TestCase):

@@ -6101,12 +6101,16 @@ def build_encounter_item_placement_rows(items,records,manifest,source_catalog=No
                      'item_level_min':info['band'][0],'item_level_max':info['band'][1],
                      'profile_required_level_min':profile.get('required_level_min',''),
                      'profile_required_level_max':profile.get('required_level_max',''),
-                     'band_source':item.get('placement_band_source') or evidence.get('band_source','explicit'),
-                     'band_source_item_count':evidence.get('item_count',''),
-                     'band_center':evidence.get('band_center',''),
-                     'placement_score':json.dumps(item.get('placement_score',''),separators=(',',':')),
-                     'placement_reason':item.get('placement_reason',''),
-                     'set_id':set_id or '', 'set_name':item.get('set_name',''),
+                      'band_source':item.get('placement_band_source') or evidence.get('band_source','explicit'),
+                      'band_source_item_count':evidence.get('item_count',''),
+                      'band_center':evidence.get('band_center',''),
+                      'placement_score':json.dumps(item.get('placement_score',''),separators=(',',':')),
+                      'placement_reason':item.get('placement_reason',''),
+                      'encounter_equivalence_group':item.get('encounter_equivalence_group',''),
+                      'encounter_eligible_profile_count':item.get('encounter_eligible_profile_count',''),
+                      'encounter_distribution_weight':item.get('encounter_distribution_weight',''),
+                      'encounter_distribution_score':item.get('encounter_distribution_score',''),
+                      'set_id':set_id or '', 'set_name':item.get('set_name',''),
                      'set_atomic_profile':item.get('set_atomic_profile') or (profile['id'] if set_id else ''),
                      'target_count':len(target_entries),'target_entries':'; '.join(target_entries),
                      'target_names':'; '.join(target_names),'targets':'; '.join(target_details)})
@@ -6117,7 +6121,7 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
     world_path=output_dir/'world_item_placements.csv'; world_fields=['entry','name','required_level','item_level','quality','destination','pool_id','pool_bracket','pool_level_min','pool_level_max','world_reference_count','world_reference_entries','world_loot_levels','chance']
     with world_path.open('w',encoding='utf-8',newline='') as f:
         writer=csv.DictWriter(f,fieldnames=world_fields); writer.writeheader(); writer.writerows(build_world_item_placement_rows(items,loot))
-    encounter_path=output_dir/'dungeon_raid_item_placements.csv'; encounter_fields=['entry','name','required_level','item_level','quality','profile_id','map_id','difficulty_id','instance','destination','encounter','encounter_kind','encounter_name','pool_id','loot_mode','chance','quantity','item_level_min','item_level_max','profile_required_level_min','profile_required_level_max','band_source','band_source_item_count','band_center','placement_score','placement_reason','set_id','set_name','set_atomic_profile','target_count','target_entries','target_names','targets']
+    encounter_path=output_dir/'dungeon_raid_item_placements.csv'; encounter_fields=['entry','name','required_level','item_level','quality','profile_id','map_id','difficulty_id','instance','destination','encounter','encounter_kind','encounter_name','pool_id','loot_mode','chance','quantity','item_level_min','item_level_max','profile_required_level_min','profile_required_level_max','band_source','band_source_item_count','band_center','placement_score','placement_reason','encounter_equivalence_group','encounter_eligible_profile_count','encounter_distribution_weight','encounter_distribution_score','set_id','set_name','set_atomic_profile','target_count','target_entries','target_names','targets']
     with encounter_path.open('w',encoding='utf-8',newline='') as f:
         writer=csv.DictWriter(f,fieldnames=encounter_fields); writer.writeheader(); writer.writerows(build_encounter_item_placement_rows(items,records,manifest,source_catalog))
     manifest=manifest or {}; profiles=manifest.get('profiles',())
@@ -6172,6 +6176,22 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
                              'entry':item.get('entry',''),'name':item.get('name',''),'slot':item.get('slot',''),
                              'profile_id':item.get('content_profile',''),'encounter':item.get('content_target',''),
                              'atomic_profile':item.get('set_atomic_profile') or item.get('content_profile','')})
+    distribution_path=output_dir/'encounter_distribution_audit.csv'
+    distribution_fields=['equivalence_group','RequiredLevel','ItemLevel','quality',
+                         'eligible_profile_count','items_placed','dominant_profile',
+                         'dominant_profile_share','distribution_entropy','warning']
+    distribution_rows=(manifest or {}).get('distribution_audit')
+    if distribution_rows is None:
+        distribution_rows=build_encounter_distribution_audit(items)
+    distribution_rows=sorted(distribution_rows,
+                             key=lambda row:(str(row.get('equivalence_group','')),
+                                              int(row.get('RequiredLevel',0) or 0),
+                                              int(row.get('ItemLevel',0) or 0),
+                                              int(row.get('quality',0) or 0)))
+    with distribution_path.open('w',encoding='utf-8',newline='') as f:
+        writer=csv.DictWriter(f,fieldnames=distribution_fields); writer.writeheader()
+        writer.writerows({field:row.get(field,'') for field in distribution_fields}
+                         for row in distribution_rows)
     reward_path=output_dir/'gameobject_reward_targets.csv'
     reward_fields=['profile_id','map_id','difficulty_id','encounter_id','encounter_name',
                    'gameobject_entry','gameobject_name','loot_entry','spawn_guid','spawn_mask',
@@ -6179,8 +6199,16 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
                    'valid','invalid_reason']
     with reward_path.open('w',encoding='utf-8',newline='') as f:
         writer=csv.DictWriter(f,fieldnames=reward_fields); writer.writeheader()
+        reward_rows=list((manifest or {}).get('gameobject_reward_targets') or ())
+        if not reward_rows and source_catalog:
+            reward_rows=list(source_catalog.get('gameobject_reward_targets') or ())
+        reward_rows.sort(key=lambda row:(str(row.get('profile_id','')),
+                                         int(row.get('map_id',0) or 0),
+                                         int(row.get('difficulty_id',0) or 0),
+                                         int(row.get('gameobject_entry',0) or 0),
+                                         int(row.get('spawn_guid',0) or 0)))
         writer.writerows({field:row.get(field,'') for field in reward_fields}
-                         for row in (manifest or {}).get('gameobject_reward_targets',()))
+                         for row in reward_rows)
     reference_provenance_path=output_dir/'encounter_reference_provenance.csv'
     reference_provenance_fields=['reference_id','parent_target_type','parent_target_entry',
                                  'effective_target_entry','parent_loot_id','map_id',
@@ -6203,15 +6231,22 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
             seen_provenance.add(key); unique_provenance.append(normalized)
     def provenance_sort_value(value):
         return (0,int(value)) if value not in ('',None) and str(value).lstrip('-').isdigit() else (1,str(value))
+    provenance_sort_fields=('reference_id','map_id','difficulty_id',
+                            'parent_target_type','parent_target_entry',
+                            'effective_target_entry','parent_loot_id',
+                            'parent_loot_mode','reference_loot_mode',
+                            'consumer_map_count','consumer_profile_count',
+                            'verified_parent')
     unique_provenance.sort(key=lambda row:tuple(
-        provenance_sort_value(row[field]) if field!='parent_target_type' else (0,str(row[field]))
-        for field in reference_provenance_fields))
+        provenance_sort_value(row[field]) if field not in ('parent_target_type','verified_parent')
+        else (0,str(row[field])) for field in provenance_sort_fields))
     with reference_provenance_path.open('w',encoding='utf-8',newline='') as f:
         writer=csv.DictWriter(f,fieldnames=reference_provenance_fields); writer.writeheader()
         writer.writerows(unique_provenance)
     return {'world':world_path,'encounter':encounter_path,'coverage':coverage_path,'profiles':profile_path,
-            'difficulty_comparison':comparison_path,'rejections':rejection_path,'sets':set_path,
-            'gameobject_rewards':reward_path,'reference_provenance':reference_provenance_path}
+             'difficulty_comparison':comparison_path,'rejections':rejection_path,'sets':set_path,
+             'distribution':distribution_path,'gameobject_rewards':reward_path,
+             'reference_provenance':reference_provenance_path}
 
 def render_encounter_loot_sql(records):
     columns=',\n    '.join(f'`{column}`' for column in LOOT_SQL_COLUMNS)
@@ -6315,7 +6350,9 @@ def write_outputs(items,ui=None,name_changes=()):
     encounter_manifest=CONTENT_MANIFEST if CONTENT_MANIFEST is not None else DEFAULT_ENCOUNTER_MANIFEST
     encounter_status={'enabled':encounter_manifest is not None,'valid':True,'errors':[],'warnings':[],
                       'profile_count':0,'record_count':0,'pool_ids':(),
-                      'placement_summary':{'count':0},'set_summary':{}}
+                      'placement_summary':{'count':0},'set_summary':{},
+                      'distribution_audit':[],'reference_provenance':[],
+                      'gameobject_reward_targets':[]}
     if ui: ui.status('Mapping world-loot references')
     world_references=load_world_loot_references(WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE)
     if ui: ui.progress(1,10,current='World-loot references mapped')
@@ -6337,7 +6374,8 @@ def write_outputs(items,ui=None,name_changes=()):
         except Exception as exc:
             encounter_status.update({'enabled':True,'valid':False,'errors':[str(exc)],'warnings':[],
                                      'record_count':0,'pool_ids':(),
-                                     'placement_summary':{'count':0},'set_summary':{}})
+                                     'placement_summary':{'count':0},'set_summary':{},
+                                     'distribution_audit':build_encounter_distribution_audit(items)})
             for item in items: _clear_encounter_metadata(item)
             encounter_loot_records=[]
             if ui: ui.status(f'Encounter integration disabled: {exc}')
@@ -6491,9 +6529,13 @@ def write_outputs(items,ui=None,name_changes=()):
     if not encounter_csv.exists():
         with encounter_csv.open('w',encoding='utf-8',newline='') as f:
             csv.writer(f).writerow(['profile_id','encounter','rank','pool_id','item_count','chance','quantity','loot_mode','item_level_min','item_level_max','parent_type','parent_entry'])
+    report_manifest=dict(encounter_manifest or {})
+    report_manifest['distribution_audit']=encounter_status.get('distribution_audit') or build_encounter_distribution_audit(items)
+    report_manifest['reference_provenance']=encounter_status.get('reference_provenance') or report_manifest.get('reference_provenance',())
+    report_manifest['gameobject_reward_targets']=encounter_status.get('gameobject_reward_targets') or report_manifest.get('gameobject_reward_targets',())
     placement_reports=write_placement_reports(
         items,loot,encounter_loot_records,
-        OUT,CONTENT_MANIFEST if CONTENT_MANIFEST is not None else DEFAULT_ENCOUNTER_MANIFEST,
+        OUT,report_manifest,
         ENCOUNTER_SOURCE_CATALOG)
     if ui: ui.status('Placement reports written for world and dungeon/raid loot')
 
@@ -6546,27 +6588,23 @@ def write_outputs(items,ui=None,name_changes=()):
         'SELECT `Entry`,`Item`,`Reference`,`Comment` FROM `reference_loot_template`\nWHERE '+attachment_conditions+'\nORDER BY `Entry`,`Item`;\n\n'
         'SELECT COUNT(*) AS generated_encounter_pool_collision_count\nFROM `reference_loot_template`\nWHERE '+encounter_pool_filter+' OR '+encounter_pool_reference_filter+';\n\n'
         'SELECT COUNT(*) AS generated_encounter_creature_attachment_collision_count\nFROM `creature_loot_template`\nWHERE '+encounter_creature_conditions+';\n\n'
-        'SELECT COUNT(*) AS generated_encounter_reference_attachment_collision_count\nFROM `reference_loot_template`\nWHERE '+encounter_reference_conditions+';\n',encoding='utf-8')
+         'SELECT COUNT(*) AS generated_encounter_reference_attachment_collision_count\nFROM `reference_loot_template`\nWHERE '+encounter_reference_conditions+';\n\n'
+         'SELECT COUNT(*) AS generated_encounter_gameobject_attachment_collision_count\nFROM `gameobject_loot_template`\nWHERE '+encounter_gameobject_conditions+';\n'
+         'SELECT `Entry`,`Item`,`Reference`,`Comment` FROM `gameobject_loot_template`\nWHERE '+encounter_gameobject_conditions+'\nORDER BY `Entry`,`Item`;\n',encoding='utf-8')
     (OUT/'99_REMOVE_GENERATED_ITEMS.sql').write_text(
         'START TRANSACTION;\n'
         f'DELETE FROM `reference_loot_template` WHERE `Entry` IN ({pool_id_list}) OR `Reference` IN ({pool_id_list}) OR `Entry` IN ({encounter_pool_id_list}) OR `Reference` IN ({encounter_pool_id_list});\n'
         'DELETE FROM `creature_loot_template` WHERE '+encounter_creature_conditions+';\n'
-        'DELETE FROM `reference_loot_template` WHERE '+encounter_reference_conditions+';\n'
+         'DELETE FROM `reference_loot_template` WHERE '+encounter_reference_conditions+';\n'
+         'DELETE FROM `gameobject_loot_template` WHERE '+encounter_gameobject_conditions+';\n'
         +quest_restore_sql
         + 'DELETE FROM `item_template` WHERE '+entry_filter+';\n'
         'COMMIT;\n',encoding='utf-8')
-    with (OUT/'00_PREIMPORT_COLLISION_CHECK.sql').open('a',encoding='utf-8') as f:
-        f.write(
-            '\nSELECT COUNT(*) AS generated_encounter_gameobject_attachment_collision_count\n'
-            'FROM `gameobject_loot_template`\nWHERE '+encounter_gameobject_conditions+';\n'
-            'SELECT `Entry`,`Item`,`Reference`,`Comment` FROM `gameobject_loot_template`\nWHERE '+encounter_gameobject_conditions+'\nORDER BY `Entry`,`Item`;\n'
-        )
-    with (OUT/'99_REMOVE_GENERATED_ITEMS.sql').open('a',encoding='utf-8') as f:
-        f.write('START TRANSACTION;\nDELETE FROM `gameobject_loot_template` WHERE '+encounter_gameobject_conditions+';\nCOMMIT;\n')
     (OUT/'00_SCHEMA_CHECK.sql').write_text(
         "SHOW COLUMNS FROM `acore_world`.`item_template`;\n"
         "SHOW COLUMNS FROM `acore_world`.`reference_loot_template`;\n"
         "SHOW COLUMNS FROM `acore_world`.`creature_loot_template`;\n"
+        "SHOW COLUMNS FROM `acore_world`.`gameobject_loot_template`;\n"
         +("SHOW COLUMNS FROM `acore_world`.`quest_template`;\n" if quest_records else ''),encoding='utf-8')
 
     q=Counter(QUALITY_NAME[x['Quality']] for x in items); roles=Counter(x['role'] for x in items); kinds=Counter(x['kind'] for x in items)
@@ -6587,8 +6625,15 @@ def write_outputs(items,ui=None,name_changes=()):
         (feature=='chance-on-hit' and x.get('special_effect_feature')=='chance-on-hit') or
         (feature=='on-use' and x.get('special_effect_feature')=='on-use') or
         (feature=='socket-bonuses' and x.get('socketBonus')) or
-        (feature=='disenchant' and x.get('DisenchantID'))
-    )) for feature in NEW_FEATURES}
+         (feature=='disenchant' and x.get('DisenchantID'))
+     )) for feature in NEW_FEATURES}
+    source_audit=ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}) if ENCOUNTER_SOURCE_CATALOG else {}
+    encounter_source_statuses={
+        'gameobject.sql':'FOUND' if GAMEOBJECT_SOURCE_PATHS else 'not configured',
+        'gameobject_template.sql':'FOUND' if GAMEOBJECT_SOURCE_PATHS else 'not configured',
+        'gameobject_loot_template.sql':'FOUND' if GAMEOBJECT_SOURCE_PATHS else 'not configured',
+        'script_reward_mapping':'EXERCISED' if source_audit.get('script_reward_mapping')=='exercised' else 'not_exercised',
+    }
     report={'seed':SEED,'requested_number':TARGET_ITEM_COUNT,'selected_classes':generated_class_names,
             'total_items':len(items),'entry_min':min(x['entry'] for x in items),'entry_max':max(x['entry'] for x in items),
             'unique_entries':len({x['entry'] for x in items}),'unique_names':len({x['name'] for x in items}),
@@ -6618,16 +6663,18 @@ def write_outputs(items,ui=None,name_changes=()):
             'encounter_loot_profiles':[{'profile_id':record['profile_id'],'order':record['order'],'encounters':record['encounters'],
                                        'pool_row_count':len(record['pool_rows']),'attachment_count':len(record['attachments'])}
                                       for record in encounter_loot_records],
-            'generated_encounter_pool_ids':encounter_pool_ids,
-            'encounter_integration_enabled':encounter_status['enabled'],
-            'encounter_integration_valid':encounter_status['valid'],
-            'encounter_validation_errors':encounter_status['errors'],
+             'generated_encounter_pool_ids':encounter_pool_ids,
+             'encounter_integration_enabled':encounter_status['enabled'],
+             'encounter_integration_valid':encounter_status['valid'],
+             'encounter_source_statuses':encounter_source_statuses,
+             'encounter_validation_errors':encounter_status['errors'],
             'encounter_validation_warnings':encounter_status['warnings'],
             'encounter_validation_summary':{key:value for key,value in encounter_status.items()
                                             if key not in ('errors','warnings')},
             'encounter_source_audit':None if ENCOUNTER_SOURCE_CATALOG is None else {
                 'source_paths':[_portable_source_path(path) for path in (ENCOUNTER_SOURCE_PATHS or ())],
                 'gameobject_source_paths':[_portable_source_path(path) for path in (GAMEOBJECT_SOURCE_PATHS or ())],
+                'source_statuses':encounter_source_statuses,
                 'map_count':len(ENCOUNTER_SOURCE_CATALOG['maps']),'map_difficulty_count':len(ENCOUNTER_SOURCE_CATALOG['map_difficulties']),
                 'creature_template_count':len(ENCOUNTER_SOURCE_CATALOG['creature_templates']),'spawn_creature_count':len(ENCOUNTER_SOURCE_CATALOG['creature_maps']),
                 'instance_encounter_count':len(ENCOUNTER_SOURCE_CATALOG['instance_encounters']),
@@ -6665,11 +6712,14 @@ Generated loot pools: `{len(loot['pools'])}` (`{len(loot['pool_rows'])}` item ro
 World-loot attachments: `{len(loot['attachments'])}` at `{LOOT_CHANCE}%`<br>
 Loot destinations: `world` plus `{len(encounter_pool_ids)}` dungeon/raid encounter pools<br>
 Dungeon/raid LootMode: `1 << MapDifficulty difficulty_id`<br>
-Placement reports: `world_item_placements.csv`, `dungeon_raid_item_placements.csv`, `encounter_profile_coverage.csv`, `encounter_profiles.csv`, `difficulty_band_comparison.csv`, `encounter_band_rejections.csv`, `set_manifest.csv`<br>
+Placement reports: `world_item_placements.csv`, `dungeon_raid_item_placements.csv`, `encounter_profile_coverage.csv`, `encounter_profiles.csv`, `difficulty_band_comparison.csv`, `encounter_band_rejections.csv`, `encounter_distribution_audit.csv`, `encounter_reference_provenance.csv`, `gameobject_reward_targets.csv`, `set_manifest.csv`<br>
 World-loot source: `{_portable_source_path(WORLD_LOOT_SOURCE)}`<br>
 Reference-loot source: `{_portable_source_path(REFERENCE_LOOT_SOURCE)}`<br>
 Dungeon/raid source files: `{', '.join(_portable_source_path(path) for path in (ENCOUNTER_SOURCE_PATHS or ())) or 'none'}`<br>
 Optional gameobject source files: `{', '.join(_portable_source_path(path) for path in (GAMEOBJECT_SOURCE_PATHS or ())) or 'none'}`<br>
+Gameobject source discovery: the complete optional `gameobject.sql`, `gameobject_template.sql`, and `gameobject_loot_template.sql` trio is used when present; `gameobject_template.Data1` supplies the loot relationship.<br>
+Gameobject association methods: `explicit_instance_mapping`, `script_summon`, and diagnostic `static_spawn` rows; static map-only rows are never guessed as boss rewards.<br>
+Script reward mapping: `{encounter_source_statuses['script_reward_mapping']}`<br>
 Item-template source: `{_portable_source_path(ITEM_TEMPLATE_SOURCE)}`<br>
 Client Item.dbc sources: `{', '.join(_portable_source_path(path) for path in ITEM_DBC_SOURCES)}`<br>
 ItemSet.dbc source: `{_portable_source_path(ITEM_SET_DBC_SOURCE)}`<br>
@@ -6702,6 +6752,7 @@ Target: AzerothCore / WotLK 3.3.5a
 - Add `--item-dbc-overwrite` only when intentionally replacing conflicting generated-ID rows in that source DBC.
 - `py generate_pack.py --disable sets chance-on-hit` - disable selected new features; `effects` disables all three item spell triggers and `all-new` disables every new feature.
 - Encounter integration is source-backed and fail-closed. If validation is invalid, diagnostic reports remain available but encounter SQL is omitted from `sql/IMPORT_ORDER.txt`; item and world-loot output still completes.
+- If encounter integration is invalid, encounter cleanup is omitted from `sql/IMPORT_ORDER.txt` together with encounter SQL; item SQL, world-loot SQL, audit reports, and `validation_report.json` remain available.
 - `--set-rate`, `--set-min-level`, `--set-size` - tune complete class/role set generation; five pieces is the default.
 - `--spell-effect-rate-multiplier`, `--proc-rate-multiplier`, `--on-use-rate-multiplier`, `--effect-ilvl-window`, `--max-special-effects` - tune stock effect-package selection; low-level effects still obey the stricter 5/10/15 progression windows.
 - `--socket-bonus-rate`, `--disenchant-rate` - tune validated stock socket and disenchant assignment.
