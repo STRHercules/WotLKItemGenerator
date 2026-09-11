@@ -4482,7 +4482,7 @@ def build_encounter_distribution_audit(items):
         eligible_profile_count=max(eligible_counts+[len(profiles)])
         dominant_share=dominant_count/items_placed
         warning=(eligible_profile_count>=3 and items_placed>=100 and
-                 (dominant_share>0.80 or len(profiles)<eligible_profile_count))
+                 dominant_share>0.80)
         rows.append({'equivalence_group':equivalence_group,
                      'RequiredLevel':required_level,'ItemLevel':item_level,
                      'quality':quality,

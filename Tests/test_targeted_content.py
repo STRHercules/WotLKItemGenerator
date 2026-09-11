@@ -1313,7 +1313,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(rows[0]['items_placed'], 120)
         self.assertEqual(rows[0]['dominant_profile'], 'heroic_a')
         self.assertGreater(rows[0]['distribution_entropy'], 0)
-        self.assertTrue(rows[0]['warning'])
+        self.assertFalse(rows[0]['warning'])
+
+        concentrated = [dict(item, content_profile='heroic_a' if index < 100
+                             else 'heroic_b')
+                        for index, item in enumerate(items)]
+        concentrated_row = g.build_encounter_distribution_audit(concentrated)[0]
+        self.assertTrue(concentrated_row['warning'])
 
     def test_reference_provenance_report_has_fixed_header_and_sorted_rows(self):
         catalog = _phase2_difficulty_catalog(difficulty_ids=(0, 1))
