@@ -110,14 +110,14 @@ The inspected CSV headers included the required evidence and distribution fields
 Additional command-level checks from the harness:
 
 ```text
-placement_bad_item_level=0
-placement_bad_required_level=0
-legendary_trash=0
-set_atomic_bad=0
+placement_bad_item_level=0 (not exercised: 0 encounter placement rows)
+placement_bad_required_level=0 (not exercised: 0 encounter placement rows)
+legendary_trash=0 (not exercised: 0 encounter placement rows)
+set_atomic_bad=0 (not demonstrated for encounter placement: no encounter placement rows)
 equivalent_audit_multi_destination=0
 ```
 
-The first four values are clean. `equivalent_audit_multi_destination=0` is not treated as a passing distribution-placement result because fail-closed encounter validation produced zero encounter placement rows; no equivalent destinations could be placed after the `(650, 1)` coverage failure.
+The first four values are not clean-result claims: the first three are not exercised because the placement CSV has zero rows, and set atomicity is not demonstrated for encounter placement for the same reason. The empty result does not prove that no unsafe placements, Legendary trash assignments, or split encounter sets exist. `encounter_band_rejections.csv`, profile/difficulty reports, and the provenance/gameobject audits remain source-backed diagnostics of rejected candidates and profile construction; they do not substitute for placement-level evidence. Any placement safety result requires valid encounter integration with nonzero placement rows. `equivalent_audit_multi_destination=0` is not treated as a passing distribution-placement result because fail-closed encounter validation produced zero encounter placement rows; no equivalent destinations could be placed after the `(650, 1)` coverage failure.
 
 Source statuses:
 
@@ -146,6 +146,37 @@ The generated directory and zip were unchanged. No `Data/` files were written.
 - The Task 2 parked optional scanner path/depth false-positive was not changed.
 - These are static/source-backed and command-level checks only. They do not claim live AzerothCore server imports, client loading, drop behavior, or gameplay behavior.
 
-## Final boundary before commit
+## Final boundary before Round 1
 
 Only `Architecture.md` was a tracked worktree modification from implementation; `task-8-report.md` is the requested acceptance artifact under `.superpowers/`. No generator behavior, SQL/report code, tests, generated outputs, or `Data/` sources were modified.
+
+## Round 1 correction
+
+Fix commands:
+
+```text
+apply_patch (documentation-only update to Architecture.md and task-8-report.md)
+rtk rg -n -i "not configured|not_exercised|placement_bad|not demonstrated|unsafe|rejection" Architecture.md .superpowers/sdd/2026-09-10-dungeon-raid-loot-insertion-phase3/task-8-report.md
+rtk git diff --check
+rtk git status --short
+```
+
+Exact relevant output from the correction scan:
+
+```text
+Architecture.md:323:... encounter_source_statuses ... `not configured`, while `encounter_source_audit.gameobject_support` is `not_exercised` ...
+Architecture.md:2447:... `encounter_source_statuses` file values are `not configured`, while the aggregate `gameobject_support` field is `not_exercised` ...
+task-8-report.md:113:placement_bad_item_level=0 (not exercised: 0 encounter placement rows)
+task-8-report.md:114:placement_bad_required_level=0 (not exercised: 0 encounter placement rows)
+task-8-report.md:116:set_atomic_bad=0 (not demonstrated for encounter placement: no encounter placement rows)
+task-8-report.md:120:The first four values are not clean-result claims: ... unsafe placements, Legendary trash assignments, or split encounter sets ... `encounter_band_rejections.csv` ... do not substitute for placement-level evidence.
+```
+
+`rtk git diff --check` produced empty output with exit code `0`. `rtk git status --short` showed only:
+
+```text
+ M .superpowers/sdd/2026-09-10-dungeon-raid-loot-insertion-phase3/task-8-report.md
+ M Architecture.md
+```
+
+Round 1 remained documentation/report-only; no generator behavior, tests, Data, generated pack, or acceptance output was changed.

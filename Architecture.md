@@ -320,7 +320,7 @@ Data/gameobject_template.sql
 Data/gameobject_loot_template.sql
 ```
 
-The trio is automatically discovered from `Data/` when all three files are present. Explicit `--gameobject-source PATH`, `--gameobject-template-source PATH`, and `--gameobject-loot-source PATH` overrides replace that automatic discovery and must be supplied together; a partial explicit trio fails clearly. If the optional trio is absent, its source status is `not_exercised` and the generator keeps the resulting coverage exclusion auditable. In `gameobject_template`, `Data1` is the loot relationship: only type-3 gameobjects whose `Data1` loot entry exists in `gameobject_loot_template.sql` are supported reward-object candidates.
+The trio is automatically discovered from `Data/` when all three files are present. Explicit `--gameobject-source PATH`, `--gameobject-template-source PATH`, and `--gameobject-loot-source PATH` overrides replace that automatic discovery and must be supplied together; a partial explicit trio fails clearly. When the optional trio is absent, each `validation_report.json.encounter_source_statuses` gameobject file field is `not configured`, while `encounter_source_audit.gameobject_support` is `not_exercised`; the resulting coverage exclusion remains auditable. In `gameobject_template`, `Data1` is the loot relationship: only type-3 gameobjects whose `Data1` loot entry exists in `gameobject_loot_template.sql` are supported reward-object candidates.
 
 These are used for:
 
@@ -2444,7 +2444,7 @@ Supplies the AzerothCore `quest_template.sql` source used to verify mapped quest
 
 ## --gameobject-source PATH, --gameobject-template-source PATH, --gameobject-loot-source PATH
 
-Overrides the automatically discovered `Data/gameobject.sql`, `Data/gameobject_template.sql`, and `Data/gameobject_loot_template.sql` trio. These three options are one logical override and must be supplied together; a partial explicit input fails clearly. With no explicit override, the complete trio is used only when all three files exist. If it is absent, optional gameobject support is `not_exercised` and static map-only candidates remain diagnostics rather than encounter associations.
+Overrides the automatically discovered `Data/gameobject.sql`, `Data/gameobject_template.sql`, and `Data/gameobject_loot_template.sql` trio. These three options are one logical override and must be supplied together; a partial explicit input fails clearly. With no explicit override, the complete trio is used only when all three files exist. If it is absent, the three `encounter_source_statuses` file values are `not configured`, while the aggregate `gameobject_support` field is `not_exercised`; static map-only candidates remain diagnostics rather than encounter associations.
 
 ---
 
