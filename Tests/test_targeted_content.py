@@ -1431,6 +1431,15 @@ class ReportTests(unittest.TestCase):
 
         self.assertIn('INSERT INTO `gameobject_loot_template`', sql)
         self.assertIn('DELETE FROM `gameobject_loot_template`', cleanup)
+        predicate = ('`Entry` = 7001 AND `Item` = 1 AND '
+                     '`Reference` = 3100000')
+        self.assertIn(predicate, cleanup)
+        self.assertNotIn(
+            'DELETE FROM `gameobject_loot_template` WHERE `Entry` = 7001;',
+            cleanup)
+        self.assertNotIn(
+            'DELETE FROM `gameobject_loot_template` WHERE `Entry` IN',
+            cleanup)
 
     def test_encounter_reports_include_evidence_columns(self):
         items = [{
@@ -1776,6 +1785,59 @@ INSERT INTO `quest_template` VALUES
         self.assertIn('generated_encounter_gameobject_attachment_collision_count', collision)
         self.assertIn('SHOW COLUMNS FROM `acore_world`.`gameobject_loot_template`', schema)
         self.assertIn('DELETE FROM `gameobject_loot_template`', rollback)
+
+    def test_source_root_does_not_replace_data_gameobject_defaults(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime = g.configure_runtime([
+                '--seed', '424242', '--number', '1',
+                '--azerothcore-source-root', directory,
+                '--disable', 'all-new', '--ui', 'plain',
+            ])
+
+            source_root = pathlib.Path(directory).resolve()
+
+        self.assertEqual(
+            runtime['gameobject_source_paths'],
+            tuple(path.resolve() for path in (
+                g.DEFAULT_GAMEOBJECT_SOURCE,
+                g.DEFAULT_GAMEOBJECT_TEMPLATE_SOURCE,
+                g.DEFAULT_GAMEOBJECT_LOOT_SOURCE,
+            )))
+        self.assertEqual(runtime['azerothcore_source_root'], source_root)
+
+    def test_missing_optional_gameobject_sources_report_paths_without_abort(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            quest_source = root / 'quest_template.sql'
+            quest_source.write_text("""CREATE TABLE `quest_template` (
+  `ID` int unsigned NOT NULL,
+  `RewardItem1` int unsigned NOT NULL,
+  `RewardAmount1` smallint unsigned NOT NULL,
+  `RewardChoiceItemID1` int unsigned NOT NULL,
+  `RewardChoiceItemQuantity1` smallint unsigned NOT NULL
+) ENGINE=InnoDB;
+INSERT INTO `quest_template` VALUES (2,0,0,0,0);
+""", encoding='utf-8')
+            missing = tuple(root / name for name in (
+                'gameobject.sql', 'gameobject_template.sql',
+                'gameobject_loot_template.sql'))
+
+            runtime = g.configure_runtime([
+                '--seed', '424242', '--content-manifest',
+                str(g.ROOT / 'Docs' / 'content_manifest.example.json'),
+                '--quest-template-source', str(quest_source),
+                '--gameobject-source', str(missing[0]),
+                '--gameobject-template-source', str(missing[1]),
+                '--gameobject-loot-source', str(missing[2]),
+                '--disable', 'all-new', '--ui', 'plain',
+            ])
+
+        audit = runtime['encounter_source_catalog']['source_audit']
+        self.assertEqual(audit['gameobject_support'], 'not_exercised')
+        self.assertEqual(audit['gameobject_source_status'], 'missing')
+        self.assertEqual(audit['missing_gameobject_source_paths'],
+                         [str(path.resolve()) for path in missing])
+        self.assertIn('maps', runtime['encounter_source_catalog'])
 
 
 class LootTests(unittest.TestCase):
@@ -2171,6 +2233,29 @@ void InstanceTest::Complete(uint32 id, EncounterState state) {
         self.assertEqual(mappings[0]['encounter_identifier'],
                          'InstanceTest::Complete')
 
+    def test_nested_unrelated_guard_does_not_inherit_done_set_boss_state(self):
+        source = """
+const uint32 GO_REWARD_CHEST = 7001;
+void InstanceTest::Complete(uint32 id, EncounterState state) {
+    if (state == DONE) {
+        instance->SetBossState(DATA_BOSS, DONE);
+        if (difficulty == RAID_DIFFICULTY_10_N) {
+            if (id == DATA_OTHER_BOSS) {
+                instance->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+            }
+        }
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            mappings, _ = g.discover_script_reward_mappings(root, {
+                'gameobject_templates': {7001: {'type': 3, 'lootid': 97001}},
+                'gameobject_loot_entries': {97001},
+            })
+        self.assertEqual(mappings, [])
+
     def test_braced_done_control_block_reports_real_function(self):
         source = """
 const uint32 GO_REWARD_CHEST = 7001;
@@ -2203,6 +2288,39 @@ void InstanceTest::SetBossState(uint32 id, EncounterState state) {
         rows = g.discover_gameobject_reward_targets(catalog, 631, 0)
         self.assertEqual({row['encounter_id'] for row in rows},
                          {'boss_000044', 'boss_000045'})
+
+    def test_unmapped_script_reward_on_reused_entry_stays_audit_only(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['maps'][632] = {
+            **catalog['maps'][631], 'id': 632, 'directory': 'OtherRaid',
+        }
+        catalog['map_difficulties'][(632, 0)] = {
+            'id': 2, 'map_id': 632, 'difficulty_id': 0,
+            'max_players': 10, 'item_level': 264,
+        }
+        catalog['gameobject_spawns'].append(
+            {'guid': 45, 'id': 7001, 'map': 632, 'spawn_mask': 3})
+        catalog['gameobject_maps'][7001] = {631, 632}
+        catalog['script_reward_mappings'] = [{
+            'gameobject_entry': 7001, 'encounter_identifier': 'DATA_BOSS',
+            'source_path': 'instance_test.cpp', 'difficulty_condition': '',
+            'evidence_type': 'SummonGameObject completion path',
+        }]
+
+        rows = g.discover_gameobject_reward_targets(catalog)
+        script_rows = [row for row in rows
+                       if row['association_method'] == 'script_summon']
+
+        self.assertEqual({row['map_id'] for row in script_rows}, {631, 632})
+        self.assertTrue(all(not row['valid'] for row in script_rows))
+        self.assertTrue(all('ambiguous' in row['invalid_reason'].lower()
+                            for row in script_rows))
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        self.assertFalse(any(target.get('type') == 'gameobject'
+                             for profile in manifest['profiles']
+                             for encounter in profile['encounters']
+                             for target in encounter['targets']))
 
     def test_static_chest_uses_map_and_data1_without_fuzzy_boss_association(self):
         catalog = _catalog_with_gameobject_sources()

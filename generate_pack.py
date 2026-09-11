@@ -44,6 +44,7 @@ ENCOUNTER_SOURCE_CATALOG = None
 DEFAULT_ENCOUNTER_MANIFEST = None
 ENCOUNTER_SOURCE_PATHS = None
 GAMEOBJECT_SOURCE_PATHS = None
+GAMEOBJECT_SOURCE_AUDIT = None
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
@@ -73,18 +74,34 @@ DEFAULT_GAMEOBJECT_SOURCE = _default_data_source('gameobject.sql')
 DEFAULT_GAMEOBJECT_TEMPLATE_SOURCE = _default_data_source('gameobject_template.sql')
 DEFAULT_GAMEOBJECT_LOOT_SOURCE = _default_data_source('gameobject_loot_template.sql')
 
-def resolve_optional_gameobject_sources(explicit_paths=None, data_dir=DATA_DIR):
-    explicit=tuple(explicit_paths or (None, None, None))
+def _gameobject_source_candidates(explicit_paths=None, data_dir=DATA_DIR):
+    explicit=(None, None, None) if explicit_paths is None else tuple(explicit_paths)
     if len(explicit) != 3:
         raise ValueError('gameobject sources must contain exactly three paths')
     if any(path is not None for path in explicit):
         if not all(path is not None for path in explicit):
             raise ValueError('gameobject sources must be supplied together')
-        paths=tuple(Path(path).expanduser().resolve() for path in explicit)
-        return None if any(not path.is_file() for path in paths) else paths
-    defaults=tuple(Path(data_dir) / name for name in (
-        'gameobject.sql', 'gameobject_template.sql', 'gameobject_loot_template.sql'))
-    return defaults if all(path.is_file() for path in defaults) else None
+        return tuple(Path(path).expanduser().resolve() for path in explicit), True
+    return tuple(Path(data_dir) / name for name in (
+        'gameobject.sql', 'gameobject_template.sql',
+        'gameobject_loot_template.sql')), False
+
+def describe_optional_gameobject_sources(explicit_paths=None, data_dir=DATA_DIR):
+    paths, explicit = _gameobject_source_candidates(explicit_paths, data_dir)
+    resolved=tuple(path.expanduser().resolve() for path in paths)
+    missing=tuple(str(path) for path in resolved if not path.is_file())
+    if not missing:
+        status='found'
+    elif explicit or len(missing) < len(resolved):
+        status='missing'
+    else:
+        status='not_configured'
+    return {'status':status, 'paths':tuple(str(path) for path in resolved),
+            'missing_paths':missing}
+
+def resolve_optional_gameobject_sources(explicit_paths=None, data_dir=DATA_DIR):
+    paths,_ = _gameobject_source_candidates(explicit_paths, data_dir)
+    return paths if all(path.is_file() for path in paths) else None
 
 NEW_FEATURES = (
     'sets', 'spell-effects', 'chance-on-hit', 'on-use', 'socket-bonuses', 'disenchant',
@@ -1699,7 +1716,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT
     args=parse_args(argv) if args is None else args
     content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
     if content_manifest is not None and (args.number is not None or args.class_name is not None):
@@ -1717,8 +1734,11 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     encounter_source_paths=None
     gameobject_source_paths=None
     requested_gameobject_paths=(args.gameobject_source,args.gameobject_template_source,args.gameobject_loot_source)
-    source_root=Path(args.azerothcore_source_root).expanduser().resolve() if args.azerothcore_source_root else DATA_DIR
-    gameobject_source_paths=resolve_optional_gameobject_sources(requested_gameobject_paths, data_dir=source_root)
+    source_root=Path(args.azerothcore_source_root).expanduser().resolve() if args.azerothcore_source_root else None
+    gameobject_source_audit=describe_optional_gameobject_sources(
+        requested_gameobject_paths, data_dir=DATA_DIR)
+    gameobject_source_paths=resolve_optional_gameobject_sources(
+        requested_gameobject_paths, data_dir=DATA_DIR)
     if content_manifest is None or any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',())):
         encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
                          DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
@@ -1735,8 +1755,13 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
             gameobject_loot_path=gameobject_source_paths[2] if gameobject_source_paths else None,
         )
         encounter_source_paths=encounter_paths[:6]
-        encounter_source_catalog.setdefault('source_audit',{})['azerothcore_source_root']=str(source_root)
-        script_root=source_root if args.azerothcore_source_root else None
+        encounter_source_catalog.setdefault('source_audit',{}).update({
+            'azerothcore_source_root':str(source_root) if source_root else None,
+            'gameobject_source_status':gameobject_source_audit['status'],
+            'gameobject_source_candidate_paths':list(gameobject_source_audit['paths']),
+            'missing_gameobject_source_paths':list(gameobject_source_audit['missing_paths']),
+        })
+        script_root=source_root
         script_mappings,script_status=discover_script_reward_mappings(script_root,encounter_source_catalog)
         encounter_source_catalog['script_reward_mappings']=script_mappings
         encounter_source_catalog['source_audit']['script_reward_mapping']=script_status
@@ -1879,6 +1904,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     DEFAULT_ENCOUNTER_MANIFEST=default_encounter_manifest
     ENCOUNTER_SOURCE_PATHS=encounter_source_paths
     GAMEOBJECT_SOURCE_PATHS=gameobject_source_paths
+    GAMEOBJECT_SOURCE_AUDIT=gameobject_source_audit
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
     CLASS_ITEM_COUNTS=counts
@@ -1894,6 +1920,9 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         'encounter_source_paths':ENCOUNTER_SOURCE_PATHS,
         'gameobject_source_paths':GAMEOBJECT_SOURCE_PATHS,
         'azerothcore_source_root':source_root,
+        'gameobject_source_status':gameobject_source_audit['status'],
+        'gameobject_source_candidate_paths':gameobject_source_audit['paths'],
+        'missing_gameobject_source_paths':gameobject_source_audit['missing_paths'],
         'class_counts':dict(CLASS_ITEM_COUNTS),'loot_chance':LOOT_CHANCE,
         'world_loot_source':WORLD_LOOT_SOURCE,'reference_loot_source':REFERENCE_LOOT_SOURCE,
         'item_template_source':ITEM_TEMPLATE_SOURCE,'item_dbc_sources':ITEM_DBC_SOURCES,
@@ -2196,6 +2225,9 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
                             'reference_consumer_profile_count':0,
                             'reference_provenance_count':0,
                             'gameobject_support':'exercised' if gameobject_path is not None else 'not_exercised',
+                            'gameobject_source_status':'found' if gameobject_path is not None else 'not_configured',
+                            'gameobject_source_candidate_paths':[str(path) for path in (gameobject_path,gameobject_template_path,gameobject_loot_path) if path is not None],
+                            'missing_gameobject_source_paths':[],
                             'script_reward_mapping':'not_exercised'}}
 
 def loot_mode_for_difficulty(map_type=None,difficulty_id=None):
@@ -2271,6 +2303,11 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
     requested_difficulty='' if difficulty_id is None else int(difficulty_id)
     encounters=catalog.get('instance_encounters',{})
     dungeon_maps=catalog.get('dungeon_maps',{})
+    spawn_maps_by_entry=defaultdict(set)
+    for spawn in catalog.get('gameobject_spawns',()):
+        entry=int(spawn.get('id',0)); spawn_map=int(spawn.get('map',-1))
+        if entry>0 and spawn_map>=0:
+            spawn_maps_by_entry[entry].add(spawn_map)
     for spawn in catalog.get('gameobject_spawns',()):
         entry=int(spawn.get('id',0)); template=catalog.get('gameobject_templates',{}).get(entry)
         if not template or int(template.get('type',0))!=3: continue
@@ -2283,9 +2320,17 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
             if int(encounter.get('credit_type',0))!=1 or int(encounter.get('credit_entry',-1))!=entry: continue
             resolved=_dungeon_map_id(dungeon_maps,encounter.get('last_encounter_dungeon',0))
             if resolved==spawn_map: matches.append((int(encounter_entry),encounter))
-        script_matches=[mapping for mapping in catalog.get('script_reward_mappings',())
-                        if int(mapping.get('gameobject_entry',-1))==entry]
+        script_matches=[]
+        for mapping in catalog.get('script_reward_mappings',()):
+            if int(mapping.get('gameobject_entry',-1))!=entry: continue
+            source_map=mapping.get('source_map_id',mapping.get('map_id'))
+            if source_map not in (None,'') and int(source_map)!=spawn_map: continue
+            script_matches.append(mapping)
         source_path=';'.join(catalog.get('source_audit',{}).get('gameobject_source_paths') or ())
+        ambiguous_script_map=any(
+            mapping.get('source_map_id',mapping.get('map_id')) in (None,'') and
+            len(spawn_maps_by_entry[entry]) != 1
+            for mapping in script_matches)
         base={'profile_id':f'map_{spawn_map}_difficulty_{requested_difficulty}' if requested_map is not None else '',
               'map_id':spawn_map,'difficulty_id':requested_difficulty,'gameobject_entry':entry,
               'gameobject_name':template.get('name',''),'loot_entry':loot_entry,
@@ -2305,7 +2350,9 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
                 row=dict(base)
                 row.update({'encounter_id':f'script_{identifier}',
                             'encounter_name':script.get('encounter_identifier',''),
-                            'association_method':'script_summon','valid':True,
+                            'association_method':'script_summon',
+                            'valid':not ambiguous_script_map,
+                            'invalid_reason':'script summon has ambiguous map: gameobject entry is spawned on multiple maps' if ambiguous_script_map else '',
                             'association_source':';'.join(filter(None,(source_path,script.get('source_path','')))),
                             'difficulty_condition':script.get('difficulty_condition',''),
                             'evidence_type':script.get('evidence_type','')})
@@ -2317,7 +2364,9 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
                 row=dict(base)
                 row.update({'encounter_id':f'script_{identifier}',
                             'encounter_name':script.get('encounter_identifier',''),
-                            'association_method':'script_summon','valid':True,
+                            'association_method':'script_summon',
+                            'valid':not ambiguous_script_map,
+                            'invalid_reason':'script summon has ambiguous map: gameobject entry is spawned on multiple maps' if ambiguous_script_map else '',
                             'association_source':';'.join(filter(None,(source_path,script.get('source_path','')))),
                             'difficulty_condition':script.get('difficulty_condition',''),
                             'evidence_type':script.get('evidence_type','')})
@@ -2334,7 +2383,9 @@ def discover_script_reward_mappings(source_root, catalog):
     if source_root is None: return [], 'not_exercised'
     root=Path(source_root)
     scan_root=root/'src'/'server'/'scripts' if (root/'src'/'server'/'scripts').is_dir() else root
-    files=[path for path in scan_root.rglob('*') if path.is_file() and path.suffix.lower() in {'.cpp','.h','.hpp','.cc','.c'}]
+    files=sorted((path for path in scan_root.rglob('*')
+                  if path.is_file() and path.suffix.lower() in {'.cpp','.h','.hpp','.cc','.c'}),
+                 key=lambda path:str(path))
     constants={}
     templates=catalog.get('gameobject_templates',{})
     text_by_file=[]
@@ -2343,28 +2394,88 @@ def discover_script_reward_mappings(source_root, catalog):
         for name,value in re.findall(r'\b(GO_[A-Za-z0-9_]+)\s*=\s*(\d+)',text): constants[name]=int(value)
         for name,value in re.findall(r'\b(?:const(?:ant)?\s+)?(?:uint\w*|int)\s+(GO_[A-Za-z0-9_]+)\s*=\s*(\d+)',text):
             constants[name]=int(value)
+
+    def matching_brace(text, opening, limit):
+        depth=0
+        for index in range(opening, limit):
+            if text[index]=='{': depth+=1
+            elif text[index]=='}':
+                depth-=1
+                if depth==0: return index
+        return None
+
+    def statement_end(text, start, limit):
+        parentheses=0; braces=0
+        for index in range(start, limit):
+            character=text[index]
+            if character=='(': parentheses+=1
+            elif character==')' and parentheses: parentheses-=1
+            elif character=='{' : braces+=1
+            elif character=='}':
+                if braces: braces-=1
+                elif not parentheses: return index
+            elif character==';' and not parentheses and not braces:
+                return index+1
+        return limit
+
+    function_pattern=re.compile(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*\{')
+    control_pattern=re.compile(r'\bif\s*\(([^(){}]*(?:\([^(){}]*\)[^(){}]*)*)\)',re.S)
+    summon_pattern=re.compile(r'\b(?:SummonGameObject|SummonGameobject|summonGameObject)\s*\(\s*([^,)]+)')
+    excluded_function_names={'if','for','while','switch','catch'}
+
+    def control_scopes(text, body_start, body_end):
+        scopes=[]
+        for control in control_pattern.finditer(text, body_start, body_end):
+            after=control.end()
+            while after<body_end and text[after].isspace(): after+=1
+            if after>=body_end: continue
+            if text[after]=='{':
+                close=matching_brace(text,after,body_end)
+                if close is None: continue
+                scope_end=close
+                scope_start=after+1
+            else:
+                scope_start=after
+                scope_end=statement_end(text,after,body_end)
+            scopes.append({'condition':control.group(1).strip(),
+                           'condition_start':control.start(),
+                           'start':scope_start,'end':scope_end})
+        return scopes
+
     mappings=[]
     for path,text in text_by_file:
-        for match in re.finditer(r'\b(?:SummonGameObject|SummonGameobject|summonGameObject)\s*\(\s*([^,)]+)',text):
-            prefix=text[:match.start()]
-            openings=[candidate for candidate in re.finditer(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*\{',prefix)
-                      if candidate.group(1) not in {'if','for','while','switch','catch'}]
-            if not openings: continue
-            function=openings[-1]; opening=text.find('{',function.start(),function.end())
-            depth=0; end=None
-            for index in range(opening,len(text)):
-                if text[index]=='{': depth+=1
-                elif text[index]=='}':
-                    depth-=1
-                    if depth==0: end=index; break
-            if end is None or not opening<match.start()<end: continue
-            block=text[opening+1:match.start()]
-            control_conditions=list(re.finditer(r'\bif\s*\(([^{}]*)\)',block,re.S))
-            if control_conditions:
-                if not re.search(r'\bDONE\b',control_conditions[-1].group(1)):
-                    if not re.search(r'SetBossState\s*\([^;{}]*\bDONE\b',block): continue
-            elif not re.search(r'(?:SetBossState\s*\([^;{}]*\bDONE\b|\bstate\s*==\s*DONE\b|\bDONE\b\s*==\s*state)',block):
-                continue
+        functions=[]
+        for candidate in function_pattern.finditer(text):
+            if candidate.group(1) in excluded_function_names: continue
+            opening=text.find('{',candidate.start(),candidate.end())
+            end=matching_brace(text,opening,len(text))
+            if end is not None:
+                functions.append((candidate,opening+1,end))
+        for match in summon_pattern.finditer(text):
+            containing=next((row for row in reversed(functions)
+                             if row[1] <= match.start() < row[2]),None)
+            if containing is None: continue
+            function,body_start,function_end=containing
+            scopes=[scope for scope in control_scopes(text,body_start,function_end)
+                    if scope['start'] <= match.start() < scope['end']]
+            block=text[body_start:match.start()]
+            accepted=False
+            if scopes:
+                innermost=min(scopes,key=lambda scope:(scope['end']-scope['start'],-scope['condition_start']))
+                if re.search(r'\bDONE\b',innermost['condition']):
+                    accepted=True
+                elif 'difficulty' in innermost['condition'].lower():
+                    for ancestor in scopes:
+                        if ancestor is innermost or not re.search(r'\bDONE\b',ancestor['condition']):
+                            continue
+                        segment=text[ancestor['start']:match.start()]
+                        if re.search(r'\bSetBossState\s*\([^;{}]*\bDONE\b[^;{}]*\)',segment):
+                            accepted=True
+                            break
+            else:
+                accepted=bool(re.search(
+                    r'\bSetBossState\s*\([^;{}]*\bDONE\b[^;{}]*\)', block))
+            if not accepted: continue
             token=match.group(1).strip(); entry=constants.get(token)
             if entry is None and token.isdigit(): entry=int(token)
             template=templates.get(entry,{}) if entry is not None else {}
@@ -6627,11 +6738,17 @@ def write_outputs(items,ui=None,name_changes=()):
         (feature=='socket-bonuses' and x.get('socketBonus')) or
          (feature=='disenchant' and x.get('DisenchantID'))
      )) for feature in NEW_FEATURES}
-    source_audit=ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}) if ENCOUNTER_SOURCE_CATALOG else {}
+    source_audit=ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}) if ENCOUNTER_SOURCE_CATALOG else (GAMEOBJECT_SOURCE_AUDIT or {})
+    gameobject_source_status=source_audit.get('gameobject_source_status')
+    if gameobject_source_status is None:
+        gameobject_source_status='found' if GAMEOBJECT_SOURCE_PATHS else 'not_configured'
+    gameobject_status_label={
+        'found':'FOUND', 'missing':'MISSING', 'not_configured':'not configured',
+    }.get(gameobject_source_status,gameobject_source_status)
     encounter_source_statuses={
-        'gameobject.sql':'FOUND' if GAMEOBJECT_SOURCE_PATHS else 'not configured',
-        'gameobject_template.sql':'FOUND' if GAMEOBJECT_SOURCE_PATHS else 'not configured',
-        'gameobject_loot_template.sql':'FOUND' if GAMEOBJECT_SOURCE_PATHS else 'not configured',
+        'gameobject.sql':gameobject_status_label,
+        'gameobject_template.sql':gameobject_status_label,
+        'gameobject_loot_template.sql':gameobject_status_label,
         'script_reward_mapping':'EXERCISED' if source_audit.get('script_reward_mapping')=='exercised' else 'not_exercised',
     }
     report={'seed':SEED,'requested_number':TARGET_ITEM_COUNT,'selected_classes':generated_class_names,
@@ -6658,6 +6775,8 @@ def write_outputs(items,ui=None,name_changes=()):
             'world_loot_reference_count':len(world_references),'loot_bracket_distribution':loot_bracket_distribution,
             'world_loot_bracket_distribution':world_loot_bracket_distribution,
             'loot_destinations':['world']+(['dungeon','raid'] if encounter_loot_records else []),
+            'optional_gameobject_source_status':gameobject_source_status,
+            'missing_optional_gameobject_source_paths':list(source_audit.get('missing_gameobject_source_paths',())),
             'placement_reports':{key:path.relative_to(OUT).as_posix() for key,path in placement_reports.items()},
             'generated_loot_pool_ids':[pool['pool_id'] for pool in loot['pools']],
             'encounter_loot_profiles':[{'profile_id':record['profile_id'],'order':record['order'],'encounters':record['encounters'],
@@ -6675,6 +6794,10 @@ def write_outputs(items,ui=None,name_changes=()):
                 'source_paths':[_portable_source_path(path) for path in (ENCOUNTER_SOURCE_PATHS or ())],
                 'gameobject_source_paths':[_portable_source_path(path) for path in (GAMEOBJECT_SOURCE_PATHS or ())],
                 'source_statuses':encounter_source_statuses,
+                'gameobject_source_status':source_audit.get('gameobject_source_status',gameobject_source_status),
+                'gameobject_source_candidate_paths':list(source_audit.get('gameobject_source_candidate_paths',()) or ()),
+                'missing_gameobject_source_paths':list(source_audit.get('missing_gameobject_source_paths',()) or ()),
+                'azerothcore_source_root':source_audit.get('azerothcore_source_root'),
                 'map_count':len(ENCOUNTER_SOURCE_CATALOG['maps']),'map_difficulty_count':len(ENCOUNTER_SOURCE_CATALOG['map_difficulties']),
                 'creature_template_count':len(ENCOUNTER_SOURCE_CATALOG['creature_templates']),'spawn_creature_count':len(ENCOUNTER_SOURCE_CATALOG['creature_maps']),
                 'instance_encounter_count':len(ENCOUNTER_SOURCE_CATALOG['instance_encounters']),
@@ -6752,7 +6875,6 @@ Target: AzerothCore / WotLK 3.3.5a
 - Add `--item-dbc-overwrite` only when intentionally replacing conflicting generated-ID rows in that source DBC.
 - `py generate_pack.py --disable sets chance-on-hit` - disable selected new features; `effects` disables all three item spell triggers and `all-new` disables every new feature.
 - Encounter integration is source-backed and fail-closed. If validation is invalid, diagnostic reports remain available but encounter SQL is omitted from `sql/IMPORT_ORDER.txt`; item and world-loot output still completes.
-- If encounter integration is invalid, encounter cleanup is omitted from `sql/IMPORT_ORDER.txt` together with encounter SQL; item SQL, world-loot SQL, audit reports, and `validation_report.json` remain available.
 - `--set-rate`, `--set-min-level`, `--set-size` - tune complete class/role set generation; five pieces is the default.
 - `--spell-effect-rate-multiplier`, `--proc-rate-multiplier`, `--on-use-rate-multiplier`, `--effect-ilvl-window`, `--max-special-effects` - tune stock effect-package selection; low-level effects still obey the stricter 5/10/15 progression windows.
 - `--socket-bonus-rate`, `--disenchant-rate` - tune validated stock socket and disenchant assignment.
