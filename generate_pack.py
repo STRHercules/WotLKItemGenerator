@@ -187,6 +187,12 @@ class PlainTerminalUI:
         self._seen_sets=set()
         self.runtime=None
 
+    def startup(self,detail=''):
+        pass
+
+    def startup_status(self,text):
+        pass
+
     def _write(self,text=''):
         if not self.quiet:
             print(text,file=self.stream,flush=True)
@@ -320,9 +326,16 @@ class FancyTerminalUI(PlainTerminalUI):
 
     def banner(self):
         if self.quiet: return
-        self.live=Live(self._render(),console=self.console,refresh_per_second=12 if self.animations else 4,
+        self.live=Live(get_renderable=self._render,console=self.console,refresh_per_second=12 if self.animations else 4,
                        transient=False,vertical_overflow='visible')
         self.live.start()
+
+    def startup(self,detail=''):
+        self.phase('Starting WotLK item forge')
+        self.startup_status(detail)
+
+    def startup_status(self,text):
+        self.status(text)
 
     def configure(self,runtime):
         self.runtime=runtime
@@ -1718,6 +1731,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
     global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT
     args=parse_args(argv) if args is None else args
+    if ui: ui.startup_status('Resolving source manifest and optional encounter inputs')
     content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
     if content_manifest is not None and (args.number is not None or args.class_name is not None):
         raise ValueError('--number and --class cannot be combined with --content-manifest; put counts and classes in the manifest')
@@ -1747,6 +1761,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         if gameobject_source_paths:
             missing.extend(str(path) for path in gameobject_source_paths if not path.is_file())
         if missing: raise FileNotFoundError('targeted encounter source file(s) not found: '+', '.join(missing))
+        if ui: ui.startup_status('Loading encounter catalog: maps, creatures, and loot tables')
         encounter_source_catalog=load_encounter_source_catalog(
             *encounter_paths,
             item_template_path=item_template_source,
@@ -1762,12 +1777,15 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
             'missing_gameobject_source_paths':list(gameobject_source_audit['missing_paths']),
         })
         script_root=source_root
+        if ui: ui.startup_status('Scanning AzerothCore scripts for reward mappings')
         script_mappings,script_status=discover_script_reward_mappings(script_root,encounter_source_catalog)
         encounter_source_catalog['script_reward_mappings']=script_mappings
         encounter_source_catalog['source_audit']['script_reward_mapping']=script_status
         if content_manifest is None:
+            if ui: ui.startup_status('Mapping default dungeon and raid loot profiles')
             default_encounter_manifest=build_default_encounter_manifest(encounter_source_catalog,args.loot_chance)
         else:
+            if ui: ui.startup_status('Validating targeted encounter source membership')
             validate_targeted_source_membership(content_manifest,encounter_source_catalog)
     item_dbc_sources=[Path(path).expanduser().resolve() for path in (args.item_dbc_sources or _default_item_dbc_sources())]
     item_set_dbc_source=Path(args.item_set_dbc_source).expanduser().resolve()
@@ -6940,6 +6958,7 @@ def main(argv=None):
     started=time.monotonic()
     try:
         ui.banner()
+        ui.startup('Preparing local source catalogs')
         runtime=configure_runtime(args=args,ui=ui)
         ui.configure(runtime)
 
