@@ -8,6 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / 'Data'
 USER_GUID_FILE = Path.home() / '.azerothcore-item-generator-guid'
+USER_AZEROTHCORE_SOURCE_FILE = Path.home() / '.azerothcore-item-generator-source-root'
 SEED = None
 OUT = None
 SQLDIR = None
@@ -48,9 +49,35 @@ GAMEOBJECT_SOURCE_AUDIT = None
 VERBOSE_AUDIT = False
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
+INTERACTIVE_MAX_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
 MAX_ITEMS_PER_CLASS = 20_000
 MAX_TOTAL_ITEMS = 200_000
+DEFAULT_LOOT_DESTINATIONS = frozenset(('world', 'dungeon', 'raid'))
+LOOT_DESTINATIONS = set(DEFAULT_LOOT_DESTINATIONS)
+LOOT_DESTINATION_CHOICES = (
+    ('World', frozenset(('world',))),
+    ('Dungeon', frozenset(('dungeon',))),
+    ('Raid', frozenset(('raid',))),
+    ('World+Dungeon', frozenset(('world', 'dungeon'))),
+    ('World+Raid', frozenset(('world', 'raid'))),
+    ('All of the Above', DEFAULT_LOOT_DESTINATIONS),
+)
+INTERACTIVE_REQUIRED_DATA_FILES = {
+    'DBC': (
+        'Item.dbc', 'ItemSet.dbc', 'Spell.dbc', 'SpellItemEnchantment.dbc',
+        'Map.dbc', 'MapDifficulty.dbc', 'DungeonMap.dbc',
+    ),
+    'SQL': (
+        'creature_loot_template.sql', 'reference_loot_template.sql', 'item_template.sql',
+        'disenchant_loot_template.sql', 'spell_proc.sql', 'spell_script_names.sql',
+        'creature.sql', 'creature_template.sql', 'instance_encounters.sql',
+    ),
+}
+INTERACTIVE_OPTIONAL_DATA_FILES = {
+    'DBC': ('Item.custom.dbc',),
+    'SQL': ('gameobject.sql', 'gameobject_template.sql', 'gameobject_loot_template.sql'),
+}
 def _default_data_source(filename):
     return DATA_DIR / filename
 
@@ -124,9 +151,11 @@ try:
     from rich.spinner import Spinner
     from rich.table import Table
     from rich.text import Text
+    from rich.prompt import Confirm, IntPrompt, Prompt
     RICH_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised on installations without Rich
     Align = Console = Group = Live = Panel = ProgressBar = Spinner = Table = Text = rich_box = None
+    Confirm = IntPrompt = Prompt = None
     RICH_AVAILABLE = False
 
 UI_MODES = ('auto','fancy','plain')
@@ -145,6 +174,50 @@ def resolve_ui_mode(requested='auto',is_tty=None,rich_available=None):
     if requested=='fancy':
         return 'fancy' if rich_available else 'plain'
     return 'fancy' if is_tty and rich_available else 'plain'
+
+def _interactive_number_arg(value):
+    try:
+        number=int(value)
+    except (TypeError,ValueError) as exc:
+        raise ValueError('number must be an integer from 1 to 100,000') from exc
+    if not 1 <= number <= INTERACTIVE_MAX_ITEMS:
+        raise ValueError('number must be an integer from 1 to 100,000')
+    return number
+
+def loot_destinations_for_choice(choice):
+    for label,destinations in LOOT_DESTINATION_CHOICES:
+        if choice == label:
+            return destinations
+    raise ValueError(f'unknown loot destination choice: {choice}')
+
+def _load_saved_azerothcore_source(path=USER_AZEROTHCORE_SOURCE_FILE):
+    path=Path(path)
+    if not path.is_file():
+        return None
+    value=path.read_text(encoding='utf-8').strip()
+    return Path(value).expanduser().resolve() if value else None
+
+def _save_azerothcore_source(source_root,path=USER_AZEROTHCORE_SOURCE_FILE):
+    path=Path(path)
+    path.parent.mkdir(parents=True,exist_ok=True)
+    path.write_text(str(Path(source_root).expanduser().resolve())+'\n',encoding='utf-8')
+
+def _encounter_destination(map_type):
+    return 'raid' if int(map_type or 1)==2 else 'dungeon'
+
+def filter_encounter_manifest(manifest,destinations):
+    if manifest is None:
+        return None
+    selected=set(destinations or ()) & {'dungeon','raid'}
+    if not selected:
+        return None
+    result=dict(manifest)
+    result['profiles']=[profile for profile in manifest.get('profiles',())
+                        if _encounter_destination(profile.get('map_type')) in selected]
+    if 'coverage' in manifest:
+        result['coverage']=[row for row in manifest.get('coverage',())
+                            if _encounter_destination(row.get('map_type')) in selected]
+    return result if result['profiles'] else None
 
 
 def _format_elapsed(seconds):
@@ -341,8 +414,8 @@ class PlainTerminalUI:
         self._write(f"Seed: {runtime['seed']} ({runtime['source']})")
         self._write(f"Items: {runtime['number']:,} | Classes: {', '.join(runtime['classes'])}")
         self._write(f"Features: {features}")
-        if runtime.get('default_encounter_profile_count'):
-            self._write(f"Loot placement: world + dungeon/raid ({runtime['default_encounter_profile_count']} profiles)")
+        destinations=' + '.join(runtime.get('loot_destinations',())) or 'none'
+        self._write(f"Loot insertion: {destinations}")
         self._write(f"Output: {runtime['output_dir']}")
 
     def source_check(self,label,path,ok=True):
@@ -620,8 +693,8 @@ class FancyTerminalUI(PlainTerminalUI):
             cfg.add_row('Items',f"{self.runtime['number']:,}")
             cfg.add_row('Classes',', '.join(self.runtime['classes']))
             cfg.add_row('Features',features)
-            if self.runtime.get('default_encounter_profile_count'):
-                cfg.add_row('Loot placement',f"world + dungeon/raid ({self.runtime['default_encounter_profile_count']} profiles)")
+            destinations=' + '.join(self.runtime.get('loot_destinations',())) or 'none'
+            cfg.add_row('Loot insertion',destinations)
             cfg.add_row('Output',str(self.runtime['output_dir']))
             pieces.append(Panel(cfg,title='[bold]Forge Configuration[/bold]',border_style='cyan'))
         elif self.sources:
@@ -1887,6 +1960,82 @@ def parse_args(argv=None):
     args.disabled_features=_expand_disabled_features(args.disable_groups)
     return args
 
+def _interactive_data_table():
+    table=Table(title='Data/ files',show_header=True,header_style='bold cyan')
+    table.add_column('Type',style='bold')
+    table.add_column('File')
+    table.add_column('Required')
+    table.add_column('Status',justify='right')
+    for kind,files in INTERACTIVE_REQUIRED_DATA_FILES.items():
+        for filename in files:
+            found=(DATA_DIR/filename).is_file()
+            table.add_row(kind,filename,'yes',('[green]FOUND[/]' if found else '[red]MISSING[/]'))
+    for kind,files in INTERACTIVE_OPTIONAL_DATA_FILES.items():
+        for filename in files:
+            found=(DATA_DIR/filename).is_file()
+            table.add_row(kind,filename,'optional',('[green]FOUND[/]' if found else '[dim]not present[/]'))
+    return table
+
+def interactive_setup(storage_path=USER_AZEROTHCORE_SOURCE_FILE,console=None):
+    if not RICH_AVAILABLE:
+        raise RuntimeError('Interactive setup requires Rich. Install it with: py -m pip install rich')
+    console=console or Console()
+    console.print(Panel.fit(
+        '[bold cyan]WotLK Item Forge setup[/]\n'
+        'Place every required DBC and SQL input below in [bold]Data/[/] before continuing.\n'
+        'The AzerothCore directory is used for source-script reward mapping and is remembered for future runs.',
+        border_style='cyan'))
+    console.print(_interactive_data_table())
+
+    source_root=_load_saved_azerothcore_source(storage_path)
+    if source_root is not None and source_root.is_dir():
+        console.print(f'[green]Using saved AzerothCore directory:[/] {source_root}')
+    else:
+        if source_root is not None:
+            console.print('[yellow]The saved AzerothCore directory is no longer available.[/]')
+        while True:
+            value=Prompt.ask('Where is your AzerothCore located?',console=console).strip().strip('"')
+            candidate=Path(value).expanduser().resolve() if value else None
+            if candidate is not None and candidate.is_dir():
+                source_root=candidate
+                _save_azerothcore_source(source_root,storage_path)
+                break
+            console.print('[red]Enter an existing AzerothCore directory.[/]')
+
+    while True:
+        try:
+            number=_interactive_number_arg(IntPrompt.ask(
+                'How many items do you wish to generate?',default=DEFAULT_TOTAL_ITEMS,console=console))
+            break
+        except ValueError as exc:
+            console.print(f'[red]{exc}[/]')
+
+    if Confirm.ask('Insert the generated loot into loot tables?',default=True,console=console):
+        labels=tuple(label for label,_ in LOOT_DESTINATION_CHOICES)
+        choice=Prompt.ask('Where should loot be inserted?',choices=labels,default='All of the Above',console=console)
+        destinations=loot_destinations_for_choice(choice)
+    else:
+        choice='None'
+        destinations=frozenset()
+
+    summary=Table(title='Generation confirmation',show_header=False,box=rich_box.SIMPLE)
+    summary.add_column('Setting',style='bold cyan')
+    summary.add_column('Value')
+    summary.add_row('AzerothCore',str(source_root))
+    summary.add_row('Items',f'{number:,}')
+    summary.add_row('Loot insertion',choice)
+    console.print(summary)
+    if not Confirm.ask('Start generation with these settings?',default=False,console=console):
+        console.print('[yellow]Generation cancelled.[/]')
+        return None
+
+    args=parse_args([])
+    args.number=number
+    args.azerothcore_source_root=source_root
+    args.loot_destinations=destinations
+    args.interactive=True
+    return args
+
 def get_or_create_user_guid(path=None):
     path=Path(path) if path is not None else USER_GUID_FILE
     if path.exists():
@@ -1913,8 +2062,11 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT, LOOT_DESTINATIONS
     args=parse_args(argv) if args is None else args
+    LOOT_DESTINATIONS=set(getattr(args,'loot_destinations',DEFAULT_LOOT_DESTINATIONS))
+    if not LOOT_DESTINATIONS <= DEFAULT_LOOT_DESTINATIONS:
+        raise ValueError(f'unknown loot destination(s): {sorted(LOOT_DESTINATIONS-DEFAULT_LOOT_DESTINATIONS)}')
     if ui: ui.startup_status('Resolving source manifest and optional encounter inputs')
     content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
     if content_manifest is not None and (args.number is not None or args.class_name is not None):
@@ -1937,7 +2089,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         requested_gameobject_paths, data_dir=DATA_DIR)
     gameobject_source_paths=resolve_optional_gameobject_sources(
         requested_gameobject_paths, data_dir=DATA_DIR)
-    if content_manifest is None or any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',())):
+    if LOOT_DESTINATIONS & {'dungeon','raid'} and (content_manifest is None or any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',()))):
         encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
                          DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
                          world_loot_source,reference_loot_source)
@@ -2116,6 +2268,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     return {
         'seed':SEED,'source':source,'output_dir':OUT,'number':TARGET_ITEM_COUNT,
         'class_name':args.class_name,'classes':[row[0] for row in ACTIVE_CLASSES],
+        'loot_destinations':[destination for destination in ('world','dungeon','raid') if destination in LOOT_DESTINATIONS],
         'content_manifest':CONTENT_MANIFEST,
         'quest_template_source':QUEST_TEMPLATE_SOURCE,
         'encounter_source_catalog':ENCOUNTER_SOURCE_CATALOG,
@@ -6949,7 +7102,7 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
     output_dir=Path(output_dir); output_dir.mkdir(parents=True,exist_ok=True)
     world_path=output_dir/'world_item_placements.csv'; world_fields=['entry','name','required_level','item_level','quality','destination','pool_id','pool_bracket','pool_level_min','pool_level_max','world_reference_count','world_reference_entries','world_loot_levels','chance']
     with world_path.open('w',encoding='utf-8',newline='') as f:
-        writer=csv.DictWriter(f,fieldnames=world_fields); writer.writeheader(); writer.writerows(build_world_item_placement_rows(items,loot))
+        writer=csv.DictWriter(f,fieldnames=world_fields); writer.writeheader(); writer.writerows(build_world_item_placement_rows(items,loot) if 'world' in LOOT_DESTINATIONS else ())
     encounter_path=output_dir/'dungeon_raid_item_placements.csv'; encounter_fields=['entry','name','required_level','item_level','quality','profile_id','map_id','difficulty_id','instance','destination','encounter','encounter_kind','encounter_name','pool_id','loot_mode','chance','quantity','item_level_min','item_level_max','profile_required_level_min','profile_required_level_max','band_source','band_source_item_count','band_center','placement_score','placement_reason','encounter_equivalence_group','encounter_eligible_profile_count','encounter_distribution_weight','encounter_distribution_score','set_id','set_name','set_atomic_profile','target_count','target_entries','target_names','targets']
     with encounter_path.open('w',encoding='utf-8',newline='') as f:
         writer=csv.DictWriter(f,fieldnames=encounter_fields); writer.writeheader(); writer.writerows(build_encounter_item_placement_rows(items,records,manifest,source_catalog))
@@ -7178,25 +7331,32 @@ def write_outputs(items,ui=None,name_changes=()):
             ITEM_SET_DBC_SOURCE is None or REFERENCE_CATALOG_AUDIT is None):
         raise RuntimeError('Runtime output directory is not configured. Call configure_runtime() first.')
     encounter_loot_records=[]
-    encounter_manifest=CONTENT_MANIFEST if CONTENT_MANIFEST is not None else DEFAULT_ENCOUNTER_MANIFEST
+    encounter_manifest=filter_encounter_manifest(
+        CONTENT_MANIFEST if CONTENT_MANIFEST is not None else DEFAULT_ENCOUNTER_MANIFEST,
+        LOOT_DESTINATIONS)
     encounter_status={'enabled':encounter_manifest is not None,'valid':True,'errors':[],'warnings':[],
                       'profile_count':0,'record_count':0,'pool_ids':(),
                       'placement_summary':{'count':0},'set_summary':{},
                       'distribution_audit':[],'reference_provenance':[],
                       'gameobject_reward_targets':[]}
-    if ui: ui.status('Mapping world-loot references')
-    world_references=load_world_loot_references(WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE)
-    if ui: ui.progress(1,10,current='World-loot references mapped')
-    loot=build_loot_records(items,world_references)
+    if 'world' in LOOT_DESTINATIONS:
+        if ui: ui.status('Mapping world-loot references')
+        world_references=load_world_loot_references(WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE)
+        if ui: ui.progress(1,10,current='World-loot references mapped')
+        loot=build_loot_records(items,world_references)
+    else:
+        world_references={}
+        loot={'pools':[],'pool_rows':[],'attachments':[]}
+        if ui: ui.progress(1,10,current='World-loot insertion skipped')
     if encounter_manifest is not None:
         try:
             if CONTENT_MANIFEST is not None:
                 if ui: ui.status('Mapping targeted dungeon and raid encounters')
-                encounter_loot_records=build_manifest_encounter_loot_records(items,CONTENT_MANIFEST,WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE,ENCOUNTER_SOURCE_CATALOG)
+                encounter_loot_records=build_manifest_encounter_loot_records(items,encounter_manifest,WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE,ENCOUNTER_SOURCE_CATALOG)
             else:
                 if ui: ui.status('Assigning generated items to dungeon and raid encounters')
-                assign_default_encounter_items(items,DEFAULT_ENCOUNTER_MANIFEST)
-                encounter_loot_records=build_manifest_encounter_loot_records(items,DEFAULT_ENCOUNTER_MANIFEST,WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE,ENCOUNTER_SOURCE_CATALOG)
+                assign_default_encounter_items(items,encounter_manifest)
+                encounter_loot_records=build_manifest_encounter_loot_records(items,encounter_manifest,WORLD_LOOT_SOURCE,REFERENCE_LOOT_SOURCE,ENCOUNTER_SOURCE_CATALOG)
             encounter_status.update(validate_encounter_integration(items,encounter_manifest,encounter_loot_records,ENCOUNTER_SOURCE_CATALOG or {}))
             encounter_status['enabled']=True
             if not encounter_status['valid']:
@@ -7211,9 +7371,11 @@ def write_outputs(items,ui=None,name_changes=()):
             encounter_loot_records=[]
             if ui: ui.status(f'Encounter integration disabled: {exc}')
     if ui:
-        ui.status(f'Placement: world loot ({len(loot["attachments"]):,} references)')
+        if 'world' in LOOT_DESTINATIONS:
+            ui.status(f'Placement: world loot ({len(loot["attachments"]):,} references)')
         if encounter_loot_records:
-            ui.status(f'Placement: dungeon/raid loot ({sum(len(record["attachments"]) for record in encounter_loot_records):,} targets)')
+            destinations=', '.join(sorted(LOOT_DESTINATIONS & {'dungeon','raid'}))
+            ui.status(f'Placement: {destinations} loot ({sum(len(record["attachments"]) for record in encounter_loot_records):,} targets)')
     if ui: ui.progress(2,10,current='Generated loot pools built')
     item_dbc_rows=[item_dbc_row(x) for x in items]
     item_set_rows=generated_item_set_rows(items) if feature_enabled('sets') else []
@@ -7496,7 +7658,7 @@ def write_outputs(items,ui=None,name_changes=()):
             'reference_catalog_inventory_type_mismatch_count':len(REFERENCE_CATALOG_AUDIT['inventory_type_mismatches']),
             'world_loot_reference_count':len(world_references),'loot_bracket_distribution':loot_bracket_distribution,
             'world_loot_bracket_distribution':world_loot_bracket_distribution,
-            'loot_destinations':['world']+(['dungeon','raid'] if encounter_loot_records else []),
+            'loot_destinations':[destination for destination in ('world','dungeon','raid') if destination in LOOT_DESTINATIONS],
             'optional_gameobject_source_status':gameobject_source_status,
             'missing_optional_gameobject_source_paths':list(source_audit.get('missing_gameobject_source_paths',())),
             'placement_reports':{key:path.relative_to(OUT).as_posix() for key,path in placement_reports.items()},
@@ -7559,7 +7721,7 @@ Classes: `{class_summary}`<br>
 Generated entry ranges: `{entry_summary}`<br>
 Generated loot pools: `{len(loot['pools'])}` (`{len(loot['pool_rows'])}` item rows)<br>
 World-loot attachments: `{len(loot['attachments'])}` at `{LOOT_CHANCE}%`<br>
-Loot destinations: `world` plus `{len(encounter_pool_ids)}` dungeon/raid encounter pools<br>
+Loot destinations: `{', '.join(destination for destination in ('world','dungeon','raid') if destination in LOOT_DESTINATIONS) or 'none'}`<br>
 Dungeon/raid LootMode: `1 << MapDifficulty difficulty_id`<br>
 Placement reports: `world_item_placements.csv`, `dungeon_raid_item_placements.csv`, `encounter_profile_coverage.csv`, `encounter_profiles.csv`, `difficulty_band_comparison.csv`, `encounter_band_rejections.csv`, `encounter_distribution_audit.csv`, `encounter_reference_provenance.csv`, `gameobject_reward_targets.csv`, `set_manifest.csv`<br>
 World-loot source: `{_portable_source_path(WORLD_LOOT_SOURCE)}`<br>
@@ -7662,7 +7824,12 @@ Flags can be combined in any order. The default remains 100,000 total and world-
     return report
 
 def main(argv=None):
-    args=parse_args(argv)
+    if argv is None and len(sys.argv)==1:
+        args=interactive_setup()
+        if args is None:
+            return None
+    else:
+        args=parse_args(argv)
     ui=create_terminal_ui(args)
     started=time.monotonic()
     try:

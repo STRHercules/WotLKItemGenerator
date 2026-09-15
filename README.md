@@ -4,6 +4,8 @@
 
 Deterministic custom equipment generation for AzerothCore / World of Warcraft: Wrath of the Lich King 3.3.5a (build 12340).
 
+Running `py generate_pack.py` opens a Rich setup wizard that lists the required `Data/` inputs, remembers the AzerothCore source directory, asks for the item count and loot destinations, and confirms the run before generation.
+
 The default run creates 100,000 items across the ten WotLK classes and writes:
 
 - AzerothCore `item_template` and loot SQL
@@ -25,6 +27,7 @@ The default run creates 100,000 items across the ten WotLK classes and writes:
 ## Requirements
 
 - Python 3
+- Rich for the bare-run setup wizard (`py -m pip install rich`)
 - a matching AzerothCore/WotLK source bundle under `Data/`
 
 The SQL and DBC inputs are local files ignored by Git. The default bundle includes the stock item, loot, spell, set, enchantment, and encounter sources used by the generator. See [Architecture.md](Architecture.md#expected-project-layout) for the complete list and path overrides.
@@ -36,6 +39,8 @@ Windows / PowerShell:
 ```powershell
 py generate_pack.py
 ```
+
+The wizard defaults to 100,000 items and All of the Above after confirmation. Explicit options such as `--number` remain available for non-interactive runs.
 
 Linux / macOS:
 
@@ -55,7 +60,7 @@ Single-class run:
 py generate_pack.py --class warrior --number 100
 ```
 
-Rich is optional. Install it only for the live dashboard:
+Rich is required for the bare interactive setup; explicit `--ui plain` runs can avoid it. Install it with:
 
 ```powershell
 py -m pip install rich

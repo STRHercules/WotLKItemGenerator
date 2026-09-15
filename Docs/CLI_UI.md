@@ -1,11 +1,11 @@
 # WotLK Item Generator — Live CLI UI
 
-The generator now includes a presentation-only terminal dashboard. The UI does not participate in item randomization, hashing, naming, stat selection, effects, sets, loot, SQL, or DBC generation.
+The generator now includes a Rich setup wizard and presentation-only terminal dashboard. The dashboard does not participate in item randomization, hashing, naming, stat selection, effects, sets, loot, SQL, or DBC generation; the setup wizard selects the run's item count and loot destinations.
 
 ## Display modes
 
 ```powershell
-py .\generate_pack.py                  # auto: fancy in an interactive terminal when Rich is installed
+py .\generate_pack.py                  # Rich setup wizard, then the fancy dashboard
 py .\generate_pack.py --ui fancy       # explicitly request the Rich dashboard
 py .\generate_pack.py --ui plain       # low-noise standard-library progress output
 py .\generate_pack.py --no-animations  # styled dashboard without the opening splash or animated spinners
@@ -13,23 +13,24 @@ py .\generate_pack.py --show-items     # expand the discovery feed with addition
 py .\generate_pack.py --quiet          # errors + one final completion line only
 ```
 
-## Optional Rich dependency
+## Rich dependency
 
-The generator still runs without third-party packages. For the full live dashboard:
+Bare invocation uses Rich for the setup wizard. Explicit `--ui plain` runs still work without third-party packages. For Rich:
 
 ```powershell
 py -m pip install rich
 ```
 
-If Rich is unavailable, `--ui auto` and even an explicit `--ui fancy` gracefully fall back to the plain UI.
+If Rich is unavailable, use an explicit CLI run with `--ui plain`.
 
 ## What the live dashboard shows
 
 - a short opening splash: a slowly rotating shaded globe, drifting motes, and a progress bar whose accent color rolls through the item-rarity palette (about two seconds; skipped by `--no-animations`, `--ui plain`, and `--quiet`)
+- the setup wizard's required `Data/` DBC/SQL file list, remembered AzerothCore path, item count, loot destination choices, and final confirmation on a bare run
 - the same globe keeps rotating inside the `Current Work` panel while the startup phases run (starting the forge, inspecting sources, harvesting stock data); it disappears once item generation begins
 - source SQL/DBC checks
 - seed, item count, selected classes, enabled features, and output path
-- dungeon/raid source files and automatic encounter assignment mode on the default run
+- selected world, dungeon, and/or raid loot insertion destinations
 - targeted manifest encounter/quest assignment mode when `--content-manifest` is used
 - true overall progress through skeleton generation and item finalization
 - per-class progress bars
