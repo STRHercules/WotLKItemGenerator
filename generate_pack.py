@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import argparse, csv, hashlib, json, math, os, re, shutil, struct, sys, time, uuid, zipfile
+import argparse, csv, hashlib, json, math, os, random, re, shutil, struct, sys, time, uuid, zipfile
 from collections import Counter, defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -116,6 +116,7 @@ DISABLE_ALIASES = {
 # the Python standard library alone; interactive terminals automatically use it when present.
 try:
     from rich import box as rich_box
+    from rich.align import Align
     from rich.console import Console, Group
     from rich.live import Live
     from rich.panel import Panel
@@ -125,7 +126,7 @@ try:
     from rich.text import Text
     RICH_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised on installations without Rich
-    Console = Group = Live = Panel = ProgressBar = Spinner = Table = Text = rich_box = None
+    Align = Console = Group = Live = Panel = ProgressBar = Spinner = Table = Text = rich_box = None
     RICH_AVAILABLE = False
 
 UI_MODES = ('auto','fancy','plain')
@@ -174,6 +175,134 @@ def notable_item_event(item):
         return {'kind':kind,'title':item.get('name','Special item'),
                 'detail':f"{feature} • stock item {item.get('effect_source_entry',0)} • spell {item.get('effect_source_spell',0)}"}
     return None
+
+
+# ---- opening animation ------------------------------------------------------
+# Ported from the WotLK Item Generator Rich loader pack (`wotlk_loader.py`):
+# a slowly rotating shaded globe, drifting motes, and a rarity-rolling progress
+# bar shown while the forge starts up.
+
+OPENING_ANIMATION_SECONDS = 2.2
+_OPENING_GRID_W, _OPENING_GRID_H = 44, 18
+_OPENING_CX, _OPENING_CY = _OPENING_GRID_W / 2, _OPENING_GRID_H / 2
+_OPENING_RADIUS = 8.6
+_OPENING_ASPECT = 2.15
+_OPENING_LIGHT = (-0.55, 0.45, 0.70)
+_OPENING_SHADE_RAMP = ' .:-=+*#%@'
+_OPENING_DARK = (0x1C, 0x16, 0x3A)
+_OPENING_BRIGHT = (0x9D, 0xE8, 0xFF)
+_OPENING_MOTE_GLYPHS = ('·', '˙', '⋆', '✦')
+_OPENING_FLAVOR = (
+    'Consulting the loot tables',
+    'Rolling item level',
+    'Weighing stat budgets',
+    'Determining rarity',
+    'Applying enchantments',
+    'Sealing the item',
+)
+_OPENING_QUALITIES = (('Common', '#ffffff'), ('Uncommon', '#1eff00'), ('Rare', '#0070dd'),
+                      ('Epic', '#a335ee'), ('Legendary', '#ff8000'))
+# Phases that run before item generation; the dashboard keeps the globe spinning
+# inside the Current Work panel while the forge loads its sources.
+_LOADING_PHASES = ('Starting WotLK item forge', 'Inspecting AzerothCore sources',
+                   'Harvesting stock WotLK data')
+_PANEL_GRID_W, _PANEL_GRID_H = 20, 9
+
+
+def _opening_lerp_color(t):
+    t = max(0.0, min(1.0, float(t)))
+    red = round(_OPENING_DARK[0] + (_OPENING_BRIGHT[0] - _OPENING_DARK[0]) * t)
+    green = round(_OPENING_DARK[1] + (_OPENING_BRIGHT[1] - _OPENING_DARK[1]) * t)
+    blue = round(_OPENING_DARK[2] + (_OPENING_BRIGHT[2] - _OPENING_DARK[2]) * t)
+    return f'#{red:02x}{green:02x}{blue:02x}'
+
+
+def _opening_globe_cells(theta, grid_w=_OPENING_GRID_W, grid_h=_OPENING_GRID_H,
+                         radius=_OPENING_RADIUS, aspect=_OPENING_ASPECT):
+    lx, ly, lz = _OPENING_LIGHT
+    center_x, center_y = grid_w / 2, grid_h / 2
+    cells = [[(' ', None) for _ in range(grid_w)] for _ in range(grid_h)]
+    cos_t, sin_t = math.cos(theta), math.sin(theta)
+    for row in range(grid_h):
+        ny = (row - center_y) * aspect / radius
+        for col in range(grid_w):
+            nx = (col - center_x) / radius
+            distance = nx * nx + ny * ny
+            if distance > 1.0:
+                continue
+            nz = math.sqrt(1.0 - distance)
+            rx = nx * cos_t - nz * sin_t
+            rz = nx * sin_t + nz * cos_t
+            brightness = min(1.0, 0.16 + 0.9 * max(rx * lx + ny * ly + rz * lz, 0.0))
+            index = min(len(_OPENING_SHADE_RAMP) - 1, int(brightness * (len(_OPENING_SHADE_RAMP) - 1)))
+            cells[row][col] = (_OPENING_SHADE_RAMP[index], _opening_lerp_color(brightness))
+    return cells
+
+
+class _OpeningMotes:
+    """Deterministic drifting motes for the opening frame."""
+    def __init__(self, count=14, seed=0x5A17, grid_w=_OPENING_GRID_W, grid_h=_OPENING_GRID_H):
+        self.grid_w, self.grid_h = grid_w, grid_h
+        rng = random.Random(seed)
+        self.motes = [{'x': rng.uniform(0, self.grid_w), 'y': rng.uniform(0, self.grid_h),
+                       'vy': -rng.uniform(0.05, 0.16), 'glyph': rng.choice(_OPENING_MOTE_GLYPHS),
+                       'phase': rng.uniform(0, math.tau)} for _ in range(count)]
+
+    def scatter(self, cells, t):
+        for mote in self.motes:
+            mote['y'] += mote['vy']
+            if mote['y'] < 0:
+                mote['y'] = self.grid_h - 1
+                mote['x'] = (mote['x'] + 7.3) % self.grid_w
+            row, col = int(mote['y']), int(mote['x'])
+            if 0 <= row < self.grid_h and 0 <= col < self.grid_w and cells[row][col][0] == ' ':
+                twinkle = 0.5 + 0.5 * math.sin(t * 2 + mote['phase'])
+                cells[row][col] = (mote['glyph'], '#e8e4ff' if twinkle > 0.6 else '#c9c3f5')
+
+
+_OPENING_MOTES = _OpeningMotes()
+_PANEL_MOTES = _OpeningMotes(count=5, seed=0x9E37, grid_w=_PANEL_GRID_W, grid_h=_PANEL_GRID_H)
+
+
+def _opening_globe_text(cells):
+    text = Text()
+    for row in cells:
+        for character, color in row:
+            text.append(character, style=color or '')
+        text.append('\n')
+    return text
+
+
+def opening_quality(pct):
+    span = 1.0 / len(_OPENING_QUALITIES)
+    index = min(len(_OPENING_QUALITIES) - 1, int(max(0.0, min(1.0, pct)) / span))
+    return _OPENING_QUALITIES[index]
+
+
+def opening_frame(t, pct, elapsed):
+    """Rich renderable for one frame of the forge opening animation."""
+    if not RICH_AVAILABLE:
+        raise RuntimeError('Rich terminal UI requested but Rich is not installed')
+    cells = _opening_globe_cells(t * 0.6)
+    _OPENING_MOTES.scatter(cells, t)
+    flavor = _OPENING_FLAVOR[int(t / 2.2) % len(_OPENING_FLAVOR)]
+    rune = '◐◓◑◒'[int(t * 4) % 4]
+    status = Text(f'{rune}  {flavor}...', style='#8fb8d9')
+
+    quality_name, quality_color = opening_quality(pct)
+    bar_width = 26
+    filled = int(bar_width * max(0.0, min(1.0, pct)))
+    bar = Text()
+    bar.append('▰' * filled, style=quality_color)
+    bar.append('▱' * (bar_width - filled), style='#3a3a3a')
+    bar.append(f'  {int(max(0.0, min(1.0, pct)) * 100):3d}%   ', style='#7a7a7a')
+    bar.append(f'Rolling: {quality_name}', style=f'bold {quality_color}')
+
+    return Panel(
+        Group(Align.center(_opening_globe_text(cells)), Text(''), Align.center(status), Align.center(bar)),
+        box=rich_box.ROUNDED, border_style='#3d4f66', padding=(1, 3),
+        title='[bold #cdd6e0]⚔  WotLK Item Forge[/]', title_align='left',
+        subtitle=f'[dim]{elapsed:4.1f}s[/]', subtitle_align='right')
 
 
 class PlainTerminalUI:
@@ -313,12 +442,16 @@ class QuietTerminalUI(PlainTerminalUI):
 
 class FancyTerminalUI(PlainTerminalUI):
     """Rich live dashboard for interactive terminals."""
-    def __init__(self,stream=None,animations=True,show_items=False,quiet=False):
+    def __init__(self,stream=None,animations=True,show_items=False,quiet=False,intro_seconds=None):
         if not RICH_AVAILABLE:
             raise RuntimeError('Rich terminal UI requested but Rich is not installed')
         super().__init__(stream=stream or sys.stdout,animations=animations,show_items=show_items,quiet=quiet)
         self.console=Console(file=self.stream,force_terminal=None,soft_wrap=False)
         self.live=None
+        self.intro_seconds=OPENING_ANIMATION_SECONDS if intro_seconds is None else max(0.0,float(intro_seconds))
+        self.opening_frame=None
+        self.opening_played=False
+        self.loading_globe=False
         self.phase_total=0; self.phase_completed=0; self.current=''; self.detail=''
         self.class_progress={}; self.class_totals={}
         self.events=deque(maxlen=7)
@@ -330,6 +463,29 @@ class FancyTerminalUI(PlainTerminalUI):
         self.live=Live(get_renderable=self._render,console=self.console,refresh_per_second=12 if self.animations else 4,
                        transient=False,vertical_overflow='visible')
         self.live.start()
+        self._play_opening()
+
+    def _play_opening(self):
+        """Show the arcane-globe opening splash before the forge dashboard."""
+        if self.opening_played or not self.live: return
+        self.opening_played=True
+        interactive=bool(getattr(self.stream,'isatty',lambda:False)())
+        duration=self.intro_seconds if (self.animations and interactive) else 0.0
+        if duration<=0:
+            self.opening_frame=opening_frame(0.0,1.0,0.0)
+            self.live.refresh()
+        else:
+            fps=20
+            started=time.monotonic()
+            while True:
+                elapsed=time.monotonic()-started
+                progress=min(elapsed/duration,1.0)
+                self.opening_frame=opening_frame(elapsed,progress,elapsed)
+                self.live.refresh()
+                if progress>=1.0: break
+                time.sleep(1.0/fps)
+        self.opening_frame=None
+        self.live.refresh()
 
     def startup(self,detail=''):
         self.phase('Starting WotLK item forge')
@@ -351,6 +507,7 @@ class FancyTerminalUI(PlainTerminalUI):
     def phase(self,name,total=None,detail=''):
         self._phase=name; self.detail=detail; self.phase_total=int(total or 0); self.phase_completed=0
         self.current=''; self._last_percent=-1; self.phase_started=time.monotonic()
+        self.loading_globe=name in _LOADING_PHASES
         if name in ('Generating item skeletons','Finalizing generated items'):
             self.class_progress={name:0 for name in self.class_totals}
         self._refresh()
@@ -431,6 +588,15 @@ class FancyTerminalUI(PlainTerminalUI):
     def close(self):
         if self.live:
             self.live.stop(); self.live=None
+        self.opening_frame=None
+
+    def _loading_globe_text(self,elapsed):
+        """Compact forge globe shown inside Current Work while sources load."""
+        globe_t=elapsed if self.animations else 0.0
+        cells=_opening_globe_cells(globe_t*0.6,_PANEL_GRID_W,_PANEL_GRID_H)
+        if self.animations:
+            _PANEL_MOTES.scatter(cells,globe_t)
+        return _opening_globe_text(cells)
 
     def _refresh(self,throttled=False):
         if not self.live: return
@@ -442,6 +608,8 @@ class FancyTerminalUI(PlainTerminalUI):
         self.live.update(self._render(),refresh=True)
 
     def _render(self):
+        if self.opening_frame is not None:
+            return self.opening_frame
         header=Panel(Text('⚒  WotLK ITEM FORGE\nAzerothCore • WotLK 3.3.5a',justify='center',style='bold bright_cyan'),
                      border_style='bright_blue',box=rich_box.DOUBLE)
         pieces=[header]
@@ -476,7 +644,14 @@ class FancyTerminalUI(PlainTerminalUI):
             if self.current: phase_table.add_row(Text(f'Current: {self.current}',style='white'))
             elapsed=time.monotonic()-self.phase_started
             phase_table.add_row(Text(f'Elapsed: {_format_elapsed(elapsed)}',style='dim'))
-            pieces.append(Panel(phase_table,title='[bold]Current Work[/bold]',border_style='yellow'))
+            if self.loading_globe:
+                layout=Table.grid(expand=True,padding=(0,2))
+                layout.add_column(no_wrap=True)
+                layout.add_column(ratio=1)
+                layout.add_row(self._loading_globe_text(elapsed),phase_table)
+                pieces.append(Panel(layout,title='[bold]Current Work[/bold]',border_style='yellow'))
+            else:
+                pieces.append(Panel(phase_table,title='[bold]Current Work[/bold]',border_style='yellow'))
 
         if self.class_totals and self._phase in ('Generating item skeletons','Finalizing generated items'):
             t=Table(box=None,expand=True,padding=(0,1)); t.add_column('Class',style='bold'); t.add_column('Progress',ratio=1); t.add_column('',justify='right')
@@ -1704,7 +1879,7 @@ def parse_args(argv=None):
     parser.add_argument('--disenchant-rate',type=_percent_arg,default=100.0,metavar='PERCENT',help='Percentage of eligible items receiving validated stock disenchant data (default: 100).')
     parser.add_argument('--max-special-effects',type=_nonnegative_int_arg,default=1,metavar='COUNT',help='Maximum independent spell-effect packages per item (default: 1).')
     parser.add_argument('--ui',choices=UI_MODES,default='auto',help='Terminal display mode: auto, fancy, or plain (default: auto).')
-    parser.add_argument('--no-animations',action='store_true',help='Keep the styled UI but disable animated spinners/refresh effects.')
+    parser.add_argument('--no-animations',action='store_true',help='Keep the styled UI but disable the opening animation and animated spinners/refresh effects.')
     parser.add_argument('--show-items',action='store_true',help='Expand the live discovery feed with additional interesting generated items.')
     parser.add_argument('--quiet',action='store_true',help='Suppress progress output; print only errors and the final completion line.')
     parser.add_argument('--verbose-audit',dest='verbose_audit',action='store_true',help='Emit every rejected static gameobject spawn row in the reward audit instead of the default aggregated summary.')

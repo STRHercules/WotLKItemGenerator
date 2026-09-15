@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import pathlib
+import time
 import unittest
 from unittest.mock import patch
 
@@ -8,6 +9,11 @@ HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('generator', HERE.parent / 'generate_pack.py')
 g = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(g)
+
+
+class _TtyStream(io.StringIO):
+    def isatty(self):
+        return True
 
 
 class CliUiTests(unittest.TestCase):
@@ -53,6 +59,87 @@ class CliUiTests(unittest.TestCase):
         try:
             first = ui.live.get_renderable()
             self.assertIsNot(ui.live.get_renderable(), first)
+        finally:
+            ui.close()
+
+    @unittest.skipUnless(g.RICH_AVAILABLE, 'Rich is optional')
+    def test_current_work_panel_includes_animated_globe_while_loading(self):
+        ui = g.FancyTerminalUI(stream=io.StringIO(), animations=True, intro_seconds=0)
+        ui.startup('Loading encounter catalog: maps, creatures, and loot tables')
+        try:
+            self.assertTrue(ui.loading_globe)
+            output = io.StringIO()
+            g.Console(file=output, width=100, force_terminal=True, color_system=None).print(ui._render())
+            rendered = output.getvalue()
+            self.assertIn('Current Work', rendered)
+            self.assertIn('Starting WotLK item forge', rendered)
+            self.assertIn('@', rendered)
+            self.assertNotEqual(ui._loading_globe_text(0.0).plain,
+                                ui._loading_globe_text(0.8).plain)
+        finally:
+            ui.close()
+
+        ui.phase('Generating item skeletons', total=10)
+        self.assertFalse(ui.loading_globe)
+        output = io.StringIO()
+        g.Console(file=output, width=100, force_terminal=True, color_system=None).print(ui._render())
+        self.assertNotIn('@', output.getvalue())
+
+    @unittest.skipUnless(g.RICH_AVAILABLE, 'Rich is optional')
+    def test_loading_globe_freezes_with_no_animations(self):
+        ui = g.FancyTerminalUI(stream=io.StringIO(), animations=False, intro_seconds=0)
+        ui.startup('Preparing source catalogs')
+        try:
+            self.assertTrue(ui.loading_globe)
+            self.assertEqual(ui._loading_globe_text(0.0).plain,
+                             ui._loading_globe_text(3.0).plain)
+        finally:
+            ui.close()
+
+    @unittest.skipUnless(g.RICH_AVAILABLE, 'Rich is optional')
+    def test_opening_frame_renders_globe_flavor_and_rarity_bar(self):
+        output = io.StringIO()
+        console = g.Console(file=output, width=80, force_terminal=True, color_system=None)
+        console.print(g.opening_frame(1.0, 0.45, 1.0))
+        rendered = output.getvalue()
+
+        self.assertIn('WotLK Item Forge', rendered)
+        self.assertIn('Consulting the loot tables', rendered)
+        self.assertIn('Rolling: Rare', rendered)
+        self.assertIn('45%', rendered)
+        self.assertLessEqual(max(len(line.rstrip()) for line in rendered.splitlines()), 80)
+
+    @unittest.skipUnless(g.RICH_AVAILABLE, 'Rich is optional')
+    def test_fancy_opening_plays_on_tty_and_skips_delay_off_tty(self):
+        tty_ui = g.FancyTerminalUI(stream=_TtyStream(), animations=True, intro_seconds=0.3)
+        started = time.monotonic()
+        tty_ui.banner()
+        elapsed = time.monotonic() - started
+        try:
+            self.assertTrue(tty_ui.opening_played)
+            self.assertGreaterEqual(elapsed, 0.25)
+            self.assertIsNone(tty_ui.opening_frame)
+        finally:
+            tty_ui.close()
+
+        plain_ui = g.FancyTerminalUI(stream=io.StringIO(), animations=True, intro_seconds=5.0)
+        started = time.monotonic()
+        plain_ui.banner()
+        elapsed = time.monotonic() - started
+        try:
+            self.assertTrue(plain_ui.opening_played)
+            self.assertLess(elapsed, 0.5)
+        finally:
+            plain_ui.close()
+
+    @unittest.skipUnless(g.RICH_AVAILABLE, 'Rich is optional')
+    def test_fancy_opening_honors_no_animations(self):
+        ui = g.FancyTerminalUI(stream=_TtyStream(), animations=False, intro_seconds=5.0)
+        started = time.monotonic()
+        ui.banner()
+        elapsed = time.monotonic() - started
+        try:
+            self.assertLess(elapsed, 0.5)
         finally:
             ui.close()
 

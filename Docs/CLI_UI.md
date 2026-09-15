@@ -8,7 +8,7 @@ The generator now includes a presentation-only terminal dashboard. The UI does n
 py .\generate_pack.py                  # auto: fancy in an interactive terminal when Rich is installed
 py .\generate_pack.py --ui fancy       # explicitly request the Rich dashboard
 py .\generate_pack.py --ui plain       # low-noise standard-library progress output
-py .\generate_pack.py --no-animations  # styled dashboard without animated spinners
+py .\generate_pack.py --no-animations  # styled dashboard without the opening splash or animated spinners
 py .\generate_pack.py --show-items     # expand the discovery feed with additional Epic items
 py .\generate_pack.py --quiet          # errors + one final completion line only
 ```
@@ -25,6 +25,8 @@ If Rich is unavailable, `--ui auto` and even an explicit `--ui fancy` gracefully
 
 ## What the live dashboard shows
 
+- a short opening splash: a slowly rotating shaded globe, drifting motes, and a progress bar whose accent color rolls through the item-rarity palette (about two seconds; skipped by `--no-animations`, `--ui plain`, and `--quiet`)
+- the same globe keeps rotating inside the `Current Work` panel while the startup phases run (starting the forge, inspecting sources, harvesting stock data); it disappears once item generation begins
 - source SQL/DBC checks
 - seed, item count, selected classes, enabled features, and output path
 - dungeon/raid source files and automatic encounter assignment mode on the default run

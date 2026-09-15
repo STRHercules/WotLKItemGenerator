@@ -20,7 +20,7 @@ The default run creates 100,000 items across the ten WotLK classes and writes:
 - role- and equipment-compatible stats, levels 1-80, and Death Knight levels 55-80
 - verified stock appearances, effects, socket bonuses, disenchant data, and five-piece sets
 - shared world-loot pools plus automatic or manifest-driven dungeon/raid/quest placement
-- optional Rich terminal dashboard with plain and quiet modes
+- optional Rich terminal dashboard with plain and quiet modes, opened by a short animated arcane-globe splash with a rarity-rolling progress bar
 
 ## Requirements
 
