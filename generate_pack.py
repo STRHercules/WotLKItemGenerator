@@ -84,6 +84,14 @@ INTERACTIVE_OPTIONAL_DATA_FILES = {
 def _default_data_source(filename):
     return DATA_DIR / filename
 
+def data_source(data_dir, filename):
+    return Path(data_dir).expanduser().resolve() / filename
+
+def resolve_source(explicit, data_dir, filename):
+    if explicit is not None:
+        return Path(explicit).expanduser().resolve()
+    return data_source(data_dir, filename)
+
 DEFAULT_WORLD_LOOT_SOURCE = _default_data_source('creature_loot_template.sql')
 DEFAULT_REFERENCE_LOOT_SOURCE = _default_data_source('reference_loot_template.sql')
 DEFAULT_ITEM_TEMPLATE_SOURCE = _default_data_source('item_template.sql')
@@ -854,10 +862,12 @@ def create_terminal_ui(args,stream=None,is_tty=None,rich_available=None):
         return FancyTerminalUI(**kwargs)
     return PlainTerminalUI(**kwargs)
 
-def _default_item_dbc_sources():
-    sources=[DEFAULT_ITEM_DBC_SOURCE]
-    if DEFAULT_ITEM_DBC_CUSTOM_SOURCE.is_file():
-        sources.append(DEFAULT_ITEM_DBC_CUSTOM_SOURCE)
+def _default_item_dbc_sources(data_dir=DATA_DIR):
+    data_dir=Path(data_dir)
+    sources=[data_dir/'Item.dbc']
+    custom=data_dir/'Item.custom.dbc'
+    if custom.is_file():
+        sources.append(custom)
     return sources
 
 def _portable_source_path(path):
@@ -2020,27 +2030,29 @@ def _class_arg(value):
 
 def parse_args(argv=None):
     parser=argparse.ArgumentParser(description='Generate randomized AzerothCore WotLK items.')
+    parser.add_argument('--data-dir',type=Path,default=DATA_DIR,metavar='PATH',help='Directory containing default WotLK DBC and SQL sources.')
+    parser.add_argument('--output-root',type=Path,default=ROOT,metavar='PATH',help='Parent directory for generated-<seed> output folders.')
     parser.add_argument('--seed',type=_seed_arg,help='Use this exact numeric seed instead of generating one automatically.')
     parser.add_argument('--number',type=_number_arg,help=f'Generate exactly this many items (max {MAX_TOTAL_ITEMS:,} total; max {MAX_ITEMS_PER_CLASS:,} per class).')
     parser.add_argument('--class',dest='class_name',type=_class_arg,help='Generate items for only this class (case-insensitive).')
     parser.add_argument('--content-manifest',type=Path,default=None,metavar='PATH',help='JSON manifest for targeted recipes, dungeon/raid loot, and quest rewards.')
     parser.add_argument('--quest-template-source',type=Path,default=None,metavar='PATH',help='quest_template.sql used to validate and preserve mapped quest rewards.')
     parser.add_argument('--loot-chance',type=_loot_chance_arg,default=2.0,metavar='PERCENT',help='Independent generated-item roll on each existing world-loot reference (default: 2).')
-    parser.add_argument('--world-loot-source',type=Path,default=DEFAULT_WORLD_LOOT_SOURCE,metavar='PATH',help=f'creature_loot_template.sql to map world-loot levels (default: {DEFAULT_WORLD_LOOT_SOURCE}).')
-    parser.add_argument('--reference-loot-source',type=Path,default=DEFAULT_REFERENCE_LOOT_SOURCE,metavar='PATH',help=f'reference_loot_template.sql used to verify shared references (default: {DEFAULT_REFERENCE_LOOT_SOURCE}).')
+    parser.add_argument('--world-loot-source',type=Path,default=None,metavar='PATH',help=f'creature_loot_template.sql to map world-loot levels (default: {DEFAULT_WORLD_LOOT_SOURCE}).')
+    parser.add_argument('--reference-loot-source',type=Path,default=None,metavar='PATH',help=f'reference_loot_template.sql used to verify shared references (default: {DEFAULT_REFERENCE_LOOT_SOURCE}).')
     parser.add_argument('--gameobject-source',type=Path,default=None,metavar='PATH',help='Optional gameobject.sql source for verifiable chest/cache encounter targets.')
     parser.add_argument('--gameobject-template-source',type=Path,default=None,metavar='PATH',help='Optional gameobject_template.sql source for encounter target loot IDs.')
     parser.add_argument('--gameobject-loot-source',type=Path,default=None,metavar='PATH',help='Optional gameobject_loot_template.sql source for encounter target validation.')
     parser.add_argument('--azerothcore-source-root',type=Path,default=None,metavar='PATH',help='Optional AzerothCore source root containing discoverable encounter SQL sources.')
-    parser.add_argument('--item-template-source',type=Path,default=DEFAULT_ITEM_TEMPLATE_SOURCE,metavar='PATH',help=f'item_template.sql used to harvest the full stock appearance catalog (default: {DEFAULT_ITEM_TEMPLATE_SOURCE}).')
+    parser.add_argument('--item-template-source',type=Path,default=None,metavar='PATH',help=f'item_template.sql used to harvest the full stock appearance catalog (default: {DEFAULT_ITEM_TEMPLATE_SOURCE}).')
     parser.add_argument('--item-dbc-source',dest='item_dbc_sources',type=Path,action='append',default=None,metavar='PATH',help=f'Complete or additive WotLK Item.dbc source; repeat for every client DBC baseline (default: {DEFAULT_ITEM_DBC_SOURCE}, {DEFAULT_ITEM_DBC_CUSTOM_SOURCE}).')
     parser.add_argument('--item-dbc-overwrite',action='store_true',help='Replace conflicting generated-ID rows in --item-dbc-source instead of failing.')
-    parser.add_argument('--item-set-dbc-source',type=Path,default=DEFAULT_ITEM_SET_DBC_SOURCE,metavar='PATH',help=f'WotLK ItemSet.dbc baseline (default: {DEFAULT_ITEM_SET_DBC_SOURCE}).')
-    parser.add_argument('--spell-dbc-source',type=Path,default=DEFAULT_SPELL_DBC_SOURCE,metavar='PATH',help=f'WotLK Spell.dbc used to validate effect packages (default: {DEFAULT_SPELL_DBC_SOURCE}).')
-    parser.add_argument('--spell-enchantment-dbc-source',type=Path,default=DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE,metavar='PATH',help=f'WotLK SpellItemEnchantment.dbc used to resolve socket bonuses (default: {DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE}).')
-    parser.add_argument('--disenchant-source',type=Path,default=DEFAULT_DISENCHANT_SOURCE,metavar='PATH',help=f'disenchant_loot_template.sql used to validate DisenchantID values (default: {DEFAULT_DISENCHANT_SOURCE}).')
-    parser.add_argument('--spell-proc-source',type=Path,default=DEFAULT_SPELL_PROC_SOURCE,metavar='PATH',help=f'spell_proc.sql used to audit proc conditions (default: {DEFAULT_SPELL_PROC_SOURCE}).')
-    parser.add_argument('--spell-script-names-source',type=Path,default=DEFAULT_SPELL_SCRIPT_NAMES_SOURCE,metavar='PATH',help=f'spell_script_names.sql used to audit scripted spells (default: {DEFAULT_SPELL_SCRIPT_NAMES_SOURCE}).')
+    parser.add_argument('--item-set-dbc-source',type=Path,default=None,metavar='PATH',help=f'WotLK ItemSet.dbc baseline (default: {DEFAULT_ITEM_SET_DBC_SOURCE}).')
+    parser.add_argument('--spell-dbc-source',type=Path,default=None,metavar='PATH',help=f'WotLK Spell.dbc used to validate effect packages (default: {DEFAULT_SPELL_DBC_SOURCE}).')
+    parser.add_argument('--spell-enchantment-dbc-source',type=Path,default=None,metavar='PATH',help=f'WotLK SpellItemEnchantment.dbc used to resolve socket bonuses (default: {DEFAULT_SPELL_ENCHANTMENT_DBC_SOURCE}).')
+    parser.add_argument('--disenchant-source',type=Path,default=None,metavar='PATH',help=f'disenchant_loot_template.sql used to validate DisenchantID values (default: {DEFAULT_DISENCHANT_SOURCE}).')
+    parser.add_argument('--spell-proc-source',type=Path,default=None,metavar='PATH',help=f'spell_proc.sql used to audit proc conditions (default: {DEFAULT_SPELL_PROC_SOURCE}).')
+    parser.add_argument('--spell-script-names-source',type=Path,default=None,metavar='PATH',help=f'spell_script_names.sql used to audit scripted spells (default: {DEFAULT_SPELL_SCRIPT_NAMES_SOURCE}).')
     parser.add_argument('--disable',dest='disable_groups',action='append',nargs='+',default=[],metavar='FEATURE',help=f'Disable one or more new features: {", ".join(NEW_FEATURES)}; aliases: effects, all-new.')
     parser.add_argument('--set-rate',type=_percent_arg,default=0.20,metavar='PERCENT',help='Percentage of generated items reserved as generated set members; five pieces by default (default: 0.20).')
     parser.add_argument('--set-min-level',type=_nonnegative_int_arg,default=20,metavar='LEVEL',help='Minimum required level for generated set pieces (default: 20).')
@@ -2165,6 +2177,8 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
     global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT, LOOT_DESTINATIONS
     args=parse_args(argv) if args is None else args
+    data_dir=Path(args.data_dir).expanduser().resolve()
+    output_root=Path(args.output_root).expanduser().resolve()
     FEATURE_CATALOG=None
     LOOT_DESTINATIONS=set(getattr(args,'loot_destinations',DEFAULT_LOOT_DESTINATIONS))
     if not LOOT_DESTINATIONS <= DEFAULT_LOOT_DESTINATIONS:
@@ -2174,9 +2188,9 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     if content_manifest is not None and (args.number is not None or args.class_name is not None):
         raise ValueError('--number and --class cannot be combined with --content-manifest; put counts and classes in the manifest')
     quest_template_source=Path(args.quest_template_source).expanduser().resolve() if args.quest_template_source else None
-    world_loot_source=Path(args.world_loot_source).expanduser().resolve()
-    reference_loot_source=Path(args.reference_loot_source).expanduser().resolve()
-    item_template_source=Path(args.item_template_source).expanduser().resolve()
+    world_loot_source=resolve_source(args.world_loot_source,data_dir,'creature_loot_template.sql')
+    reference_loot_source=resolve_source(args.reference_loot_source,data_dir,'reference_loot_template.sql')
+    item_template_source=resolve_source(args.item_template_source,data_dir,'item_template.sql')
     quest_targets=content_manifest.get('quest_targets',()) if content_manifest else ()
     if quest_targets and quest_template_source is None:
         raise ValueError('--quest-template-source is required when the content manifest contains quest_targets')
@@ -2188,18 +2202,18 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     requested_gameobject_paths=(args.gameobject_source,args.gameobject_template_source,args.gameobject_loot_source)
     source_root=Path(args.azerothcore_source_root).expanduser().resolve() if args.azerothcore_source_root else None
     gameobject_source_audit=describe_optional_gameobject_sources(
-        requested_gameobject_paths, data_dir=DATA_DIR)
+        requested_gameobject_paths, data_dir=data_dir)
     gameobject_source_paths=resolve_optional_gameobject_sources(
-        requested_gameobject_paths, data_dir=DATA_DIR)
-    item_dbc_sources=[Path(path).expanduser().resolve() for path in (args.item_dbc_sources or _default_item_dbc_sources())]
-    item_set_dbc_source=Path(args.item_set_dbc_source).expanduser().resolve()
-    spell_dbc_source=Path(args.spell_dbc_source).expanduser().resolve()
-    spell_enchantment_dbc_source=Path(args.spell_enchantment_dbc_source).expanduser().resolve()
-    disenchant_source=Path(args.disenchant_source).expanduser().resolve()
-    spell_proc_source=Path(args.spell_proc_source).expanduser().resolve()
-    spell_script_names_source=Path(args.spell_script_names_source).expanduser().resolve()
-    encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
-                     DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
+        requested_gameobject_paths, data_dir=data_dir)
+    item_dbc_sources=[Path(path).expanduser().resolve() for path in (args.item_dbc_sources or _default_item_dbc_sources(data_dir))]
+    item_set_dbc_source=resolve_source(args.item_set_dbc_source,data_dir,'ItemSet.dbc')
+    spell_dbc_source=resolve_source(args.spell_dbc_source,data_dir,'Spell.dbc')
+    spell_enchantment_dbc_source=resolve_source(args.spell_enchantment_dbc_source,data_dir,'SpellItemEnchantment.dbc')
+    disenchant_source=resolve_source(args.disenchant_source,data_dir,'disenchant_loot_template.sql')
+    spell_proc_source=resolve_source(args.spell_proc_source,data_dir,'spell_proc.sql')
+    spell_script_names_source=resolve_source(args.spell_script_names_source,data_dir,'spell_script_names.sql')
+    encounter_paths=(data_source(data_dir,'Map.dbc'),data_source(data_dir,'MapDifficulty.dbc'),data_source(data_dir,'DungeonMap.dbc'),
+                     data_source(data_dir,'creature.sql'),data_source(data_dir,'creature_template.sql'),data_source(data_dir,'instance_encounters.sql'),
                      world_loot_source,reference_loot_source)
     cache_paths=(*encounter_paths,item_template_source,*item_dbc_sources,item_set_dbc_source,
                  spell_dbc_source,spell_enchantment_dbc_source,disenchant_source,spell_proc_source,
@@ -2405,7 +2419,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     ACTIVE_CLASSES=selected
     TARGET_ITEM_COUNT=number
     CLASS_ITEM_COUNTS=counts
-    OUT=ROOT / f'generated-{SEED}'
+    OUT=output_root / f'generated-{SEED}'
     SQLDIR=OUT / 'sql'
     return {
         'seed':SEED,'source':source,'output_dir':OUT,'number':TARGET_ITEM_COUNT,
