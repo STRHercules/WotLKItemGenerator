@@ -1,0 +1,8 @@
+R:\Users\Zach\Documents\GitHub\WotLKItemGenerator\.worktrees\wotlk-item-forge\src-tauri\target\debug\deps\option_ext-bfaeca1e355df4e4.d: C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\option-ext-0.2.0\src\lib.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\option-ext-0.2.0\src\impl.rs
+
+R:\Users\Zach\Documents\GitHub\WotLKItemGenerator\.worktrees\wotlk-item-forge\src-tauri\target\debug\deps\liboption_ext-bfaeca1e355df4e4.rlib: C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\option-ext-0.2.0\src\lib.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\option-ext-0.2.0\src\impl.rs
+
+R:\Users\Zach\Documents\GitHub\WotLKItemGenerator\.worktrees\wotlk-item-forge\src-tauri\target\debug\deps\liboption_ext-bfaeca1e355df4e4.rmeta: C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\option-ext-0.2.0\src\lib.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\option-ext-0.2.0\src\impl.rs
+
+C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\option-ext-0.2.0\src\lib.rs:
+C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\option-ext-0.2.0\src\impl.rs:

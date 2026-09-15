@@ -1,0 +1,18 @@
+[package]
+name = "wotlk-item-forge"
+version = "0.1.0"
+description = "WotLK Item Forge desktop shell"
+authors = ["WotLK Item Forge"]
+edition = "2021"
+
+[lib]
+name = "wotlk_item_forge_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3" }
+
+[dependencies]
+tauri = { version = "2.11.5" }
+tauri-plugin-dialog = "2.7.3"
+tauri-plugin-shell = "2.3.6"

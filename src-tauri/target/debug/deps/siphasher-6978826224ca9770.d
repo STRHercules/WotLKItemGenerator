@@ -1,0 +1,11 @@
+R:\Users\Zach\Documents\GitHub\WotLKItemGenerator\.worktrees\wotlk-item-forge\src-tauri\target\debug\deps\siphasher-6978826224ca9770.d: C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\lib.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\common.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\sip.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\sip128.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\../README.md
+
+R:\Users\Zach\Documents\GitHub\WotLKItemGenerator\.worktrees\wotlk-item-forge\src-tauri\target\debug\deps\libsiphasher-6978826224ca9770.rlib: C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\lib.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\common.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\sip.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\sip128.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\../README.md
+
+R:\Users\Zach\Documents\GitHub\WotLKItemGenerator\.worktrees\wotlk-item-forge\src-tauri\target\debug\deps\libsiphasher-6978826224ca9770.rmeta: C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\lib.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\common.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\sip.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\sip128.rs C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\../README.md
+
+C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\lib.rs:
+C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\common.rs:
+C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\sip.rs:
+C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\sip128.rs:
+C:\Users\Zach\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\siphasher-1.0.3\src\../README.md:
