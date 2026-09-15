@@ -11,3 +11,4 @@ def test_json_line_ui_emits_one_json_object_per_line():
     event = json.loads(stream.getvalue().strip())
     assert event["type"] == "phase"
     assert event["payload"]["total"] == 100
+    assert stream.getvalue().endswith("\n")
