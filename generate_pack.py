@@ -359,6 +359,14 @@ def notable_item_event(item):
     return None
 
 
+def _json_safe(value):
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
 # ---- opening animation ------------------------------------------------------
 # Ported from the WotLK Item Generator Rich loader pack (`wotlk_loader.py`):
 # a slowly rotating shaded globe, drifting motes, and a rarity-rolling progress
@@ -617,6 +625,112 @@ class PlainTerminalUI:
         pass
 
 
+class JsonLineUI(PlainTerminalUI):
+    """Structured stdout events for desktop clients and other importers."""
+    def __init__(self, stream=None):
+        super().__init__(stream=stream or sys.stdout, animations=False, show_items=False)
+        self._phase = ""
+        self._last_emit = 0.0
+        self._last_progress_percent = None
+        self._last_progress_class = None
+
+    def _emit(self, event_type, payload=None):
+        record = {
+            "type": event_type,
+            "timestamp": datetime.now().astimezone().isoformat(),
+            "payload": payload or {},
+        }
+        self.stream.write(json.dumps(_json_safe(record), ensure_ascii=False, default=str) + "\n")
+        self.stream.flush()
+
+    def startup(self, detail=''):
+        self._emit('startup', {'detail': detail})
+
+    def startup_status(self, text):
+        self._emit('startup_status', {'message': str(text)})
+
+    def banner(self):
+        pass
+
+    def configure(self, runtime):
+        self.runtime = runtime
+        summary = {key: runtime[key] for key in (
+            'seed', 'source', 'output_dir', 'number', 'class_name', 'classes',
+            'loot_destinations', 'disabled_features') if key in runtime}
+        self._emit('configure', {'runtime': summary})
+
+    def source_check(self, label, path, ok=True):
+        self._emit('source_check', {'label': label, 'path': str(path), 'ok': bool(ok)})
+
+    def phase(self, name, total=None, detail=''):
+        self._phase = name
+        self._last_progress_percent = None
+        self._last_progress_class = None
+        self._last_emit = 0.0
+        self._emit('phase', {'name': name, 'total': int(total or 0), 'detail': detail})
+
+    def progress(self, completed, total, current='', class_name=None, class_completed=None, class_total=None):
+        total = int(total or 0)
+        if not total:
+            return
+        completed = int(completed)
+        percent = min(100, int((completed / max(1, total)) * 100))
+        now = time.monotonic()
+        percentage_changed = percent != self._last_progress_percent
+        class_changed = class_name != self._last_progress_class
+        if (self._last_progress_percent is not None and not percentage_changed and
+                not class_changed and completed < total and now - self._last_emit < 0.05):
+            return
+        self._last_emit = now
+        self._last_progress_percent = percent
+        self._last_progress_class = class_name
+        self._emit('progress', {
+            'phase': self._phase,
+            'completed': completed,
+            'total': total,
+            'percent': percent,
+            'current': current,
+            'class_name': class_name,
+            'class_completed': class_completed,
+            'class_total': class_total,
+        })
+
+    def status(self, text):
+        self._emit('status', {'message': str(text)})
+
+    def event(self, kind, title, detail=''):
+        self._emit('event', {'kind': kind, 'title': title, 'detail': detail})
+
+    def item(self, item):
+        event = notable_item_event(item)
+        if event and event['kind'] == 'set':
+            set_id = item.get('itemset')
+            if set_id in self._seen_sets:
+                return
+            self._seen_sets.add(set_id)
+        if event:
+            self._emit('discovery', event)
+
+    def phase_done(self, name=None, detail=''):
+        self._emit('phase_done', {'name': name or self._phase, 'detail': detail})
+
+    def validation(self, errors, name_changes=()):
+        self._emit('validation', {'errors': list(errors), 'name_changes': list(name_changes)})
+
+    def complete(self, report, elapsed, output_dir):
+        self._emit('complete', {
+            'report': report,
+            'output_path': str(output_dir),
+            'elapsed_seconds': float(elapsed),
+        })
+
+    def error(self, message):
+        self._emit('error', {'message': str(message)})
+
+    def cancelled(self, message='Generation cancelled by user.'):
+        self._emit('cancelled', {'message': str(message)})
+
+
 class QuietTerminalUI(PlainTerminalUI):
     def __init__(self,stream=None,**kwargs):
         super().__init__(stream=stream,quiet=True,animations=False,show_items=False)
@@ -854,6 +968,8 @@ class FancyTerminalUI(PlainTerminalUI):
 
 
 def create_terminal_ui(args,stream=None,is_tty=None,rich_available=None):
+    if getattr(args,'event_stream','none') == 'jsonl':
+        return JsonLineUI(stream=stream)
     if getattr(args,'quiet',False):
         return QuietTerminalUI(stream=stream)
     mode=resolve_ui_mode(getattr(args,'ui','auto'),is_tty=is_tty,rich_available=rich_available)
@@ -2073,6 +2189,12 @@ def parse_args(argv=None):
     parser.add_argument('--disenchant-rate',type=_percent_arg,default=100.0,metavar='PERCENT',help='Percentage of eligible items receiving validated stock disenchant data (default: 100).')
     parser.add_argument('--max-special-effects',type=_nonnegative_int_arg,default=1,metavar='COUNT',help='Maximum independent spell-effect packages per item (default: 1).')
     parser.add_argument('--ui',choices=UI_MODES,default='auto',help='Terminal display mode: auto, fancy, or plain (default: auto).')
+    parser.add_argument(
+        '--event-stream',
+        choices=('none', 'jsonl'),
+        default='none',
+        help='Emit machine-readable generator events.'
+    )
     parser.add_argument('--no-animations',action='store_true',help='Keep the styled UI but disable the opening animation and animated spinners/refresh effects.')
     parser.add_argument('--show-items',action='store_true',help='Expand the live discovery feed with additional interesting generated items.')
     parser.add_argument('--quiet',action='store_true',help='Suppress progress output; print only errors and the final completion line.')
@@ -8032,7 +8154,8 @@ def main(argv=None):
         ui.complete(report,time.monotonic()-started,runtime['output_dir'])
         return report
     except KeyboardInterrupt:
-        ui.error('Generation cancelled by user.')
+        cancelled = getattr(ui, 'cancelled', None)
+        (cancelled or ui.error)('Generation cancelled by user.')
         raise
     except Exception as exc:
         ui.error(str(exc))
