@@ -217,6 +217,33 @@ class BandTests(unittest.TestCase):
 
         self.assertFalse(evidence['reference_provenance'][0]['verified_parent'])
 
+    def test_reference_consumer_maps_honor_catalog_scope(self):
+        catalog = _loot_catalog(
+            [(9100, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'one map'),
+             (9110, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'other map')],
+            maps={
+                100: {'id': 100, 'directory': 'ClassicDungeon', 'map_type': 1,
+                      'instance_type': 1, 'expansion': 0},
+                200: {'id': 200, 'directory': 'WrathRaid', 'map_type': 2,
+                      'instance_type': 1, 'expansion': 2},
+            },
+            creatures={
+                10: {'entry': 10, 'name': 'Classic Boss', 'lootid': 9100,
+                     'minlevel': 60, 'maxlevel': 60},
+                20: {'entry': 20, 'name': 'Wrath Boss', 'lootid': 9110,
+                     'minlevel': 80, 'maxlevel': 80},
+            },
+            creature_maps={10: {100}, 20: {200}},
+            stock_items={5001: _stock_item(5001, 60, 60)},
+        )
+        catalog['reference_loot_rows'] = [
+            (9200, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'shared gear'),
+        ]
+        catalog['reference_loot_entries'] = {9200}
+        catalog['scope_map_ids'] = {100}
+
+        self.assertEqual(g._reference_consumer_maps(catalog, 9200), {100})
+
     def test_one_map_normal_parent_is_verified_reference_provenance(self):
         catalog = _loot_catalog(
             [(9100, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'normal reference')],
@@ -2502,6 +2529,41 @@ INSERT INTO `quest_template` VALUES
 
 
 class SourceTests(unittest.TestCase):
+    def test_appearance_report_rows_include_provenance_and_strict_scope_rejects_later_source(self):
+        self.assertEqual(
+            g.appearance_provenance_row((123, 456, 60, 3), source='item_template.sql'),
+            {'reference_entry': 123, 'displayid': 456, 'item_level': 60,
+             'quality': 3, 'source': 'item_template.sql',
+             'earliest_expansion': 'Classic'},
+        )
+        with self.assertRaises(ValueError):
+            g.validate_appearance_provenance(
+                [{'reference_entry': 123, 'displayid': 456, 'item_level': 150,
+                  'quality': 4, 'source': 'item_template.sql',
+                  'earliest_expansion': 'Wrath'}],
+                expansion='Classic', strict=True)
+
+    def test_gameobject_discovery_honors_expansion_and_destination_scope(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['maps'][631]['expansion'] = 2
+        catalog['maps'][100] = {
+            'id': 100, 'directory': 'ClassicDungeon', 'map_type': 1,
+            'instance_type': 1, 'expansion': 0,
+        }
+        catalog['gameobject_templates'][7002] = {
+            'entry': 7002, 'type': 3, 'name': 'Classic Reward Chest',
+            'lootid': 97002,
+        }
+        catalog['gameobject_spawns'].append(
+            {'guid': 45, 'id': 7002, 'map': 100, 'spawn_mask': 3})
+        catalog['gameobject_maps'][7002] = {100}
+        catalog['gameobject_loot_entries'].add(97002)
+
+        rows = g.discover_gameobject_reward_targets(
+            catalog, expansion='Classic', destinations={'dungeon'})
+
+        self.assertEqual({row['map_id'] for row in rows}, {100})
+
     def test_gameobject_parent_reference_is_provenance_aware(self):
         catalog = _catalog_with_gameobject_sources()
         catalog['gameobject_loot_columns'] = catalog['creature_loot_columns']
@@ -2558,6 +2620,46 @@ void InstanceTest::SetBossState(uint32 id, EncounterState state) {
                 'gameobject_loot_entries': {97001},
             })
         self.assertIn('RAID_DIFFICULTY_10_N', mappings[0]['difficulty_condition'])
+
+    def test_script_discovery_honors_expansion_and_destination_scope(self):
+        source = """
+const uint32 GO_REWARD_CHEST = {entry};
+void InstanceTest::SetBossState(uint32 id, EncounterState state) {{
+    if (state == DONE)
+        instance->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+}}
+struct InstanceTestMapScript : public InstanceMapScript
+{{
+    InstanceTestMapScript() : InstanceMapScript("instance_test", {map_id}) {{ }}
+}};
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'classic.cpp').write_text(
+                source.format(entry=7001, map_id=574), encoding='utf-8')
+            (root / 'wrath.cpp').write_text(
+                source.format(entry=7002, map_id=631), encoding='utf-8')
+            catalog = {
+                'maps': {
+                    574: {'id': 574, 'directory': 'ClassicDungeon',
+                          'map_type': 1, 'instance_type': 1, 'expansion': 0},
+                    631: {'id': 631, 'directory': 'WrathRaid',
+                          'map_type': 2, 'instance_type': 1, 'expansion': 2},
+                },
+                'gameobject_templates': {
+                    7001: {'entry': 7001, 'type': 3, 'name': 'Classic Chest',
+                           'lootid': 97001},
+                    7002: {'entry': 7002, 'type': 3, 'name': 'Wrath Chest',
+                           'lootid': 97002},
+                },
+                'gameobject_loot_entries': {97001, 97002},
+            }
+            mappings, status = g.discover_script_reward_mappings(
+                root, catalog, 'Classic', {'dungeon'})
+
+        self.assertEqual(status, 'exercised')
+        self.assertEqual({mapping['map_id'] for mapping in mappings}, {574})
+        self.assertEqual(catalog['source_audit']['script_reward_scan']['files_scanned'], 1)
 
     def test_nested_control_block_does_not_inherit_outer_done_condition(self):
         source = """

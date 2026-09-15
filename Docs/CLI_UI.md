@@ -1,6 +1,6 @@
 # WotLK Item Generator — Live CLI UI
 
-The generator now includes a Rich setup wizard and presentation-only terminal dashboard. The dashboard does not participate in item randomization, hashing, naming, stat selection, effects, sets, loot, SQL, or DBC generation; the setup wizard selects the run's item count and loot destinations.
+The generator now includes a Rich setup wizard and presentation-only terminal dashboard. The dashboard does not participate in item randomization, hashing, naming, stat selection, effects, sets, loot, SQL, or DBC generation; the setup wizard selects the run's expansion scope, generation features, classes, item count, and loot destinations.
 
 ## Display modes
 
@@ -26,12 +26,14 @@ If Rich is unavailable, use an explicit CLI run with `--ui plain`.
 ## What the live dashboard shows
 
 - a short opening splash: a slowly rotating shaded globe, drifting motes, and a progress bar whose accent color rolls through the item-rarity palette (about two seconds; skipped by `--no-animations`, `--ui plain`, and `--quiet`)
-- the setup wizard's required `Data/` DBC/SQL file list, remembered AzerothCore path, item count, loot destination choices, and final confirmation on a bare run
+- the setup wizard's required `Data/` DBC/SQL file list, remembered AzerothCore path, expansion, magic effects, sockets, socket bonuses, sets, Legendaries, disenchant data, classes, item count, loot destination choices, and final confirmation on a bare run
 - cached source mappings on later runs; DBC/SQL/source changes automatically trigger a rebuild
 - the same globe keeps rotating inside the `Current Work` panel while the startup phases run (starting the forge, inspecting sources, harvesting stock data); it disappears once item generation begins
 - source SQL/DBC checks
 - seed, item count, selected classes, enabled features, and output path
 - selected world, dungeon, and/or raid loot insertion destinations
+- selected expansion limits generated levels, appearance sources, and matching dungeon/raid discovery
+- `reference_catalog_used.csv` records each selected appearance's source and earliest expansion; strict scope validation can fail the run on later-era provenance
 - targeted manifest encounter/quest assignment mode when `--content-manifest` is used
 - true overall progress through skeleton generation and item finalization
 - per-class progress bars

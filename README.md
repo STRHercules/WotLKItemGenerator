@@ -4,7 +4,7 @@
 
 Deterministic custom equipment generation for AzerothCore / World of Warcraft: Wrath of the Lich King 3.3.5a (build 12340).
 
-Running `py generate_pack.py` opens a Rich setup wizard that lists the required `Data/` inputs, remembers the AzerothCore source directory, asks for the item count and loot destinations, and confirms the run before generation.
+Running `py generate_pack.py` opens a Rich setup wizard that lists the required `Data/` inputs, remembers the AzerothCore source directory, asks for the expansion, effects, sockets, sets, Legendaries, disenchant data, classes, item count, and loot destinations, then confirms the run before generation.
 
 Derived source mappings are cached in the user profile and automatically rebuilt when the relevant DBC/SQL/source files or generator code changes.
 
@@ -42,7 +42,7 @@ Windows / PowerShell:
 py generate_pack.py
 ```
 
-The wizard defaults to 100,000 items and All of the Above after confirmation. Explicit options such as `--number` remain available for non-interactive runs.
+The wizard defaults to the All expansion, all magic effects, enabled optional features, all classes, and All of the Above loot insertion. Its item-count default is 100,000 for all classes or 10,000 per selected class; explicit options such as `--number` remain available for non-interactive runs.
 
 Linux / macOS:
 
@@ -79,8 +79,12 @@ py generate_pack.py --ui fancy
 | Maximum per class | 20,000 |
 | World-loot attachment chance | 2% |
 | Death Knight required level | 55-80 |
+| Expansion scope | All (levels 1-80) |
+| Magic effects | All |
+| Sockets, socket bonuses, sets, Legendaries, disenchant data | Enabled |
 
 Use `--number` and `--class` to control pack size. Use `--seed` when you need the same pack again.
+Expansion choices use Classic (1-60), TBC (58-70), Wrath (68-80), or All (1-80) and limit matching dungeon/raid loot areas.
 
 ## Common options
 
@@ -90,6 +94,8 @@ Use `--number` and `--class` to control pack size. Use `--seed` when you need th
 --loot-chance PERCENT         World-loot attachment chance
 --disable FEATURE ...         Disable sets, effects, procs, on-use, sockets, or disenchant
 --set-rate / --set-min-level / --set-size
+--no-sockets                  Skip socket colors, including Legendary sockets
+--strict-expansion-scoping    Fail on appearance provenance outside the selected expansion
 --ui auto|fancy|plain         Terminal presentation
 --quiet                       Errors and final completion line only
 --azerothcore-source-root PATH  AzerothCore checkout used to scan scripted reward caches

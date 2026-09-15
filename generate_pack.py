@@ -28,6 +28,13 @@ DISENCHANT_SOURCE = None
 SPELL_PROC_SOURCE = None
 SPELL_SCRIPT_NAMES_SOURCE = None
 DISABLED_FEATURES = set()
+GENERATE_SOCKETS = True
+GENERATE_LEGENDARIES = True
+EXPANSION = 'All'
+ACTIVE_LEVEL_RANGE = (1, 80)
+MAGIC_EFFECTS = 'All'
+STRICT_EXPANSION_SCOPING = False
+APPEARANCE_PROVENANCE = {}
 FEATURE_CATALOG = None
 SET_RATE = None
 SET_MIN_LEVEL = None
@@ -56,6 +63,58 @@ INTERACTIVE_MAX_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
 MAX_ITEMS_PER_CLASS = 20_000
 MAX_TOTAL_ITEMS = 200_000
+EXPANSION_CHOICES = ('Classic', 'TBC', 'Wrath', 'All')
+EXPANSION_LEVEL_RANGES = {
+    'Classic': (1, 60), 'TBC': (58, 70), 'Wrath': (68, 80), 'All': (1, 80),
+}
+EXPANSION_IDS = {'Classic': 0, 'TBC': 1, 'Wrath': 2}
+EXPANSION_REFERENCE_ITEM_LEVEL_RANGES = {
+    'Classic': (1, 100), 'TBC': (80, 164), 'Wrath': (110, 284), 'All': (1, 284),
+}
+_TBC_NAME_TERMS = frozenset({
+    'burningcrusade', 'outland', 'draenei', 'bloodelf', 'sindorei', 'silvermoon',
+    'exodar', 'hellfire', 'shadowmoon', 'netherstorm', 'nagrand', 'terokkar',
+    'zangarmarsh', 'sunwell', 'tempestkeep', 'blacktemple', 'karazhan',
+    'mounthyjal', 'bladeedge', 'nether', 'fel',
+})
+_WRATH_NAME_TERMS = frozenset({
+    'northrend', 'icecrown', 'scourge', 'saronite', 'vrykul', 'nerubian', 'borean',
+    'dragonblight', 'howlingfjord', 'sholazar', 'zuldrak', 'wintergrasp', 'dalaran',
+    'nexus', 'utgarde', 'gundrak', 'draktharon', 'azjolnerub', 'naxxramas', 'ulduar',
+    'wyrmrest', 'ebon', 'deathknight', 'runeblade', 'frostborn', 'valkyr',
+    'sunreaver', 'argentvanguard', 'wrathgate', 'lichking', 'wotlk', 'wrath',
+    'titanforged', 'rimefang', 'runekeeper', 'shadowvault', 'frozenhalls',
+    'pitofsaron', 'forgeofsouls', 'hallsofreflection', 'crusaderscoliseum',
+    'deathrise', 'oculus', 'violethold', 'grizzlyhills', 'boreanexpanse',
+    'valiancekeep', 'utgardekeep', 'utgardepinnacle', 'sonsofhodir',
+    'mimironforge', 'freyagarden', 'thorimarena', 'hodirhall', 'yoggprison',
+    'argenttournament', 'onslaught', 'sindragosa', 'corpsescar',
+    'icecrowncitadel', 'obsidiansanctum', 'rubysanctum', 'eyeofeternity',
+    'frozencrown', 'frozenthrone', 'scarletbastion',
+    'frenzyheart', 'argentcrusader', 'argentcrusade', 'constructwing',
+    'plaguewing', 'militarywing', 'spiderwing',
+    'silvercovenant', 'warsonghold', 'titanwatch', 'taunkavillage', 'stormpeaks',
+    'drakkari', 'oracle', 'yak', 'grizzly', 'stormpeak',
+})
+_POST_WOTLK_NAME_TERMS = frozenset({
+    'mantid', 'mechagnome', 'gilnean', 'arathian', 'pandaren', 'draenor', 'warlords',
+    'legion', 'kultiras', 'zandalari', 'shadowlands', 'dragonflight', 'dracthyr',
+    'warwithin',
+})
+EXPANSION_NAME_EXCLUSIONS = {
+    'Classic': _TBC_NAME_TERMS | _WRATH_NAME_TERMS | _POST_WOTLK_NAME_TERMS,
+    'TBC': _WRATH_NAME_TERMS | _POST_WOTLK_NAME_TERMS,
+    'Wrath': _POST_WOTLK_NAME_TERMS,
+    'All': frozenset(),
+}
+MAGIC_EFFECT_CHOICES = ('On Hit', 'On Use', 'On Equip', 'None', 'All')
+MAGIC_EFFECT_DISABLED_FEATURES = {
+    'On Hit': ('spell-effects', 'on-use'),
+    'On Use': ('chance-on-hit', 'spell-effects'),
+    'On Equip': ('chance-on-hit', 'on-use'),
+    'None': ('spell-effects', 'chance-on-hit', 'on-use'),
+    'All': (),
+}
 DEFAULT_LOOT_DESTINATIONS = frozenset(('world', 'dungeon', 'raid'))
 LOOT_DESTINATIONS = set(DEFAULT_LOOT_DESTINATIONS)
 LOOT_DESTINATION_CHOICES = (
@@ -187,6 +246,139 @@ def _interactive_number_arg(value):
         raise ValueError('number must be an integer from 1 to 100,000')
     return number
 
+def _normalise_expansion(choice):
+    value=str(choice).strip().casefold()
+    for label in EXPANSION_CHOICES:
+        if label.casefold()==value:
+            return label
+    raise ValueError(f'unknown expansion {choice!r}; choose from: {", ".join(EXPANSION_CHOICES)}')
+
+_EXPANSION_POOL_CACHE={}
+
+def _expansion_pool(pool):
+    key=(EXPANSION,id(pool))
+    if key not in _EXPANSION_POOL_CACHE:
+        excluded=EXPANSION_NAME_EXCLUSIONS.get(EXPANSION,frozenset())
+        values=tuple(value for value in pool if not any(
+            term in ''.join(ch for ch in str(value).casefold() if ch.isalnum())
+            for term in excluded))
+        if not values:
+            raise ValueError(f'no name-pool entries remain for expansion {EXPANSION}')
+        _EXPANSION_POOL_CACHE[key]=values
+    return _EXPANSION_POOL_CACHE[key]
+
+def expansion_level_range(choice):
+    return EXPANSION_LEVEL_RANGES[_normalise_expansion(choice)]
+
+def _reference_scope_allows(required_level=None,item_level=None):
+    if required_level is not None:
+        required_level=int(required_level)
+        lo,hi=ACTIVE_LEVEL_RANGE
+        if required_level and not lo<=required_level<=hi:
+            return False
+        if item_level is not None:
+            ref_lo,ref_hi=EXPANSION_REFERENCE_ITEM_LEVEL_RANGES[_normalise_expansion(EXPANSION)]
+            return ref_lo<=int(item_level)<=ref_hi
+        return True
+    else:
+        lo,hi=EXPANSION_REFERENCE_ITEM_LEVEL_RANGES[_normalise_expansion(EXPANSION)]
+        item_level=int(item_level)
+        return lo<=item_level<=hi
+    return lo<=required_level<=hi
+
+def _earliest_expansion_for_appearance(item_level,required_level=None):
+    item_level=int(item_level)
+    required_level=0 if required_level in (None,'') else int(required_level)
+    if item_level<=100 and (required_level==0 or required_level<=60):
+        return 'Classic'
+    if item_level<=164 and (required_level==0 or required_level<=70):
+        return 'TBC'
+    return 'Wrath'
+
+def appearance_provenance_row(row,source='unknown',required_level=None):
+    return {
+        'reference_entry':int(row[0]),'displayid':int(row[1]),
+        'item_level':int(row[2]),'quality':int(row[3]),
+        'source':str(source or 'unknown'),
+        'earliest_expansion':_earliest_expansion_for_appearance(row[2],required_level),
+    }
+
+def validate_appearance_provenance(rows,expansion=None,strict=None):
+    selected=_normalise_expansion(EXPANSION if expansion is None else expansion)
+    strict=STRICT_EXPANSION_SCOPING if strict is None else bool(strict)
+    normalized=[]; errors=[]
+    for index,row in enumerate(rows):
+        try:
+            normalized_row={
+                'reference_entry':int(row['reference_entry']),
+                'displayid':int(row['displayid']),
+                'item_level':int(row['item_level']),
+                'quality':int(row['quality']),
+                'source':str(row.get('source') or ''),
+                'earliest_expansion':_normalise_expansion(row.get('earliest_expansion')),
+            }
+        except (KeyError,TypeError,ValueError) as exc:
+            errors.append(f'appearance row {index} is malformed: {exc}')
+            continue
+        if not normalized_row['source']:
+            errors.append(f'appearance row {index} has no source')
+        if normalized_row['earliest_expansion']=='All':
+            errors.append(f'appearance row {index} has no earliest expansion')
+        if strict and selected!='All':
+            if EXPANSION_IDS[normalized_row['earliest_expansion']]>EXPANSION_IDS[selected]:
+                errors.append(f"appearance {normalized_row['reference_entry']} is from {normalized_row['earliest_expansion']}, outside {selected} scope")
+            low,high=EXPANSION_REFERENCE_ITEM_LEVEL_RANGES[selected]
+            if not low<=normalized_row['item_level']<=high:
+                errors.append(f"appearance {normalized_row['reference_entry']} item level {normalized_row['item_level']} is outside {selected} scope")
+        normalized.append(normalized_row)
+    if errors:
+        raise ValueError('appearance provenance validation failed: '+'; '.join(errors[:20]))
+    return normalized
+
+def _appearance_provenance_index(armor,weapons,report=None):
+    rows=list((report or {}).get('appearance_provenance') or ())
+    if not rows:
+        source=(report or {}).get('source','unknown')
+        rows=[appearance_provenance_row(row,source)
+              for category in (armor,weapons)
+              for values in category.values() for row in values]
+    return {(row['reference_entry'],row['displayid']):dict(row) for row in rows}
+
+def _filter_reference_rows(rows):
+    return [row for row in rows if _reference_scope_allows(item_level=row[2])]
+
+def _normalise_magic_effect(choice):
+    value=str(choice).strip().casefold()
+    for label in MAGIC_EFFECT_CHOICES:
+        if label.casefold()==value:
+            return label
+    raise ValueError(f'unknown magic effect choice {choice!r}; choose from: {", ".join(MAGIC_EFFECT_CHOICES)}')
+
+def _interactive_class_names(value):
+    raw=str(value).strip()
+    if raw.casefold()=='all':
+        return tuple(row[0] for row in CLASSES)
+    names=[]
+    for token in raw.split(','):
+        token=token.strip()
+        if not token:
+            raise ValueError('classes must be comma-separated names or ALL')
+        try:
+            name=_class_arg(token)
+        except argparse.ArgumentTypeError as exc:
+            raise ValueError(str(exc)) from exc
+        if name not in names:
+            names.append(name)
+    return tuple(names)
+
+def _interactive_disabled_features(magic_effect, socket_bonuses=True, generate_sets=True, generate_disenchant=True):
+    choice=_normalise_magic_effect(magic_effect)
+    disabled=set(MAGIC_EFFECT_DISABLED_FEATURES[choice])
+    if not socket_bonuses: disabled.add('socket-bonuses')
+    if not generate_sets: disabled.add('sets')
+    if not generate_disenchant: disabled.add('disenchant')
+    return sorted(disabled)
+
 def loot_destinations_for_choice(choice):
     for label,destinations in LOOT_DESTINATION_CHOICES:
         if choice == label:
@@ -260,7 +452,7 @@ def _source_cache_files(source_root):
             files.update(path for path in base.rglob('*') if path.is_file() and path.suffix.lower() in suffixes)
     return tuple(sorted(files,key=lambda path:str(path)))
 
-def _source_cache_key(paths,source_root=None,loot_chance=None):
+def _source_cache_key(paths,source_root=None,loot_chance=None,expansion=None,destinations=None):
     files={}
     for path in (*paths,*_source_cache_files(source_root)):
         resolved=Path(path).expanduser().resolve()
@@ -276,6 +468,8 @@ def _source_cache_key(paths,source_root=None,loot_chance=None):
         'generator':hashlib.sha256(script.read_bytes()).hexdigest(),
         'source_root':None if source_root is None else str(Path(source_root).expanduser().resolve()),
         'loot_chance':loot_chance,
+        'expansion':_normalise_expansion(EXPANSION if expansion is None else expansion),
+        'loot_destinations':None if destinations is None else sorted(set(destinations)),
         'files':dict(sorted(files.items())),
     }
 
@@ -306,18 +500,46 @@ def _load_source_cache(path,key):
 def _encounter_destination(map_type):
     return 'raid' if int(map_type or 1)==2 else 'dungeon'
 
-def filter_encounter_manifest(manifest,destinations):
+def _encounter_scope_map_ids(catalog,expansion='All',destinations=None):
+    selected={'dungeon','raid'} if destinations is None else set(destinations) & {'dungeon','raid'}
+    expansion_name=_normalise_expansion(expansion)
+    expansion_id=EXPANSION_IDS.get(expansion_name)
+    return {int(map_id) for map_id,row in catalog.get('maps',{}).items()
+            if int(row.get('map_type',0) or 0) in (1,2) and
+            _encounter_destination(row.get('map_type')) in selected and
+            (expansion_id is None or row.get('expansion') is not None and
+             int(row.get('expansion'))==expansion_id)}
+
+def _catalog_scope_map_ids(catalog):
+    scope=catalog.get('scope_map_ids')
+    return None if scope is None else {int(map_id) for map_id in scope}
+
+def _maps_in_catalog_scope(catalog,maps):
+    scope=_catalog_scope_map_ids(catalog)
+    return {int(map_id) for map_id in maps} if scope is None else {
+        int(map_id) for map_id in maps if int(map_id) in scope}
+
+def filter_encounter_manifest(manifest,destinations,expansion='All'):
     if manifest is None:
         return None
     selected=set(destinations or ()) & {'dungeon','raid'}
     if not selected:
         return None
+    expansion_name=_normalise_expansion(expansion)
+    expansion_id=EXPANSION_IDS.get(expansion_name)
+    def include(row):
+        if int(row.get('map_type',0) or 0) not in (1,2) or _encounter_destination(row.get('map_type')) not in selected:
+            return False
+        if expansion_id is None:
+            return True
+        try:
+            return int(row.get('expansion'))==expansion_id
+        except (TypeError,ValueError):
+            return False
     result=dict(manifest)
-    result['profiles']=[profile for profile in manifest.get('profiles',())
-                        if _encounter_destination(profile.get('map_type')) in selected]
+    result['profiles']=[profile for profile in manifest.get('profiles',()) if include(profile)]
     if 'coverage' in manifest:
-        result['coverage']=[row for row in manifest.get('coverage',())
-                            if _encounter_destination(row.get('map_type')) in selected]
+        result['coverage']=[row for row in manifest.get('coverage',()) if include(row)]
     return result if result['profiles'] else None
 
 
@@ -514,6 +736,8 @@ class PlainTerminalUI:
         features=' • '.join(_feature_display_names(runtime.get('disabled_features',()))) or 'None'
         self._write(f"Seed: {runtime['seed']} ({runtime['source']})")
         self._write(f"Items: {runtime['number']:,} | Classes: {', '.join(runtime['classes'])}")
+        self._write(f"Expansion: {runtime.get('expansion','All')} | Magic effects: {runtime.get('magic_effects','All')}")
+        self._write(f"Sockets: {'yes' if runtime.get('generate_sockets',True) else 'no'} | Legendaries: {'yes' if runtime.get('generate_legendaries',True) else 'no'}")
         self._write(f"Features: {features}")
         destinations=' + '.join(runtime.get('loot_destinations',())) or 'none'
         self._write(f"Loot insertion: {destinations}")
@@ -793,6 +1017,10 @@ class FancyTerminalUI(PlainTerminalUI):
             cfg.add_row('Seed',f"{self.runtime['seed']} ({self.runtime['source']})")
             cfg.add_row('Items',f"{self.runtime['number']:,}")
             cfg.add_row('Classes',', '.join(self.runtime['classes']))
+            cfg.add_row('Expansion',self.runtime.get('expansion','All'))
+            cfg.add_row('Magic effects',self.runtime.get('magic_effects','All'))
+            cfg.add_row('Sockets','yes' if self.runtime.get('generate_sockets',True) else 'no')
+            cfg.add_row('Legendaries','yes' if self.runtime.get('generate_legendaries',True) else 'no')
             cfg.add_row('Features',features)
             destinations=' + '.join(self.runtime.get('loot_destinations',())) or 'none'
             cfg.add_row('Loot insertion',destinations)
@@ -1621,10 +1849,10 @@ ARMOR_BASE_BY_SUBCLASS = {
 
 def base_pool_for_item(slot, weapon_kind=None, armor_subclass=None):
     if weapon_kind:
-        return BASE_BY_WEAPON[weapon_kind]
+        return _expansion_pool(BASE_BY_WEAPON[weapon_kind])
     if armor_subclass in ARMOR_BASE_BY_SUBCLASS and slot in ARMOR_BASE_BY_SUBCLASS[armor_subclass]:
-        return ARMOR_BASE_BY_SUBCLASS[armor_subclass][slot]
-    return BASE_BY_SLOT[slot]
+        return _expansion_pool(ARMOR_BASE_BY_SUBCLASS[armor_subclass][slot])
+    return _expansion_pool(BASE_BY_SLOT[slot])
 
 BASE_BY_WEAPON = {
     '1h_sword': [
@@ -2023,6 +2251,8 @@ def parse_args(argv=None):
     parser.add_argument('--seed',type=_seed_arg,help='Use this exact numeric seed instead of generating one automatically.')
     parser.add_argument('--number',type=_number_arg,help=f'Generate exactly this many items (max {MAX_TOTAL_ITEMS:,} total; max {MAX_ITEMS_PER_CLASS:,} per class).')
     parser.add_argument('--class',dest='class_name',type=_class_arg,help='Generate items for only this class (case-insensitive).')
+    parser.add_argument('--expansion',choices=EXPANSION_CHOICES,default='All',help='Expansion scope for levels, appearances, and encounter discovery (default: All).')
+    parser.add_argument('--strict-expansion-scoping',action='store_true',help='Fail if an appearance provenance row is outside the selected expansion scope.')
     parser.add_argument('--content-manifest',type=Path,default=None,metavar='PATH',help='JSON manifest for targeted recipes, dungeon/raid loot, and quest rewards.')
     parser.add_argument('--quest-template-source',type=Path,default=None,metavar='PATH',help='quest_template.sql used to validate and preserve mapped quest rewards.')
     parser.add_argument('--loot-chance',type=_loot_chance_arg,default=2.0,metavar='PERCENT',help='Independent generated-item roll on each existing world-loot reference (default: 2).')
@@ -2050,6 +2280,7 @@ def parse_args(argv=None):
     parser.add_argument('--on-use-rate-multiplier',type=_multiplier_arg,default=1.0,metavar='MULTIPLIER',help='Multiplier for stock On Use frequency (default: 1.0).')
     parser.add_argument('--effect-ilvl-window',type=_nonnegative_int_arg,default=15,metavar='ILVL',help='Maximum stock effect item-level distance; leveling items are additionally capped to 5/10/15 ilvl windows for WotLK-like progression (default: 15).')
     parser.add_argument('--socket-bonus-rate',type=_percent_arg,default=100.0,metavar='PERCENT',help='Percentage of eligible socketed items receiving a stock socket bonus (default: 100).')
+    parser.add_argument('--no-sockets',dest='generate_sockets',action='store_false',default=True,help='Do not generate socket colors, including on Legendary items.')
     parser.add_argument('--disenchant-rate',type=_percent_arg,default=100.0,metavar='PERCENT',help='Percentage of eligible items receiving validated stock disenchant data (default: 100).')
     parser.add_argument('--max-special-effects',type=_nonnegative_int_arg,default=1,metavar='COUNT',help='Maximum independent spell-effect packages per item (default: 1).')
     parser.add_argument('--ui',choices=UI_MODES,default='auto',help='Terminal display mode: auto, fancy, or plain (default: auto).')
@@ -2103,10 +2334,31 @@ def interactive_setup(storage_path=USER_AZEROTHCORE_SOURCE_FILE,console=None):
                 break
             console.print('[red]Enter an existing AzerothCore directory.[/]')
 
+    expansion=Prompt.ask('Which expansion should guide generation?',choices=EXPANSION_CHOICES,default='All',console=console)
+    expansion=_normalise_expansion(expansion)
+    magic_effects=Prompt.ask('Which magic effects should be generated?',choices=MAGIC_EFFECT_CHOICES,default='All',console=console)
+    magic_effects=_normalise_magic_effect(magic_effects)
+    generate_sockets=Confirm.ask('Generate sockets?',default=True,console=console)
+    socket_bonuses=Confirm.ask('Generate socket bonuses?',default=True,console=console) if generate_sockets else False
+    generate_sets=Confirm.ask('Generate item sets?',default=True,console=console)
+    generate_legendaries=Confirm.ask('Generate legendaries?',default=True,console=console)
+    generate_disenchant=Confirm.ask('Generate disenchant data?',default=True,console=console)
+    while True:
+        try:
+            class_names=_interactive_class_names(Prompt.ask(
+                'Which classes should be generated? (comma-separated or ALL)',default='ALL',console=console))
+            break
+        except ValueError as exc:
+            console.print(f'[red]{exc}[/]')
+
+    default_number=min(DEFAULT_TOTAL_ITEMS,DEFAULT_ITEMS_PER_CLASS*len(class_names))
+    max_number=min(INTERACTIVE_MAX_ITEMS,MAX_ITEMS_PER_CLASS*len(class_names))
     while True:
         try:
             number=_interactive_number_arg(IntPrompt.ask(
-                'How many items do you wish to generate?',default=DEFAULT_TOTAL_ITEMS,console=console))
+                'How many items do you wish to generate?',default=default_number,console=console))
+            if number>max_number:
+                raise ValueError(f'number cannot exceed {max_number:,} for the selected classes')
             break
         except ValueError as exc:
             console.print(f'[red]{exc}[/]')
@@ -2123,7 +2375,15 @@ def interactive_setup(storage_path=USER_AZEROTHCORE_SOURCE_FILE,console=None):
     summary.add_column('Setting',style='bold cyan')
     summary.add_column('Value')
     summary.add_row('AzerothCore',str(source_root))
+    summary.add_row('Expansion',expansion)
+    summary.add_row('Classes',', '.join(class_names))
     summary.add_row('Items',f'{number:,}')
+    summary.add_row('Magic effects',magic_effects)
+    summary.add_row('Sockets','Yes' if generate_sockets else 'No')
+    summary.add_row('Socket bonuses','Yes' if socket_bonuses else 'No')
+    summary.add_row('Item sets','Yes' if generate_sets else 'No')
+    summary.add_row('Legendaries','Yes' if generate_legendaries else 'No')
+    summary.add_row('Disenchant data','Yes' if generate_disenchant else 'No')
     summary.add_row('Loot insertion',choice)
     console.print(summary)
     if not Confirm.ask('Start generation with these settings?',default=False,console=console):
@@ -2134,6 +2394,14 @@ def interactive_setup(storage_path=USER_AZEROTHCORE_SOURCE_FILE,console=None):
     args.number=number
     args.azerothcore_source_root=source_root
     args.loot_destinations=destinations
+    args.expansion=expansion
+    args.strict_expansion_scoping=expansion!='All'
+    args.magic_effects=magic_effects
+    args.generate_sockets=generate_sockets
+    args.generate_legendaries=generate_legendaries
+    args.class_names=class_names
+    args.disabled_features=_interactive_disabled_features(
+        magic_effects,generate_sockets and socket_bonuses,generate_sets,generate_disenchant)
     args.interactive=True
     return args
 
@@ -2163,9 +2431,15 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT, LOOT_DESTINATIONS
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT, LOOT_DESTINATIONS, GENERATE_SOCKETS, GENERATE_LEGENDARIES, EXPANSION, ACTIVE_LEVEL_RANGE, MAGIC_EFFECTS, STRICT_EXPANSION_SCOPING, APPEARANCE_PROVENANCE
     args=parse_args(argv) if args is None else args
     FEATURE_CATALOG=None
+    EXPANSION=_normalise_expansion(getattr(args,'expansion','All'))
+    ACTIVE_LEVEL_RANGE=expansion_level_range(EXPANSION)
+    MAGIC_EFFECTS=_normalise_magic_effect(getattr(args,'magic_effects','All'))
+    GENERATE_SOCKETS=bool(getattr(args,'generate_sockets',True))
+    GENERATE_LEGENDARIES=bool(getattr(args,'generate_legendaries',True))
+    STRICT_EXPANSION_SCOPING=bool(getattr(args,'strict_expansion_scoping',False))
     LOOT_DESTINATIONS=set(getattr(args,'loot_destinations',DEFAULT_LOOT_DESTINATIONS))
     if not LOOT_DESTINATIONS <= DEFAULT_LOOT_DESTINATIONS:
         raise ValueError(f'unknown loot destination(s): {sorted(LOOT_DESTINATIONS-DEFAULT_LOOT_DESTINATIONS)}')
@@ -2204,7 +2478,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     cache_paths=(*encounter_paths,item_template_source,*item_dbc_sources,item_set_dbc_source,
                  spell_dbc_source,spell_enchantment_dbc_source,disenchant_source,spell_proc_source,
                  spell_script_names_source,*gameobject_source_audit['paths'])
-    source_cache_key=_source_cache_key(cache_paths,source_root,args.loot_chance)
+    source_cache_key=_source_cache_key(cache_paths,source_root,args.loot_chance,EXPANSION,LOOT_DESTINATIONS)
     source_cache=_load_source_cache(SOURCE_CACHE_FILE,source_cache_key)
     cached_reference_catalog=source_cache.get('reference_catalog') if source_cache else None
     cached_feature_catalog=source_cache.get('feature_catalog') if source_cache else None
@@ -2242,6 +2516,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
                 gameobject_path=gameobject_source_paths[0] if gameobject_source_paths else None,
                 gameobject_template_path=gameobject_source_paths[1] if gameobject_source_paths else None,
                 gameobject_loot_path=gameobject_source_paths[2] if gameobject_source_paths else None,
+                scope_expansion=EXPANSION,scope_destinations=LOOT_DESTINATIONS,
             )
             encounter_source_paths=encounter_paths[:6]
             encounter_source_catalog.setdefault('source_audit',{}).update({
@@ -2252,12 +2527,14 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
             })
             script_root=source_root
             if ui: ui.startup_status('Scanning AzerothCore scripts for reward mappings')
-            script_mappings,script_status=discover_script_reward_mappings(script_root,encounter_source_catalog)
+            script_mappings,script_status=discover_script_reward_mappings(
+                script_root,encounter_source_catalog,EXPANSION,LOOT_DESTINATIONS)
             encounter_source_catalog['script_reward_mappings']=script_mappings
             encounter_source_catalog['source_audit']['script_reward_mapping']=script_status
         if content_manifest is None and default_encounter_manifest is None:
             if ui: ui.startup_status('Mapping default dungeon and raid loot profiles')
-            default_encounter_manifest=build_default_encounter_manifest(encounter_source_catalog,args.loot_chance)
+            default_encounter_manifest=build_default_encounter_manifest(
+                encounter_source_catalog,args.loot_chance,EXPANSION,LOOT_DESTINATIONS)
         elif content_manifest is not None:
             if ui: ui.startup_status('Validating targeted encounter source membership')
             validate_targeted_source_membership(content_manifest,encounter_source_catalog)
@@ -2317,6 +2594,9 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
             details='\n'.join(f' - {error}' for error in catalog_audit['errors'][:20])
             raise ValueError(f'item-template appearance harvest failed ({len(catalog_audit["errors"])} errors):\n{details}')
         A=harvested_a; W=harvested_w
+    APPEARANCE_PROVENANCE=_appearance_provenance_index(A,W,catalog_audit)
+    if STRICT_EXPANSION_SCOPING:
+        validate_appearance_provenance(list(APPEARANCE_PROVENANCE.values()),EXPANSION,True)
     if ui: ui.progress(1,2,current='Stock appearance catalog ready')
     if args.seed is not None:
         seed=args.seed
@@ -2333,6 +2613,17 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         counts=Counter(row['class_name'] for row in targeted_plan)
         selected=[row for row in CLASSES if counts.get(row[0],0)>0]
         number=len(targeted_plan)
+    elif getattr(args,'class_names',None) is not None:
+        requested_names=tuple(dict.fromkeys(args.class_names))
+        selected=[row for row in CLASSES if row[0] in requested_names]
+        if len(selected)!=len(requested_names):
+            raise ValueError(f'unknown class selection: {sorted(set(requested_names)-{row[0] for row in CLASSES})}')
+        number=args.number if args.number is not None else min(DEFAULT_TOTAL_ITEMS,DEFAULT_ITEMS_PER_CLASS*len(selected))
+        if number > MAX_ITEMS_PER_CLASS*len(selected):
+            raise ValueError(f'--number would exceed the selected-class cap of {MAX_ITEMS_PER_CLASS*len(selected)}')
+        base,remainder=divmod(number,len(selected))
+        counts={row[0]:base+(1 if index<remainder else 0) for index,row in enumerate(selected)}
+        selected=[row for row in selected if counts[row[0]]>0]
     elif args.class_name is not None:
         selected=[row for row in CLASSES if row[0]==args.class_name]
         number=args.number if args.number is not None else DEFAULT_ITEMS_PER_CLASS
@@ -2410,11 +2701,16 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     return {
         'seed':SEED,'source':source,'output_dir':OUT,'number':TARGET_ITEM_COUNT,
         'class_name':args.class_name,'classes':[row[0] for row in ACTIVE_CLASSES],
+        'expansion':EXPANSION,'expansion_level_range':ACTIVE_LEVEL_RANGE,
+        'strict_expansion_scoping':STRICT_EXPANSION_SCOPING,
+        'generate_sockets':GENERATE_SOCKETS,'generate_legendaries':GENERATE_LEGENDARIES,
+        'magic_effects':MAGIC_EFFECTS,
+        'socket_bonuses':GENERATE_SOCKETS and feature_enabled('socket-bonuses'),
         'loot_destinations':[destination for destination in ('world','dungeon','raid') if destination in LOOT_DESTINATIONS],
         'content_manifest':CONTENT_MANIFEST,
         'quest_template_source':QUEST_TEMPLATE_SOURCE,
         'encounter_source_catalog':ENCOUNTER_SOURCE_CATALOG,
-        'default_encounter_profile_count':0 if DEFAULT_ENCOUNTER_MANIFEST is None else len(DEFAULT_ENCOUNTER_MANIFEST['profiles']),
+        'default_encounter_profile_count':0 if DEFAULT_ENCOUNTER_MANIFEST is None else len((filter_encounter_manifest(DEFAULT_ENCOUNTER_MANIFEST,LOOT_DESTINATIONS,EXPANSION) or {}).get('profiles',())),
         'encounter_source_paths':ENCOUNTER_SOURCE_PATHS,
         'gameobject_source_paths':GAMEOBJECT_SOURCE_PATHS,
         'azerothcore_source_root':source_root,
@@ -2650,7 +2946,7 @@ def _dungeon_map_id(dungeon_maps,lfg_dungeon):
         return _sql_int(row[1],None)
     return None
 
-def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,creature_path,creature_template_path,instance_encounters_path,creature_loot_path,reference_loot_path,*,item_template_path=None,gameobject_path=None,gameobject_template_path=None,gameobject_loot_path=None):
+def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,creature_path,creature_template_path,instance_encounters_path,creature_loot_path,reference_loot_path,*,item_template_path=None,gameobject_path=None,gameobject_template_path=None,gameobject_loot_path=None,scope_expansion=None,scope_destinations=None):
     if any(path is not None for path in (gameobject_path,gameobject_template_path,gameobject_loot_path)) and not all(path is not None for path in (gameobject_path,gameobject_template_path,gameobject_loot_path)):
         raise ValueError('gameobject source paths must be supplied together')
     map_rows,map_strings,_,_=_read_wdbc_records(map_path,label='Map.dbc')
@@ -2658,6 +2954,8 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
     dungeon_rows,_,_,_=_read_wdbc_records(dungeon_map_path,label='DungeonMap.dbc')
     maps={entry:{'id':entry,'directory':_dbc_string(map_strings,row[1]),'map_type':row[2],'instance_type':row[3],
                  'expansion':_sql_int(row[63],None) if len(row)>63 else None} for entry,row in map_rows.items()}
+    scope_map_ids=None if scope_expansion is None and scope_destinations is None else _encounter_scope_map_ids(
+        {'maps':maps},scope_expansion or 'All',scope_destinations)
     difficulties={(row[1],row[2]):{'id':row[0],'map_id':row[1],'difficulty_id':row[2],'max_players':row[21],'item_level':row[22]} for row in difficulty_rows.values() if len(row)>=23}
     template_columns,template_rows=_load_sql_table_rows(creature_template_path); template_index=_sql_column_indexes(template_columns)
     creature_templates={_sql_int(row[template_index['entry']]):{'entry':_sql_int(row[template_index['entry']]),'name':str(row[template_index['name']]).strip("'").replace("''","'"),'lootid':_sql_int(row[template_index['lootid']]),
@@ -2666,7 +2964,10 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
                         'maxlevel':_sql_int(row[template_index['maxlevel']],80) if 'maxlevel' in template_index else 80} for row in template_rows}
     creature_columns,creature_rows=_load_sql_table_rows(creature_path); creature_index=_sql_column_indexes(creature_columns)
     creature_maps=defaultdict(set)
-    for row in creature_rows: creature_maps[_sql_int(row[creature_index['id']])].add(_sql_int(row[creature_index['map']]))
+    for row in creature_rows:
+        map_id=_sql_int(row[creature_index['map']])
+        if scope_map_ids is None or map_id in scope_map_ids:
+            creature_maps[_sql_int(row[creature_index['id']])].add(map_id)
     encounter_columns,encounter_rows=_load_sql_table_rows(instance_encounters_path); encounter_index=_sql_column_indexes(encounter_columns)
     encounters={_sql_int(row[encounter_index['entry']]):{'credit_type':_sql_int(row[encounter_index['credittype']]),'credit_entry':_sql_int(row[encounter_index['creditentry']]),'last_encounter_dungeon':_sql_int(row[encounter_index['lastencounterdungeon']]),'comment':str(row[encounter_index['comment']]).strip("'").replace("''","'")} for row in encounter_rows}
     creature_loot_columns,creature_loot_rows=_load_sql_table_rows(creature_loot_path)
@@ -2694,14 +2995,15 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
         for row in gameobject_rows:
             entry=_sql_int(_sql_row_value(row,gameobject_index,'id','entry'),-1)
             map_id=_sql_int(_sql_row_value(row,gameobject_index,'map','mapid'),-1)
-            if entry>=0 and map_id>=0:
+            if entry>=0 and map_id>=0 and (scope_map_ids is None or map_id in scope_map_ids):
                 gameobject_maps[entry].add(map_id)
                 gameobject_spawns.append({'guid':_sql_int(_sql_row_value(row,gameobject_index,'guid')),
                                           'id':entry, 'map':map_id,
                                           'spawn_mask':_sql_int(_sql_row_value(row,gameobject_index,'spawnmask','spawn_mask'),1)})
         gameobject_loot_columns,gameobject_loot_rows=_load_sql_table_rows(gameobject_loot_path)
 
-    return {'maps':maps,'map_difficulties':difficulties,'dungeon_maps':dungeon_rows,'creature_templates':creature_templates,
+    return {'maps':maps,'scope_map_ids':None if scope_map_ids is None else tuple(sorted(scope_map_ids)),
+            'map_difficulties':difficulties,'dungeon_maps':dungeon_rows,'creature_templates':creature_templates,
             'creature_maps':creature_maps,'instance_encounters':encounters,
             'creature_loot_columns':creature_loot_columns,'creature_loot_rows':creature_loot_rows,
             'reference_loot_columns':reference_loot_columns,'reference_loot_rows':reference_loot_rows,
@@ -2713,7 +3015,11 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
             'gameobject_loot_columns':gameobject_loot_columns,'gameobject_loot_rows':gameobject_loot_rows,
             'gameobject_loot_entries':{_sql_int(row[0]) for row in gameobject_loot_rows},
             'stock_items':stock_items,
-            'source_audit':{'gameobject_source_paths':[_portable_source_path(path) for path in (gameobject_path,gameobject_template_path,gameobject_loot_path) if path is not None],
+            'source_audit':{'scope_expansion':None if scope_map_ids is None else _normalise_expansion(scope_expansion or 'All'),
+                            'scope_destinations':None if scope_map_ids is None else sorted(
+                                ({'dungeon','raid'} if scope_destinations is None else set(scope_destinations)) & {'dungeon','raid'}),
+                            'scope_map_count':None if scope_map_ids is None else len(scope_map_ids),
+                            'gameobject_source_paths':[_portable_source_path(path) for path in (gameobject_path,gameobject_template_path,gameobject_loot_path) if path is not None],
                             'map_count':len(maps),'map_difficulty_count':len(difficulties),
                             'creature_template_count':len(creature_templates),'spawn_creature_count':len(creature_maps),
                             'difficulty_template_count':sum(any(template.get('difficulty_entries',())) for template in creature_templates.values()),
@@ -2795,10 +3101,12 @@ def creature_map_evidence_index(catalog):
     cache=catalog.get('_creature_map_evidence')
     if cache is not None: return cache
     cache={}
-    populated_maps={int(map_id) for maps in (catalog.get('creature_maps') or {}).values() for map_id in maps}
+    scope=_catalog_scope_map_ids(catalog)
+    populated_maps={int(map_id) for maps in (catalog.get('creature_maps') or {}).values()
+                    for map_id in _maps_in_catalog_scope(catalog,maps)}
     static_maps=defaultdict(set)
     for entry,maps in (catalog.get('creature_maps') or {}).items():
-        for map_id in maps:
+        for map_id in _maps_in_catalog_scope(catalog,maps):
             cache[(int(entry),int(map_id))]='static_spawn'
             static_maps[int(entry)].add(int(map_id))
     credited_maps=defaultdict(set)
@@ -2806,9 +3114,12 @@ def creature_map_evidence_index(catalog):
         if int(encounter.get('credit_type',0))!=0: continue
         entry=int(encounter.get('credit_entry',0))
         linked=_dungeon_map_id(catalog.get('dungeon_maps') or {},encounter.get('last_encounter_dungeon',0))
-        if linked is not None: credited_maps[entry].add(int(linked))
+        if linked is not None and (scope is None or int(linked) in scope):
+            credited_maps[entry].add(int(linked))
     script_rows=defaultdict(list)
     for row in (catalog.get('script_creature_map_evidence') or ()):
+        if scope is not None and int(row['map_id']) not in scope:
+            continue
         script_rows[int(row['creature_entry'])].append(row)
     conflicts=[]
     for entry,rows in sorted(script_rows.items()):
@@ -2841,7 +3152,8 @@ def creature_map_evidence_index(catalog):
         entry=int(encounter.get('credit_entry',0))
         linked=_dungeon_map_id(catalog.get('dungeon_maps') or {},encounter.get('last_encounter_dungeon',0))
         if linked is None: continue
-        if (catalog.get('creature_maps') or {}).get(entry): continue
+        if _maps_in_catalog_scope(catalog,(catalog.get('creature_maps') or {}).get(entry,())): continue
+        if scope is not None and int(linked) not in scope: continue
         if int(linked) in populated_maps:
             # A populated map has static spawn evidence; an uncorroborated
             # last-encounter link must not override it (classic junk rows).
@@ -2897,11 +3209,13 @@ def gameobject_support_state(catalog):
     audit=catalog.get('source_audit',{})
     return 'exercised' if audit.get('gameobject_source_paths') or catalog.get('gameobject_templates') else 'not_exercised'
 
-def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None):
+def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None, expansion=None, destinations=None):
     """Return the auditable static reward-object candidates, fail-closed."""
     rows=[]
     requested_map=None if map_id is None else int(map_id)
     requested_difficulty='' if difficulty_id is None else int(difficulty_id)
+    scope_map_ids=(_catalog_scope_map_ids(catalog) if expansion is None and destinations is None else
+                   _encounter_scope_map_ids(catalog,expansion or 'All',destinations))
     encounters=catalog.get('instance_encounters',{})
     dungeon_maps=catalog.get('dungeon_maps',{})
     source_path=';'.join(catalog.get('source_audit',{}).get('gameobject_source_paths') or ())
@@ -2909,7 +3223,7 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
     spawn_maps_by_entry=defaultdict(set)
     for spawn in catalog.get('gameobject_spawns',()):
         entry=int(spawn.get('id',0)); spawn_map=int(spawn.get('map',-1))
-        if entry>0 and spawn_map>=0:
+        if entry>0 and spawn_map>=0 and (scope_map_ids is None or spawn_map in scope_map_ids):
             spawn_maps_by_entry[entry].add(spawn_map)
     for spawn in catalog.get('gameobject_spawns',()):
         entry=int(spawn.get('id',0)); template=catalog.get('gameobject_templates',{}).get(entry)
@@ -2917,6 +3231,7 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
         loot_entry=int(template.get('lootid') or 0)
         if loot_entry<=0 or loot_entry not in catalog.get('gameobject_loot_entries',set()): continue
         spawn_map=int(spawn.get('map',-1))
+        if scope_map_ids is not None and spawn_map not in scope_map_ids: continue
         if requested_map is not None and spawn_map!=requested_map: continue
         matches=[]
         for encounter_entry, encounter in encounters.items():
@@ -3000,6 +3315,7 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
         loot_entry=int(template.get('lootid') or 0)
         if loot_entry<=0 or loot_entry not in catalog.get('gameobject_loot_entries',set()): continue
         script_map=mapping.get('map_id')
+        if scope_map_ids is not None and (not script_map or int(script_map) not in scope_map_ids): continue
         if requested_map is not None and (not script_map or int(script_map)!=requested_map): continue
         validated=bool(mapping.get('validated'))
         identifier=re.sub(r'[^A-Za-z0-9_]+','_',str(mapping.get('encounter_identifier') or 'reward'))
@@ -3022,8 +3338,10 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
     audit['gameobject_static_spawn_rejection_groups']=len(static_rejections)
     return rows
 
-def discover_script_reward_mappings(source_root,catalog):
+def discover_script_reward_mappings(source_root,catalog,expansion=None,destinations=None):
     """Find explicit completion-path reward relationships in AzerothCore sources."""
+    scope_map_ids=(_catalog_scope_map_ids(catalog) if expansion is None and destinations is None else
+                   _encounter_scope_map_ids(catalog,expansion or 'All',destinations))
     templates=catalog.get('gameobject_templates',{})
     loot_entries=set(catalog.get('gameobject_loot_entries',set()))
     creature_templates=catalog.get('creature_templates',{})
@@ -3046,7 +3364,6 @@ def discover_script_reward_mappings(source_root,catalog):
                   if path.is_file() and path.suffix.lower() in {'.cpp','.h','.hpp','.cc','.c'}),
                  key=lambda path:str(path))
     texts=[(path,path.read_text(encoding='utf-8',errors='ignore')) for path in files]
-    scan['files_scanned']=len(files)
 
     constants={}; constant_values=defaultdict(set); directory_constants=defaultdict(dict)
 
@@ -3084,14 +3401,20 @@ def discover_script_reward_mappings(source_root,catalog):
             if map_id>0 and map_id in maps:
                 file_map_anchors[path]=(map_id,'instance_script_registration')
                 directory_map_anchors[path.parent].add(map_id)
-    scan['instance_script_anchors']=len(file_map_anchors)
-
     def map_anchor(path):
         if path in file_map_anchors: return file_map_anchors[path]
         maps_in_directory=directory_map_anchors.get(path.parent,set())
         if len(maps_in_directory)==1:
             return next(iter(maps_in_directory)),'instance_script_directory'
         return None,''
+
+    scoped_texts=[]
+    for path,text in texts:
+        anchor=map_anchor(path)
+        if scope_map_ids is None or (anchor and anchor[0] in scope_map_ids):
+            scoped_texts.append((path,text))
+    scan['files_scanned']=len(scoped_texts)
+    scan['instance_script_anchors']=sum(path in file_map_anchors for path,_text in scoped_texts)
 
     def matching_brace(text,opening,limit):
         depth=0
@@ -3248,7 +3571,7 @@ def discover_script_reward_mappings(source_root,catalog):
         return ''
 
     mappings=[]; creature_evidence=[]
-    for path,text in texts:
+    for path,text in scoped_texts:
         anchor_map,anchor_kind=map_anchor(path)
         local_constants=directory_constants.get(path.parent,{})
         functions=[]
@@ -3375,12 +3698,16 @@ def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_ki
                  'required_level_max':max(required) if required else None})
     return band
 
-def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
+def build_default_encounter_manifest(catalog,additional_drop_chance=2.0,expansion=None,destinations=None):
     profiles=[]; coverage=[]
-    catalog['gameobject_reward_targets']=discover_gameobject_reward_targets(catalog)
+    scope_map_ids=(_catalog_scope_map_ids(catalog) if expansion is None and destinations is None else
+                   _encounter_scope_map_ids(catalog,expansion or 'All',destinations))
+    catalog['gameobject_reward_targets']=discover_gameobject_reward_targets(
+        catalog,expansion=expansion,destinations=destinations)
     source_evidence_enabled='stock_items' in catalog and 'creature_loot_rows' in catalog
     dungeon_or_raid_maps={map_id:row for map_id,row in catalog['maps'].items()
-                          if row.get('map_type') in (1,2)}
+                          if row.get('map_type') in (1,2) and
+                          (scope_map_ids is None or int(map_id) in scope_map_ids)}
     boss_entries=defaultdict(list)
     for encounter_entry,encounter in sorted(catalog['instance_encounters'].items()):
         credit_type=int(encounter.get('credit_type',0)); credit_entry=int(encounter['credit_entry'])
@@ -4406,6 +4733,7 @@ def _reference_consumer_maps(catalog,reference_entry):
 
         def add_context(loot_id,target_type,parent_entry,effective_entry,maps,difficulty_specific,difficulty_id=None):
             loot_id=int(loot_id or 0)
+            maps=_maps_in_catalog_scope(catalog,maps)
             if loot_id<=0 or not maps: return
             context={'parent_target_type':target_type,
                      'parent_target_entry':int(parent_entry),
@@ -4428,7 +4756,7 @@ def _reference_consumer_maps(catalog,reference_entry):
                 loot_contexts[loot_id].append(context)
 
         for base_entry,template in catalog.get('creature_templates',{}).items():
-            maps=catalog.get('creature_maps',{}).get(int(base_entry),())
+            maps=_maps_in_catalog_scope(catalog,catalog.get('creature_maps',{}).get(int(base_entry),()))
             add_context(template.get('lootid'), 'creature', base_entry, base_entry, maps, False)
             for difficulty_id,variant_entry in enumerate(template.get('difficulty_entries',()),1):
                 variant=catalog.get('creature_templates',{}).get(int(variant_entry))
@@ -4438,7 +4766,7 @@ def _reference_consumer_maps(catalog,reference_entry):
 
         for entry,template in catalog.get('gameobject_templates',{}).items():
             if int(template.get('type',0))!=3: continue
-            maps=catalog.get('gameobject_maps',{}).get(int(entry),())
+            maps=_maps_in_catalog_scope(catalog,catalog.get('gameobject_maps',{}).get(int(entry),()))
             add_context(template.get('lootid'), 'gameobject', entry, entry, maps, False)
 
         for target_type in ('creature','gameobject'):
@@ -4840,7 +5168,7 @@ def load_feature_catalogs(item_template_path,item_set_path,spell_path,enchantmen
 
     for fields in _load_sql_entry_rows(item_template_path):
         meta=_stock_item_metadata(fields)
-        if meta is None:
+        if meta is None or not _reference_scope_allows(meta.get('required_level'),meta.get('item_level')):
             continue
         catalog['stock_items'][meta['entry']]=meta
         for slot in range(5):
@@ -5104,6 +5432,7 @@ ITEM_TEMPLATE_DMG_MIN1_INDEX = 49
 ITEM_TEMPLATE_DMG_MAX1_INDEX = 50
 ITEM_TEMPLATE_DMG_TYPE1_INDEX = 51
 ITEM_TEMPLATE_DELAY_INDEX = 62
+ITEM_TEMPLATE_REQUIRED_LEVEL_INDEX = 16
 ARMOR_INVENTORY_TYPES = {1,3,5,6,7,8,9,10,20}
 
 def _dedupe_catalog_rows(rows):
@@ -5120,6 +5449,7 @@ def _dedupe_catalog_rows(rows):
 def harvest_reference_catalog(path):
     path=Path(path).expanduser().resolve()
     armor=defaultdict(list); weapons=defaultdict(list)
+    harvested_keys=set(); required_levels={}
     parsed_rows=0; eligible_rows=0
     with path.open(encoding='utf-8') as source:
         for line_number,line in enumerate(source,1):
@@ -5132,9 +5462,12 @@ def harvest_reference_catalog(path):
             try:
                 entry=int(fields[0]); item_class=int(fields[1]); subclass=int(fields[2])
                 displayid=int(fields[5]); quality=int(fields[6]); inventory_type=int(fields[12]); item_level=int(fields[15])
+                required_level=int(fields[ITEM_TEMPLATE_REQUIRED_LEVEL_INDEX])
             except (TypeError,ValueError):
                 continue
             if displayid<=0 or item_level<0 or quality<0 or quality>5:
+                continue
+            if not _reference_scope_allows(required_level=required_level,item_level=item_level):
                 continue
 
             if item_class==4:
@@ -5151,6 +5484,8 @@ def harvest_reference_catalog(path):
                     key=('relic',subclass,28)
                 if key is not None:
                     armor[key].append((entry,displayid,item_level,quality)); eligible_rows+=1
+                    harvested_keys.add((entry,displayid))
+                    required_levels[(entry,displayid)]=min(required_level,required_levels.get((entry,displayid),required_level))
                 continue
 
             if item_class==2 and subclass in WEAPON_HARVEST_RULES:
@@ -5167,6 +5502,8 @@ def harvest_reference_catalog(path):
                 if dmin<=0 or dmax<dmin or delay<=0:
                     continue
                 weapons[kind].append((entry,displayid,item_level,quality,delay,dmin,dmax,school)); eligible_rows+=1
+                harvested_keys.add((entry,displayid))
+                required_levels[(entry,displayid)]=min(required_level,required_levels.get((entry,displayid),required_level))
 
     armor={key:_dedupe_catalog_rows(rows) for key,rows in armor.items() if rows}
     weapons={key:_dedupe_catalog_rows(rows) for key,rows in weapons.items() if rows}
@@ -5175,20 +5512,33 @@ def harvest_reference_catalog(path):
     harvested_unique_displayids=len({row[1] for row in harvested_rows})
     fallback=[]
     for key,rows in FALLBACK_A.items():
-        if not armor.get(key):
-            armor[key]=list(rows); fallback.append(f'A:{key}')
+        scoped_rows=_filter_reference_rows(rows)
+        if not armor.get(key) and scoped_rows:
+            armor[key]=scoped_rows; fallback.append(f'A:{key}')
     for key,rows in FALLBACK_W.items():
-        if not weapons.get(key):
-            weapons[key]=list(rows); fallback.append(f'W:{key}')
+        scoped_rows=_filter_reference_rows(rows)
+        if not weapons.get(key) and scoped_rows:
+            weapons[key]=scoped_rows; fallback.append(f'W:{key}')
 
     all_rows=[row for rows in armor.values() for row in rows] + [row for rows in weapons.values() for row in rows]
+    source_label=_portable_source_path(path)
+    appearance_provenance={}
+    for row in all_rows:
+        key=(row[0],row[1])
+        appearance_provenance[key]=appearance_provenance_row(
+            row,source_label if key in harvested_keys else 'curated fallback',required_levels.get(key))
+    appearance_provenance=sorted(appearance_provenance.values(),key=lambda row:(row['reference_entry'],row['displayid']))
+    if STRICT_EXPANSION_SCOPING:
+        validate_appearance_provenance(appearance_provenance,EXPANSION,True)
     report={
-        'source':str(path),'mode':'auto-harvested-stock-item-template','parsed_rows':parsed_rows,
+        'source':str(path),'mode':'auto-harvested-stock-item-template','expansion':EXPANSION,
+        'required_level_range':list(ACTIVE_LEVEL_RANGE),'parsed_rows':parsed_rows,
         'eligible_rows':eligible_rows,'reference_count':harvested_reference_count,'unique_displayids':harvested_unique_displayids,
         'effective_reference_count':len(all_rows),'effective_unique_displayids':len({row[1] for row in all_rows}),
         'armor_category_count':len(armor),'weapon_category_count':len(weapons),'fallback_categories':fallback,
         'errors':[],'display_mismatches':[],'metadata_mismatches':[],
         'inventory_type_mismatches':[],'template_mismatches':[],
+        'appearance_provenance':appearance_provenance,
     }
     return armor,weapons,report
 
@@ -5841,10 +6191,13 @@ def weighted(rows,*key):
 CLASS_LEVEL_MIN = {'Death Knight':55}
 
 def _level_cycle(cname, cycle):
-    min_level=CLASS_LEVEL_MIN.get(cname,1)
-    levels=[l for l in range(min_level,81) for _ in range(100)]
+    min_level=max(CLASS_LEVEL_MIN.get(cname,1),ACTIVE_LEVEL_RANGE[0])
+    max_level=ACTIVE_LEVEL_RANGE[1]
+    if min_level>max_level:
+        raise ValueError(f'{cname} has no playable levels in the {EXPANSION} expansion range')
+    levels=[l for l in range(min_level,max_level+1) for _ in range(100)]
     weights=[]
-    for l in range(min_level,81):
+    for l in range(min_level,max_level+1):
         w=0.5 if l<20 else 0.8 if l<40 else 1.0 if l<60 else 1.5 if l<70 else 2.5 if l<75 else 5.0 if l<80 else 20.0
         weights.append((l,w))
 
@@ -6195,21 +6548,24 @@ def legendary_flavor(entry,kind,weapon_kind=None):
         category='armor'
     else:
         category='accessory'
-    pool=LEGENDARY_FLAVOR[category]
+    pool=_expansion_pool(LEGENDARY_FLAVOR[category])
     return pool[h64(entry,'legend_flavor',category)%len(pool)]
 
 def legendary_name_candidates(entry,slot,weapon_kind=None,armor_subclass=None):
     base_pool=base_pool_for_item(slot,weapon_kind,armor_subclass)
+    roots=_expansion_pool(LEGENDARY_ROOTS)
+    epithets=_expansion_pool(LEGENDARY_EPITHETS)
+    oath_epithets=_expansion_pool(LEGENDARY_OATH_EPITHETS)
     for attempt in range(2000):
-        root=LEGENDARY_ROOTS[h64(entry,'legend_root',attempt)%len(LEGENDARY_ROOTS)]
-        epithet=LEGENDARY_EPITHETS[h64(entry,'legend_epithet',attempt)%len(LEGENDARY_EPITHETS)]
+        root=roots[h64(entry,'legend_root',attempt)%len(roots)]
+        epithet=epithets[h64(entry,'legend_epithet',attempt)%len(epithets)]
         base=base_pool[h64(entry,'legend_base',attempt)%len(base_pool)]
         pattern=h64(entry,'legend_pattern',attempt)%4
         if pattern==0: name=f'{root}, {base} of the {epithet}'
         elif pattern==1: name=f'{root}, Legacy of the {epithet}'
         elif pattern==2:
-            oath_epithet=LEGENDARY_OATH_EPITHETS[h64(entry,'legend_oath_epithet',attempt)%len(LEGENDARY_OATH_EPITHETS)]
-            name=f'{root}, Oath of the {oath_epithet}'
+            oath=oath_epithet[h64(entry,'legend_oath_epithet',attempt)%len(oath_epithet)]
+            name=f'{root}, Oath of the {oath}'
         else: name=f'{root}, {base} of {epithet}'
         if valid_item_name(name):
             yield name
@@ -6220,17 +6576,22 @@ def make_name(entry,slot,weapon_kind=None,legendary=False,armor_subclass=None):
         return
 
     base_pool=base_pool_for_item(slot,weapon_kind,armor_subclass)
+    adjectives=_expansion_pool(ADJ)
+    suffixes=_expansion_pool(SUFFIX)
+    owners=_expansion_pool(OWNER)
+    proper_a=_expansion_pool(PROPER_A)
+    proper_b=_expansion_pool(PROPER_B)
 
     # Generate compact Blizzard-like names and reject anything that exceeds
     # the hard display budget. Compound fragments are separated into words
     # instead of exposing generator-style internal CamelCase.
     for attempt in range(2000):
         base=base_pool[h64(entry,'base',attempt)%len(base_pool)]
-        adj=ADJ[h64(entry,'adj',attempt)%len(ADJ)]
-        suf=SUFFIX[h64(entry,'suf',attempt)%len(SUFFIX)]
-        owner=OWNER[h64(entry,'owner',attempt)%len(OWNER)]
-        a=PROPER_A[h64(entry,'pa',attempt)%len(PROPER_A)]
-        b=PROPER_B[h64(entry,'pb',attempt)%len(PROPER_B)]
+        adj=adjectives[h64(entry,'adj',attempt)%len(adjectives)]
+        suf=suffixes[h64(entry,'suf',attempt)%len(suffixes)]
+        owner=owners[h64(entry,'owner',attempt)%len(owners)]
+        a=proper_a[h64(entry,'pa',attempt)%len(proper_a)]
+        b=proper_b[h64(entry,'pb',attempt)%len(proper_b)]
         proper=f'{a} {b.title()}'
 
         pat=h64(entry,'pat',attempt)%12
@@ -6251,7 +6612,9 @@ def make_name(entry,slot,weapon_kind=None,legendary=False,armor_subclass=None):
         if valid_item_name(name):
             yield name
 
-def qpick(entry): return THEMES[h64(entry,'theme')%len(THEMES)]
+def qpick(entry):
+    themes=_expansion_pool(THEMES)
+    return themes[h64(entry,'theme')%len(themes)]
 
 def sqlq(s): return "'"+str(s).replace('\\','\\\\').replace("'","''")+"'"
 
@@ -6294,6 +6657,8 @@ def weapon_damage(kind,ilvl,q,entry):
     return ref,dmin,dmax,school,speed,actual
 
 def socket_colors(req,ilvl,q,entry,slot,ref_q):
+    if not GENERATE_SOCKETS:
+        return []
     if req<60: return []
     # Legendaries are intentionally bespoke: always at least two sockets, sometimes three.
     if q==5 and req>=80:
@@ -6381,7 +6746,7 @@ def choose_structure_for_slot(cname,role,req,ilvl,q,entry,slot):
 
 def expected_legendary_count(item_count):
     # Preserve the original rarity: three Legendaries per 100,000 generated items.
-    return (item_count*3)//100000
+    return (item_count*3)//100000 if GENERATE_LEGENDARIES and ACTIVE_LEVEL_RANGE[1]>=80 else 0
 
 SET_SLOT_ORDER=('head','shoulder','chest','hands','legs','waist','feet','wrists','back','neck')
 
@@ -6624,7 +6989,8 @@ def _set_styles(anchor):
 
 def _set_name(anchor,attempt=0):
     styles=_set_styles(anchor)
-    theme=SET_THEME_TITLES[h64(anchor['entry'],'set-theme',attempt)%len(SET_THEME_TITLES)]
+    themes=_expansion_pool(SET_THEME_TITLES)
+    theme=themes[h64(anchor['entry'],'set-theme',attempt)%len(themes)]
     style=styles[h64(anchor['entry'],'set-style',attempt)%len(styles)]
     return f'{style} of the {theme}'
 
@@ -6965,7 +7331,8 @@ def finish_items(sk,ui=None):
         if q==5:
             desc=legendary_flavor(entry,x['kind'],weapon_kind)
         else:
-            desc=FLAVOR[h64(entry,'flavor')%len(FLAVOR)] if r01(entry,'flavor_chance')<.24 else ''
+            flavors=_expansion_pool(FLAVOR)
+            desc=flavors[h64(entry,'flavor')%len(flavors)] if r01(entry,'flavor_chance')<.24 else ''
         item=dict(entry=entry,class_name=cname,class_mask=x['class_mask'],role=role,theme=theme,slot=slot,name=name,Quality=q,
                   ItemLevel=ilvl,RequiredLevel=req,item_class=x['cls'],subclass=x['sub'],InventoryType=x['inv'],displayid=displayid,
                   reference_entry=ref[0],reference_item_level=ref[2],reference_quality=ref[3],stats=stats,
@@ -7023,15 +7390,15 @@ def validate(items,ui=None):
         if class_counts[cname]!=expected: errors.append(f'{cname} count {class_counts[cname]} expected {expected}')
         if expected==10000:
             lv=Counter(x['RequiredLevel'] for x in items if x['class_name']==cname)
-            min_level=CLASS_LEVEL_MIN.get(cname,1)
-            if any(lv[l]<100 for l in range(min_level,81)): errors.append(f'{cname} missing base level coverage')
+            min_level=max(CLASS_LEVEL_MIN.get(cname,1),ACTIVE_LEVEL_RANGE[0])
+            if any(lv[l]<100 for l in range(min_level,ACTIVE_LEVEL_RANGE[1]+1)): errors.append(f'{cname} missing base level coverage')
             if cname=='Death Knight' and any(level<55 for level in lv): errors.append('Death Knight generated below level 55')
 
     legends=[x for x in items if x['Quality']==5]
     expected_legends=expected_legendary_count(expected_total)
     if len(legends)!=expected_legends or any(x['RequiredLevel']!=80 or x['ItemLevel']<264 for x in legends):
         errors.append(f'legendary policy violation: {len(legends)} expected {expected_legends}')
-    if any(len(x['stats'])!=5 or len(x['sockets'])<2 or not x['description'] or ',' not in x['name'] for x in legends):
+    if any(len(x['stats'])!=5 or (GENERATE_SOCKETS and len(x['sockets'])<2) or not x['description'] or ',' not in x['name'] for x in legends):
         errors.append('legendary bespoke-design policy violation')
 
     camel_name_re=re.compile(r'[a-z][A-Z]')
@@ -7475,7 +7842,7 @@ def write_outputs(items,ui=None,name_changes=()):
     encounter_loot_records=[]
     encounter_manifest=filter_encounter_manifest(
         CONTENT_MANIFEST if CONTENT_MANIFEST is not None else DEFAULT_ENCOUNTER_MANIFEST,
-        LOOT_DESTINATIONS)
+        LOOT_DESTINATIONS,EXPANSION)
     encounter_status={'enabled':encounter_manifest is not None,'valid':True,'errors':[],'warnings':[],
                       'profile_count':0,'record_count':0,'pool_ids':(),
                       'placement_summary':{'count':0},'set_summary':{},
@@ -7579,8 +7946,14 @@ def write_outputs(items,ui=None,name_changes=()):
         for x in items: w.writerow([x[k] if k!='sockets' else '|'.join(map(str,x['sockets'])) for k in manifest_cols])
     refs={}
     for x in items: refs[(x['reference_entry'],x['displayid'])]=(x['reference_entry'],x['displayid'],x['reference_item_level'],x['reference_quality'])
+    appearance_rows=[]
+    for key,row in sorted(refs.items()):
+        provenance=APPEARANCE_PROVENANCE.get(key) or appearance_provenance_row(row,'unknown')
+        appearance_rows.append(provenance)
+    appearance_rows=validate_appearance_provenance(appearance_rows,EXPANSION,STRICT_EXPANSION_SCOPING)
     with (OUT/'reference_catalog_used.csv').open('w',newline='',encoding='utf-8') as f:
-        w=csv.writer(f); w.writerow(['reference_entry','displayid','item_level','quality']); w.writerows(sorted(refs.values()))
+        w=csv.DictWriter(f,fieldnames=['reference_entry','displayid','item_level','quality','source','earliest_expansion'])
+        w.writeheader(); w.writerows(appearance_rows)
 
     if ui: ui.progress(7,10,current='Manifests and item records written')
 
@@ -7778,6 +8151,9 @@ def write_outputs(items,ui=None,name_changes=()):
                                      source_audit.get('script_reward_mapping'),'not_exercised'),
     }
     report={'seed':SEED,'requested_number':TARGET_ITEM_COUNT,'selected_classes':generated_class_names,
+            'expansion':EXPANSION,'expansion_level_range':list(ACTIVE_LEVEL_RANGE),
+            'magic_effects':MAGIC_EFFECTS,'generate_sockets':GENERATE_SOCKETS,
+            'generate_legendaries':GENERATE_LEGENDARIES,
             'total_items':len(items),'entry_min':min(x['entry'] for x in items),'entry_max':max(x['entry'] for x in items),
             'unique_entries':len({x['entry'] for x in items}),'unique_names':len({x['name'] for x in items}),
             'unique_displayids':len({x['displayid'] for x in items}),'unique_reference_entries':len({x['reference_entry'] for x in items}),
@@ -7798,6 +8174,9 @@ def write_outputs(items,ui=None,name_changes=()):
             'reference_catalog_effective_unique_displayids':REFERENCE_CATALOG_AUDIT.get('effective_unique_displayids',REFERENCE_CATALOG_AUDIT.get('unique_displayids')),
             'reference_catalog_fallback_categories':REFERENCE_CATALOG_AUDIT.get('fallback_categories',[]),
             'reference_catalog_inventory_type_mismatch_count':len(REFERENCE_CATALOG_AUDIT['inventory_type_mismatches']),
+            'appearance_provenance_count':len(REFERENCE_CATALOG_AUDIT.get('appearance_provenance') or APPEARANCE_PROVENANCE),
+            'appearance_provenance_sources':sorted({row.get('source','') for row in (REFERENCE_CATALOG_AUDIT.get('appearance_provenance') or APPEARANCE_PROVENANCE.values())}),
+            'strict_expansion_scoping':STRICT_EXPANSION_SCOPING,
             'world_loot_reference_count':len(world_references),'loot_bracket_distribution':loot_bracket_distribution,
             'world_loot_bracket_distribution':world_loot_bracket_distribution,
             'loot_destinations':[destination for destination in ('world','dungeon','raid') if destination in LOOT_DESTINATIONS],
@@ -7859,7 +8238,11 @@ Deterministic seed: `{SEED}`<br>
 Output directory: `generated-{SEED}`<br>
 Generated items: `{len(items)}`<br>
 Automatic name repairs: `{len(name_changes)}`<br>
+Expansion: `{EXPANSION}` (`{ACTIVE_LEVEL_RANGE[0]}-{ACTIVE_LEVEL_RANGE[1]}`)<br>
 Classes: `{class_summary}`<br>
+Magic effects: `{MAGIC_EFFECTS}`<br>
+Sockets: `{'yes' if GENERATE_SOCKETS else 'no'}`<br>
+Legendaries: `{'yes' if GENERATE_LEGENDARIES else 'no'}`<br>
 Generated entry ranges: `{entry_summary}`<br>
 Generated loot pools: `{len(loot['pools'])}` (`{len(loot['pool_rows'])}` item rows)<br>
 World-loot attachments: `{len(loot['attachments'])}` at `{LOOT_CHANCE}%`<br>
@@ -7886,6 +8269,7 @@ Feature counts: `{json.dumps(feature_counts,sort_keys=True)}`<br>
 Harvested stock appearance references: `{REFERENCE_CATALOG_AUDIT['reference_count']}`<br>
 Harvested unique stock display IDs: `{REFERENCE_CATALOG_AUDIT.get('unique_displayids', 0)}`<br>
 Appearance fallback categories: `{len(REFERENCE_CATALOG_AUDIT.get('fallback_categories', []))}`<br>
+Appearance provenance: `reference_catalog_used.csv` (`{len(APPEARANCE_PROVENANCE)}` rows; strict scope: `{'yes' if STRICT_EXPANSION_SCOPING else 'no'}`)<br>
 Target: AzerothCore / WotLK 3.3.5a
 
 ## Generator CLI
@@ -7908,6 +8292,7 @@ Target: AzerothCore / WotLK 3.3.5a
 - `--set-rate`, `--set-min-level`, `--set-size` - tune complete class/role set generation; five pieces is the default.
 - `--spell-effect-rate-multiplier`, `--proc-rate-multiplier`, `--on-use-rate-multiplier`, `--effect-ilvl-window`, `--max-special-effects` - tune stock effect-package selection; low-level effects still obey the stricter 5/10/15 progression windows.
 - `--socket-bonus-rate`, `--disenchant-rate` - tune validated stock socket and disenchant assignment.
+- `--no-sockets` - skip socket colors, including the guaranteed sockets used by Legendary items.
 - `--ui auto|fancy|plain` - choose the terminal presentation; `auto` uses the Rich live dashboard on an interactive terminal when Rich is installed and falls back to plain output otherwise.
 - `--no-animations` - keep the styled dashboard but disable animated spinners.
 - `--show-items` - expand the live discovery feed beyond the default Legendary, set, proc, and special-effect callouts.
@@ -7921,7 +8306,7 @@ Flags can be combined in any order. The default remains 100,000 total and world-
 
 - Final values are generated and validated before SQL is emitted.
 - Stock appearances are auto-harvested from the complete supplied `item_template.sql`, including current-schema weapon damage/delay fields, deduplicated by display ID per compatible equipment category, and weighted by reference item level/quality.
-- The old curated appearance rows are used only as safety fallbacks for categories missing from the supplied stock table.
+- The old curated appearance rows are used only as expansion-scoped safety fallbacks for categories missing from the supplied stock table.
 - Generated names reject repeated meaningful words anywhere in the name plus compound-root repetitions such as `Earthshard Shard`.
 - Legendary flavor text is equipment-aware for weapons, armor, shields, relics, and accessories.
 - Death Knight items are generated only for required levels 55-80.
