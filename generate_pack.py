@@ -5231,14 +5231,14 @@ def _load_item_template_rows(path,entries):
     if missing: raise ValueError(f'catalog references missing from {path}: {missing[:10]}')
     return rows
 
-def validate_reference_catalog(path=None):
-    path=Path(DEFAULT_ITEM_TEMPLATE_SOURCE if path is None else path).expanduser().resolve()
+def validate_reference_catalog(path=None,*,data_dir=DATA_DIR):
+    path=resolve_source(path,data_dir,'item_template.sql')
     _armor,_weapons,report=harvest_reference_catalog(path)
     return report
 
-def load_world_loot_references(world_path=None,reference_path=None):
-    world_path=Path(DEFAULT_WORLD_LOOT_SOURCE if world_path is None else world_path)
-    reference_path=Path(DEFAULT_REFERENCE_LOOT_SOURCE if reference_path is None else reference_path)
+def load_world_loot_references(world_path=None,reference_path=None,*,data_dir=DATA_DIR):
+    world_path=resolve_source(world_path,data_dir,'creature_loot_template.sql')
+    reference_path=resolve_source(reference_path,data_dir,'reference_loot_template.sql')
     levels={}
     for row in _load_loot_insert_rows(world_path):
         if len(row)<=9 or 'world loot level' not in str(row[9]).lower(): continue
