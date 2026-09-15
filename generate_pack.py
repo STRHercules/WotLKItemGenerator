@@ -8152,7 +8152,7 @@ def main(argv=None):
             return None
     else:
         args=parse_args(argv)
-    if args.inspect_sources:
+    if getattr(args, "inspect_sources", False):
         print(json.dumps(inspect_source_directory(args.data_dir)))
         return None
     ui=create_terminal_ui(args)
