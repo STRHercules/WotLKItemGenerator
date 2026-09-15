@@ -2038,6 +2038,14 @@ def parse_args(argv=None):
     parser.add_argument('--content-manifest',type=Path,default=None,metavar='PATH',help='JSON manifest for targeted recipes, dungeon/raid loot, and quest rewards.')
     parser.add_argument('--quest-template-source',type=Path,default=None,metavar='PATH',help='quest_template.sql used to validate and preserve mapped quest rewards.')
     parser.add_argument('--loot-chance',type=_loot_chance_arg,default=2.0,metavar='PERCENT',help='Independent generated-item roll on each existing world-loot reference (default: 2).')
+    parser.add_argument(
+        "--loot-destinations",
+        nargs="*",
+        choices=("world", "dungeon", "raid"),
+        default=None,
+        metavar="DEST",
+        help="Loot insertion destinations. Pass the option with no values to disable loot insertion."
+    )
     parser.add_argument('--world-loot-source',type=Path,default=None,metavar='PATH',help=f'creature_loot_template.sql to map world-loot levels (default: {DEFAULT_WORLD_LOOT_SOURCE}).')
     parser.add_argument('--reference-loot-source',type=Path,default=None,metavar='PATH',help=f'reference_loot_template.sql used to verify shared references (default: {DEFAULT_REFERENCE_LOOT_SOURCE}).')
     parser.add_argument('--gameobject-source',type=Path,default=None,metavar='PATH',help='Optional gameobject.sql source for verifiable chest/cache encounter targets.')
@@ -2180,7 +2188,12 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     data_dir=Path(args.data_dir).expanduser().resolve()
     output_root=Path(args.output_root).expanduser().resolve()
     FEATURE_CATALOG=None
-    LOOT_DESTINATIONS=set(getattr(args,'loot_destinations',DEFAULT_LOOT_DESTINATIONS))
+    raw_destinations = getattr(args, "loot_destinations", None)
+    LOOT_DESTINATIONS = (
+        set(DEFAULT_LOOT_DESTINATIONS)
+        if raw_destinations is None
+        else set(raw_destinations)
+    )
     if not LOOT_DESTINATIONS <= DEFAULT_LOOT_DESTINATIONS:
         raise ValueError(f'unknown loot destination(s): {sorted(LOOT_DESTINATIONS-DEFAULT_LOOT_DESTINATIONS)}')
     if ui: ui.startup_status('Resolving source manifest and optional encounter inputs')

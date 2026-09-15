@@ -53,17 +53,24 @@ def test_configured_output_uses_requested_output_root(tmp_path, monkeypatch):
         "creature_loot_template.sql", "reference_loot_template.sql", "item_template.sql",
         "Item.dbc", "ItemSet.dbc", "Spell.dbc", "SpellItemEnchantment.dbc",
         "disenchant_loot_template.sql", "spell_proc.sql", "spell_script_names.sql",
+        "Map.dbc", "MapDifficulty.dbc", "DungeonMap.dbc", "creature.sql",
+        "creature_template.sql", "instance_encounters.sql",
     ):
         (tmp_path / filename).touch()
     monkeypatch.setattr(gp, "_load_source_cache", lambda *_: {
         "reference_catalog": ([], [], {}), "feature_catalog": {},
-        "encounter_source_catalog": None, "default_encounter_manifest": None,
+        "encounter_source_catalog": {}, "default_encounter_manifest": {"profiles": []},
     })
     args = gp.parse_args(["--data-dir", str(tmp_path), "--output-root", str(tmp_path / "out"),
                           "--seed", "123", "--number", "1", "--disable", "all-new"])
     args.loot_destinations = []
     runtime = gp.configure_runtime(args=args)
     assert runtime["output_dir"] == (tmp_path / "out" / "generated-123").resolve()
+    assert gp.LOOT_DESTINATIONS == set()
+
+    del args.loot_destinations
+    gp.configure_runtime(args=args)
+    assert gp.LOOT_DESTINATIONS == set(gp.DEFAULT_LOOT_DESTINATIONS)
 
 
 def test_loot_destinations_can_be_empty():
