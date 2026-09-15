@@ -6,6 +6,8 @@ Deterministic custom equipment generation for AzerothCore / World of Warcraft: W
 
 Running `py generate_pack.py` opens a Rich setup wizard that lists the required `Data/` inputs, remembers the AzerothCore source directory, asks for the item count and loot destinations, and confirms the run before generation.
 
+Derived source mappings are cached in the user profile and automatically rebuilt when the relevant DBC/SQL/source files or generator code changes.
+
 The default run creates 100,000 items across the ten WotLK classes and writes:
 
 - AzerothCore `item_template` and loot SQL

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import argparse, csv, hashlib, json, math, os, random, re, shutil, struct, sys, time, uuid, zipfile
+import base64, gzip
 from collections import Counter, defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -9,6 +10,8 @@ ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / 'Data'
 USER_GUID_FILE = Path.home() / '.azerothcore-item-generator-guid'
 USER_AZEROTHCORE_SOURCE_FILE = Path.home() / '.azerothcore-item-generator-source-root'
+SOURCE_CACHE_FILE = Path.home() / '.azerothcore-item-generator-source-cache.json.gz'
+CACHE_SCHEMA_VERSION = 1
 SEED = None
 OUT = None
 SQLDIR = None
@@ -201,6 +204,104 @@ def _save_azerothcore_source(source_root,path=USER_AZEROTHCORE_SOURCE_FILE):
     path=Path(path)
     path.parent.mkdir(parents=True,exist_ok=True)
     path.write_text(str(Path(source_root).expanduser().resolve())+'\n',encoding='utf-8')
+
+_CACHE_TYPE='__wotlk_item_generator_cache_type__'
+
+def _cache_encode(value):
+    if value is None or isinstance(value,(str,int,float,bool)):
+        return value
+    if isinstance(value,Path):
+        return {_CACHE_TYPE:'path','value':str(value)}
+    if isinstance(value,bytes):
+        return {_CACHE_TYPE:'bytes','value':base64.b64encode(value).decode('ascii')}
+    if isinstance(value,defaultdict):
+        factory={list:'list',set:'set',int:'int'}.get(value.default_factory)
+        return {_CACHE_TYPE:'defaultdict','factory':factory,
+                'items':[[_cache_encode(key),_cache_encode(item)] for key,item in value.items()]}
+    if isinstance(value,dict):
+        return {_CACHE_TYPE:'dict',
+                'items':[[_cache_encode(key),_cache_encode(item)] for key,item in value.items()]}
+    if isinstance(value,list):
+        return {_CACHE_TYPE:'list','items':[_cache_encode(item) for item in value]}
+    if isinstance(value,tuple):
+        return {_CACHE_TYPE:'tuple','items':[_cache_encode(item) for item in value]}
+    if isinstance(value,set):
+        return {_CACHE_TYPE:'set','items':[_cache_encode(item) for item in value]}
+    raise TypeError(f'unsupported source-cache value: {type(value).__name__}')
+
+def _cache_decode(value):
+    if isinstance(value,list):
+        return [_cache_decode(item) for item in value]
+    if not isinstance(value,dict):
+        return value
+    kind=value.get(_CACHE_TYPE)
+    if kind=='path': return Path(value['value'])
+    if kind=='bytes': return base64.b64decode(value['value'])
+    if kind=='list': return [_cache_decode(item) for item in value['items']]
+    if kind=='tuple': return tuple(_cache_decode(item) for item in value['items'])
+    if kind=='set': return {_cache_decode(item) for item in value['items']}
+    if kind in ('dict','defaultdict'):
+        items=((_cache_decode(key),_cache_decode(item)) for key,item in value['items'])
+        if kind=='dict': return dict(items)
+        factory={'list':list,'set':set,'int':int}.get(value.get('factory'))
+        return defaultdict(factory,items)
+    return {key:_cache_decode(item) for key,item in value.items()}
+
+def _source_cache_files(source_root):
+    if source_root is None:
+        return ()
+    root=Path(source_root)
+    scan_root=root/'src'/'server'/'scripts' if (root/'src'/'server'/'scripts').is_dir() else root
+    header_root=root/'src' if (root/'src').is_dir() else root
+    suffixes={'.cpp','.h','.hpp','.cc','.c'}
+    files=set()
+    for base in (scan_root,header_root):
+        if base.is_dir():
+            files.update(path for path in base.rglob('*') if path.is_file() and path.suffix.lower() in suffixes)
+    return tuple(sorted(files,key=lambda path:str(path)))
+
+def _source_cache_key(paths,source_root=None,loot_chance=None):
+    files={}
+    for path in (*paths,*_source_cache_files(source_root)):
+        resolved=Path(path).expanduser().resolve()
+        try:
+            stat=resolved.stat()
+        except OSError:
+            files[str(resolved)]=None
+        else:
+            files[str(resolved)]={'size':stat.st_size,'mtime_ns':stat.st_mtime_ns}
+    script=ROOT/'generate_pack.py'
+    return {
+        'schema':CACHE_SCHEMA_VERSION,
+        'generator':hashlib.sha256(script.read_bytes()).hexdigest(),
+        'source_root':None if source_root is None else str(Path(source_root).expanduser().resolve()),
+        'loot_chance':loot_chance,
+        'files':dict(sorted(files.items())),
+    }
+
+def _save_source_cache(path,key,payload):
+    path=Path(path)
+    temporary=path.with_name(path.name+'.tmp')
+    try:
+        path.parent.mkdir(parents=True,exist_ok=True)
+        with gzip.open(temporary,'wt',encoding='utf-8') as stream:
+            json.dump(_cache_encode({'key':key,'payload':payload}),stream,separators=(',',':'))
+        os.replace(temporary,path)
+        return True
+    except (OSError,TypeError,ValueError,RecursionError):
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+        return False
+
+def _load_source_cache(path,key):
+    try:
+        with gzip.open(Path(path),'rt',encoding='utf-8') as stream:
+            record=_cache_decode(json.load(stream))
+    except (OSError,TypeError,ValueError,KeyError,IndexError,json.JSONDecodeError):
+        return None
+    return record.get('payload') if isinstance(record,dict) and record.get('key')==key else None
 
 def _encounter_destination(map_type):
     return 'raid' if int(map_type or 1)==2 else 'dungeon'
@@ -2064,6 +2165,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
     global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT, LOOT_DESTINATIONS
     args=parse_args(argv) if args is None else args
+    FEATURE_CATALOG=None
     LOOT_DESTINATIONS=set(getattr(args,'loot_destinations',DEFAULT_LOOT_DESTINATIONS))
     if not LOOT_DESTINATIONS <= DEFAULT_LOOT_DESTINATIONS:
         raise ValueError(f'unknown loot destination(s): {sorted(LOOT_DESTINATIONS-DEFAULT_LOOT_DESTINATIONS)}')
@@ -2089,40 +2191,6 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         requested_gameobject_paths, data_dir=DATA_DIR)
     gameobject_source_paths=resolve_optional_gameobject_sources(
         requested_gameobject_paths, data_dir=DATA_DIR)
-    if LOOT_DESTINATIONS & {'dungeon','raid'} and (content_manifest is None or any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',()))):
-        encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
-                         DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
-                         world_loot_source,reference_loot_source)
-        missing=[str(path) for path in encounter_paths if not Path(path).is_file()]
-        if gameobject_source_paths:
-            missing.extend(str(path) for path in gameobject_source_paths if not path.is_file())
-        if missing: raise FileNotFoundError('targeted encounter source file(s) not found: '+', '.join(missing))
-        if ui: ui.startup_status('Loading encounter catalog: maps, creatures, and loot tables')
-        encounter_source_catalog=load_encounter_source_catalog(
-            *encounter_paths,
-            item_template_path=item_template_source,
-            gameobject_path=gameobject_source_paths[0] if gameobject_source_paths else None,
-            gameobject_template_path=gameobject_source_paths[1] if gameobject_source_paths else None,
-            gameobject_loot_path=gameobject_source_paths[2] if gameobject_source_paths else None,
-        )
-        encounter_source_paths=encounter_paths[:6]
-        encounter_source_catalog.setdefault('source_audit',{}).update({
-            'azerothcore_source_root':_portable_source_path(source_root) if source_root else None,
-            'gameobject_source_status':gameobject_source_audit['status'],
-            'gameobject_source_candidate_paths':[_portable_source_path(path) for path in gameobject_source_audit['paths']],
-            'missing_gameobject_source_paths':[_portable_source_path(path) for path in gameobject_source_audit['missing_paths']],
-        })
-        script_root=source_root
-        if ui: ui.startup_status('Scanning AzerothCore scripts for reward mappings')
-        script_mappings,script_status=discover_script_reward_mappings(script_root,encounter_source_catalog)
-        encounter_source_catalog['script_reward_mappings']=script_mappings
-        encounter_source_catalog['source_audit']['script_reward_mapping']=script_status
-        if content_manifest is None:
-            if ui: ui.startup_status('Mapping default dungeon and raid loot profiles')
-            default_encounter_manifest=build_default_encounter_manifest(encounter_source_catalog,args.loot_chance)
-        else:
-            if ui: ui.startup_status('Validating targeted encounter source membership')
-            validate_targeted_source_membership(content_manifest,encounter_source_catalog)
     item_dbc_sources=[Path(path).expanduser().resolve() for path in (args.item_dbc_sources or _default_item_dbc_sources())]
     item_set_dbc_source=Path(args.item_set_dbc_source).expanduser().resolve()
     spell_dbc_source=Path(args.spell_dbc_source).expanduser().resolve()
@@ -2130,6 +2198,69 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     disenchant_source=Path(args.disenchant_source).expanduser().resolve()
     spell_proc_source=Path(args.spell_proc_source).expanduser().resolve()
     spell_script_names_source=Path(args.spell_script_names_source).expanduser().resolve()
+    encounter_paths=(DEFAULT_MAP_DBC_SOURCE,DEFAULT_MAP_DIFFICULTY_DBC_SOURCE,DEFAULT_DUNGEON_MAP_DBC_SOURCE,
+                     DEFAULT_CREATURE_SOURCE,DEFAULT_CREATURE_TEMPLATE_SOURCE,DEFAULT_INSTANCE_ENCOUNTERS_SOURCE,
+                     world_loot_source,reference_loot_source)
+    cache_paths=(*encounter_paths,item_template_source,*item_dbc_sources,item_set_dbc_source,
+                 spell_dbc_source,spell_enchantment_dbc_source,disenchant_source,spell_proc_source,
+                 spell_script_names_source,*gameobject_source_audit['paths'])
+    source_cache_key=_source_cache_key(cache_paths,source_root,args.loot_chance)
+    source_cache=_load_source_cache(SOURCE_CACHE_FILE,source_cache_key)
+    cached_reference_catalog=source_cache.get('reference_catalog') if source_cache else None
+    cached_feature_catalog=source_cache.get('feature_catalog') if source_cache else None
+    cached_encounter_catalog=source_cache.get('encounter_source_catalog') if source_cache else None
+    cached_encounter_manifest=source_cache.get('default_encounter_manifest') if source_cache else None
+    wants_encounter=bool(LOOT_DESTINATIONS & {'dungeon','raid'})
+    needs_feature_catalog=set(args.disabled_features) != set(NEW_FEATURES)
+    cache_write_needed=(source_cache is None or cached_reference_catalog is None or
+                        (wants_encounter and cached_encounter_catalog is None) or
+                        (content_manifest is None and wants_encounter and cached_encounter_manifest is None) or
+                        (needs_feature_catalog and cached_feature_catalog is None))
+    if source_cache is not None and ui:
+        ui.startup_status('Using cached source mappings')
+    if cached_reference_catalog:
+        A,W,catalog_audit=cached_reference_catalog
+    else:
+        A=W=catalog_audit=None
+    if cached_encounter_catalog is not None:
+        encounter_source_catalog=cached_encounter_catalog
+        encounter_source_paths=encounter_paths[:6]
+    if cached_encounter_manifest is not None and content_manifest is None:
+        default_encounter_manifest=cached_encounter_manifest
+    if cached_feature_catalog is not None and set(args.disabled_features) != set(NEW_FEATURES):
+        FEATURE_CATALOG=cached_feature_catalog
+    if wants_encounter and (content_manifest is None or any(profile.get('map_id') is not None for profile in content_manifest.get('profiles',()))):
+        missing=[str(path) for path in encounter_paths if not Path(path).is_file()]
+        if gameobject_source_paths:
+            missing.extend(str(path) for path in gameobject_source_paths if not path.is_file())
+        if missing: raise FileNotFoundError('targeted encounter source file(s) not found: '+', '.join(missing))
+        if encounter_source_catalog is None:
+            if ui: ui.startup_status('Loading encounter catalog: maps, creatures, and loot tables')
+            encounter_source_catalog=load_encounter_source_catalog(
+                *encounter_paths,
+                item_template_path=item_template_source,
+                gameobject_path=gameobject_source_paths[0] if gameobject_source_paths else None,
+                gameobject_template_path=gameobject_source_paths[1] if gameobject_source_paths else None,
+                gameobject_loot_path=gameobject_source_paths[2] if gameobject_source_paths else None,
+            )
+            encounter_source_paths=encounter_paths[:6]
+            encounter_source_catalog.setdefault('source_audit',{}).update({
+                'azerothcore_source_root':_portable_source_path(source_root) if source_root else None,
+                'gameobject_source_status':gameobject_source_audit['status'],
+                'gameobject_source_candidate_paths':[_portable_source_path(path) for path in gameobject_source_audit['paths']],
+                'missing_gameobject_source_paths':[_portable_source_path(path) for path in gameobject_source_audit['missing_paths']],
+            })
+            script_root=source_root
+            if ui: ui.startup_status('Scanning AzerothCore scripts for reward mappings')
+            script_mappings,script_status=discover_script_reward_mappings(script_root,encounter_source_catalog)
+            encounter_source_catalog['script_reward_mappings']=script_mappings
+            encounter_source_catalog['source_audit']['script_reward_mapping']=script_status
+        if content_manifest is None and default_encounter_manifest is None:
+            if ui: ui.startup_status('Mapping default dungeon and raid loot profiles')
+            default_encounter_manifest=build_default_encounter_manifest(encounter_source_catalog,args.loot_chance)
+        elif content_manifest is not None:
+            if ui: ui.startup_status('Validating targeted encounter source membership')
+            validate_targeted_source_membership(content_manifest,encounter_source_catalog)
     source_total=10+(len(encounter_source_paths) if encounter_source_paths else 0)
     if ui:
         ui.phase('Inspecting AzerothCore sources',total=source_total,detail='Verifying SQL and DBC inputs')
@@ -2179,12 +2310,13 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     if ui:
         ui.phase_done('Inspecting AzerothCore sources')
         ui.phase('Harvesting stock WotLK data',total=2,detail='Appearances, spells, effects, sets, sockets, and disenchant tables')
-        ui.status('Harvesting stock item appearances and weapon anchors')
-    harvested_a,harvested_w,catalog_audit=harvest_reference_catalog(item_template_source)
-    if catalog_audit['errors']:
-        details='\n'.join(f' - {error}' for error in catalog_audit['errors'][:20])
-        raise ValueError(f'item-template appearance harvest failed ({len(catalog_audit["errors"])} errors):\n{details}')
-    A=harvested_a; W=harvested_w
+        ui.status('Using cached appearance catalog' if A is not None else 'Harvesting stock item appearances and weapon anchors')
+    if A is None or W is None or catalog_audit is None:
+        harvested_a,harvested_w,catalog_audit=harvest_reference_catalog(item_template_source)
+        if catalog_audit['errors']:
+            details='\n'.join(f' - {error}' for error in catalog_audit['errors'][:20])
+            raise ValueError(f'item-template appearance harvest failed ({len(catalog_audit["errors"])} errors):\n{details}')
+        A=harvested_a; W=harvested_w
     if ui: ui.progress(1,2,current='Stock appearance catalog ready')
     if args.seed is not None:
         seed=args.seed
@@ -2242,14 +2374,24 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     DISENCHANT_RATE=args.disenchant_rate
     MAX_SPECIAL_EFFECTS=args.max_special_effects
     VERBOSE_AUDIT=bool(getattr(args,'verbose_audit',False))
-    if ui: ui.status('Loading spell, proc, set, socket, and disenchant catalogs')
-    FEATURE_CATALOG=load_feature_catalogs(
-        item_template_source,item_set_dbc_source,spell_dbc_source,spell_enchantment_dbc_source,
-        disenchant_source,spell_proc_source,spell_script_names_source,
-    ) if DISABLED_FEATURES != set(NEW_FEATURES) else empty_feature_catalog()
+    if ui: ui.status('Using cached feature catalogs' if FEATURE_CATALOG is not None and needs_feature_catalog else 'Loading spell, proc, set, socket, and disenchant catalogs')
+    if DISABLED_FEATURES == set(NEW_FEATURES):
+        FEATURE_CATALOG=empty_feature_catalog()
+    elif FEATURE_CATALOG is None:
+        FEATURE_CATALOG=load_feature_catalogs(
+            item_template_source,item_set_dbc_source,spell_dbc_source,spell_enchantment_dbc_source,
+            disenchant_source,spell_proc_source,spell_script_names_source,
+        )
     if ui:
         ui.progress(2,2,current='Feature catalogs ready')
         ui.phase_done('Harvesting stock WotLK data')
+    if cache_write_needed:
+        _save_source_cache(SOURCE_CACHE_FILE,source_cache_key,{
+            'reference_catalog':(A,W,catalog_audit),
+            'feature_catalog':FEATURE_CATALOG if needs_feature_catalog else cached_feature_catalog,
+            'encounter_source_catalog':encounter_source_catalog,
+            'default_encounter_manifest':default_encounter_manifest,
+        })
     REFERENCE_CATALOG_AUDIT=catalog_audit
     CONTENT_MANIFEST=content_manifest
     TARGETED_PLAN=targeted_plan

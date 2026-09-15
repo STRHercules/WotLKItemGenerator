@@ -27,6 +27,7 @@ If Rich is unavailable, use an explicit CLI run with `--ui plain`.
 
 - a short opening splash: a slowly rotating shaded globe, drifting motes, and a progress bar whose accent color rolls through the item-rarity palette (about two seconds; skipped by `--no-animations`, `--ui plain`, and `--quiet`)
 - the setup wizard's required `Data/` DBC/SQL file list, remembered AzerothCore path, item count, loot destination choices, and final confirmation on a bare run
+- cached source mappings on later runs; DBC/SQL/source changes automatically trigger a rebuild
 - the same globe keeps rotating inside the `Current Work` panel while the startup phases run (starting the forge, inspecting sources, harvesting stock data); it disappears once item generation begins
 - source SQL/DBC checks
 - seed, item count, selected classes, enabled features, and output path
