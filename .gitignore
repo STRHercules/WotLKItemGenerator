@@ -1,5 +1,12 @@
 /__pycache__
 /Tests/__pycache__
+__pycache__/
+.pytest_cache/
+*.pyc
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
 Docs/superowers/
 /.worktrees/
 /.superpowers/
