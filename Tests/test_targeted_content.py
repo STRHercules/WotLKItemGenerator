@@ -217,7 +217,7 @@ class BandTests(unittest.TestCase):
 
         self.assertFalse(evidence['reference_provenance'][0]['verified_parent'])
 
-    def test_one_map_normal_parent_is_not_verified_reference_provenance(self):
+    def test_one_map_normal_parent_is_verified_reference_provenance(self):
         catalog = _loot_catalog(
             [(9100, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'normal reference')],
             reference_rows=[(9200, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal gear')],
@@ -229,9 +229,67 @@ class BandTests(unittest.TestCase):
             {'type': 'creature', 'entry': 9100, 'creature_entry': 10},
         )
 
+        self.assertEqual(evidence['reference_item_count'], 1)
+        self.assertEqual(evidence['item_level_min'], 180)
+        self.assertTrue(evidence['reference_provenance'][0]['verified_parent'])
+
+    def test_nested_reference_beyond_depth_limit_is_not_trusted_transitively(self):
+        catalog = _loot_catalog(
+            [(9100, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'root')],
+            reference_rows=[
+                (9200, 0, 9300, 100.0, 0, 1, 0, 1, 1, 'depth 1'),
+                (9300, 0, 9400, 100.0, 0, 1, 0, 1, 1, 'depth 2'),
+                (9400, 0, 9500, 100.0, 0, 1, 0, 1, 1, 'depth 3'),
+                (9500, 0, 9600, 100.0, 0, 1, 0, 1, 1, 'depth 4'),
+                (9600, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'deep gear'),
+            ],
+            stock_items={5001: _stock_item(5001, 180, 70)},
+        )
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 0, 'loot_mode': 1},
+            {'type': 'creature', 'entry': 9100, 'creature_entry': 10},
+        )
+
         self.assertEqual(evidence['reference_item_count'], 0)
-        self.assertEqual(evidence['rejected_reference_count'], 1)
-        self.assertFalse(evidence['reference_provenance'][0]['verified_parent'])
+        self.assertTrue(any(row.get('reference') == 9600
+                            for row in evidence['rejections']))
+        deepest = max(row.get('provenance_depth', 0)
+                      for row in evidence['reference_provenance'])
+        self.assertEqual(deepest, g.MAX_REFERENCE_PROVENANCE_DEPTH)
+
+    def test_nested_reference_consumed_outside_map_is_not_verified(self):
+        catalog = _loot_catalog(
+            [(9100, 0, 9200, 100.0, 0, 1, 0, 1, 1, 'root'),
+             (9110, 0, 9300, 100.0, 0, 1, 0, 1, 1, 'other map nested')],
+            reference_rows=[
+                (9200, 0, 9300, 100.0, 0, 1, 0, 1, 1, 'nested'),
+                (9300, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'nested gear'),
+            ],
+            stock_items={5001: _stock_item(5001, 180, 70)},
+            maps={
+                100: {'id': 100, 'directory': 'BandDungeon',
+                      'map_type': 1, 'instance_type': 1},
+                200: {'id': 200, 'directory': 'OtherDungeon',
+                      'map_type': 1, 'instance_type': 1},
+            },
+            creatures={
+                10: {'entry': 10, 'name': 'Boss', 'lootid': 9100,
+                     'minlevel': 70, 'maxlevel': 70},
+                20: {'entry': 20, 'name': 'Other Boss', 'lootid': 9110,
+                     'minlevel': 70, 'maxlevel': 70},
+            },
+            creature_maps={10: {100}, 20: {200}},
+        )
+
+        evidence = g.collect_target_stock_evidence(
+            catalog, {'map_id': 100, 'difficulty_id': 0, 'loot_mode': 1},
+            {'type': 'creature', 'entry': 9100, 'creature_entry': 10},
+        )
+
+        self.assertEqual(evidence['reference_item_count'], 0)
+        self.assertTrue(any(row.get('reference') == 9300
+                            for row in evidence['rejections']))
 
     def test_loot_mode_keeps_normal_and_heroic_bands_independent(self):
         rows = [
@@ -407,6 +465,75 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(any(row['association_method'] == 'script_summon'
                             and row['encounter_id'].startswith('script_')
                             for row in rows))
+    def test_creature_encounter_link_does_not_override_populated_map(self):
+        catalog = _minimal_encounter_catalog(map_id=574, map_type=1,
+                                             instance_type=1, difficulty_ids=(0,))
+        catalog['creature_templates'][3654] = {
+            'entry': 3654, 'name': 'Mutanus the Devourer', 'lootid': 3654,
+            'minlevel': 22, 'maxlevel': 22, 'difficulty_entries': (0, 0, 0),
+        }
+        catalog['creature_loot_entries'].add(3654)
+        catalog['creature_loot_rows'] = [
+            (3654, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'legacy boss loot'),
+        ]
+        catalog['stock_items'] = {5001: _stock_item(5001, 26, 20)}
+        catalog['instance_encounters'] = {
+            592: {'credit_type': 0, 'credit_entry': 3654,
+                  'last_encounter_dungeon': 1,
+                  'comment': 'Mutanus the Devourer'},
+        }
+        catalog['dungeon_maps'] = {1: (1, 574)}
+
+        self.assertIsNone(g.creature_map_evidence(catalog, 3654, 574))
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        target_entries = [target.get('source_creature_entry')
+                          for profile in manifest['profiles']
+                          for encounter in profile['encounters']
+                          for target in encounter.get('targets', ())]
+        self.assertNotIn(3654, target_entries)
+
+    def test_script_summon_cannot_relocate_statically_proven_boss(self):
+        catalog = {
+            'maps': {601: {'id': 601, 'directory': 'Azjol_Uppercity',
+                           'map_type': 1, 'instance_type': 1},
+                     649: {'id': 649, 'directory': 'TrialOfTheCrusader',
+                           'map_type': 2, 'instance_type': 1}},
+            'creature_templates': {29120: {'entry': 29120, 'name': "Anub'arak",
+                                           'lootid': 29120, 'minlevel': 80,
+                                           'maxlevel': 80}},
+            'creature_maps': {29120: {601}},
+            'script_creature_map_evidence': [{
+                'creature_entry': 29120, 'map_id': 649,
+                'source_path': 'instance_trial_of_the_crusader.cpp', 'line': 88,
+                'evidence_type': 'instance_script_summon',
+            }],
+        }
+
+        self.assertEqual(g.creature_proven_maps(catalog, 29120), {601})
+        conflicts = catalog['source_audit']['cross_map_evidence_conflicts']
+        self.assertTrue(any(conflict['creature_entry'] == 29120
+                            and conflict['script_maps'] == [649]
+                            for conflict in conflicts))
+
+    def test_ambiguous_script_summons_without_credit_are_rejected(self):
+        catalog = {
+            'creature_templates': {29120: {'entry': 29120, 'name': "Anub'arak",
+                                           'lootid': 29120, 'minlevel': 80,
+                                           'maxlevel': 80}},
+            'script_creature_map_evidence': [
+                {'creature_entry': 29120, 'map_id': 601,
+                 'evidence_type': 'instance_script_summon'},
+                {'creature_entry': 29120, 'map_id': 649,
+                 'evidence_type': 'instance_script_summon'},
+            ],
+        }
+
+        self.assertEqual(g.creature_proven_maps(catalog, 29120), set())
+        self.assertTrue(any(conflict['resolution'] ==
+                            'ambiguous script map evidence rejected'
+                            for conflict in catalog['source_audit']['cross_map_evidence_conflicts']))
+
     def test_default_profiles_use_stock_bands_per_difficulty(self):
         catalog = _minimal_encounter_catalog(
             difficulty_ids=(0, 1), map_id=631, map_type=2,
@@ -972,6 +1099,103 @@ class Phase2Tests(unittest.TestCase):
             for row in profile['evidence'].get('rejections', ())
         ))
 
+    def test_heroic_band_never_falls_below_normal_sibling(self):
+        catalog = _minimal_encounter_catalog(map_id=100, map_type=1,
+                                             instance_type=1,
+                                             difficulty_ids=(0, 1))
+        catalog['creature_templates'][9001]['difficulty_entries'] = [9002]
+        catalog['creature_templates'][9002] = {
+            'entry': 9002, 'name': 'Heroic Boss', 'lootid': 9102,
+            'minlevel': 70, 'maxlevel': 70, 'difficulty_entries': [0, 0, 0],
+        }
+        catalog['creature_loot_entries'].update({9100, 9102})
+        catalog['creature_loot_rows'] = [
+            (9100, 5006, 0, 100.0, 0, 1, 0, 1, 1, 'normal 112'),
+            (9100, 5007, 0, 100.0, 0, 1, 0, 1, 1, 'normal 115'),
+            (9102, 5005, 0, 100.0, 0, 2, 0, 1, 1, 'heroic 105'),
+            (9102, 5005, 0, 100.0, 0, 2, 0, 1, 1, 'heroic 105'),
+            (9102, 5005, 0, 100.0, 0, 2, 0, 1, 1, 'heroic 105'),
+            (9102, 5006, 0, 100.0, 0, 2, 0, 1, 1, 'heroic 112'),
+            (9102, 5007, 0, 100.0, 0, 2, 0, 1, 1, 'heroic 115'),
+        ]
+        catalog['stock_items'] = {
+            5005: _stock_item(5005, 105, 65),
+            5006: _stock_item(5006, 112, 70),
+            5007: _stock_item(5007, 115, 70),
+        }
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        profiles = {profile['difficulty_id']: profile
+                    for profile in manifest['profiles']}
+        normal, heroic = profiles[0], profiles[1]
+
+        self.assertGreaterEqual(heroic['item_level_min'], normal['item_level_min'])
+        self.assertGreaterEqual(heroic['item_level_max'], normal['item_level_max'])
+        self.assertTrue(heroic['evidence'].get('progression_floor_adjustment'))
+        self.assertIn('sibling progression floor enforced',
+                      {row['reason'] for row in manifest['difficulty_comparisons']})
+        self.assertFalse(any(conflict.get('reason') == 'difficulty_progression_regression'
+                             for conflict in manifest.get('sibling_conflicts', ())))
+
+    def test_script_proven_boss_resolves_heroic_variant_progression(self):
+        catalog = _minimal_encounter_catalog(map_id=595, map_type=1,
+                                             instance_type=1,
+                                             difficulty_ids=(0, 1),
+                                             boss_spawn=False)
+        catalog['creature_templates'][9001]['difficulty_entries'] = [9002]
+        catalog['creature_templates'][9002] = {
+            'entry': 9002, 'name': 'Heroic Boss', 'lootid': 9102,
+            'minlevel': 80, 'maxlevel': 80, 'difficulty_entries': [0, 0, 0],
+        }
+        catalog['creature_loot_entries'].update({9100, 9102})
+        catalog['creature_loot_rows'] = [
+            (9100, 5001, 0, 100.0, 0, 1, 0, 1, 1, 'normal boss loot'),
+            (9102, 5002, 0, 100.0, 0, 2, 0, 1, 1, 'heroic boss loot'),
+        ]
+        catalog['stock_items'] = {
+            5001: _stock_item(5001, 187, 78),
+            5002: _stock_item(5002, 200, 80),
+        }
+        catalog['script_creature_map_evidence'] = [{
+            'creature_entry': 9001, 'map_id': 595,
+            'source_path': 'instance_culling_of_stratholme.cpp', 'line': 1,
+            'evidence_type': 'instance_script_summon',
+        }]
+
+        manifest = g.build_default_encounter_manifest(catalog, 2.0)
+        profiles = {profile['difficulty_id']: profile
+                    for profile in manifest['profiles']}
+
+        self.assertEqual((profiles[0]['item_level_min'],
+                          profiles[0]['item_level_max']), (187, 187))
+        self.assertEqual((profiles[1]['item_level_min'],
+                          profiles[1]['item_level_max']), (200, 200))
+        heroic_target = profiles[1]['encounters'][-1]['targets'][0]
+        self.assertEqual(heroic_target['effective_creature_entry'], 9002)
+        self.assertEqual(heroic_target['entry'], 9102)
+
+    def test_disjoint_family_legacy_sibling_is_excluded_as_era_conflict(self):
+        legacy = _placement_profile('legacy_onyxia', 'raid', (63, 76), (58, 60))
+        modern = _placement_profile('modern_onyxia', 'raid', (245, 245), (80, 80))
+        for profile in (legacy, modern):
+            profile['map_id'] = 249
+        legacy['difficulty_id'] = 0
+        modern['difficulty_id'] = 1
+        legacy['active_encounter_family'] = 'vanilla_onyxia'
+        modern['active_encounter_family'] = 'wotlk_onyxia'
+
+        profiles, comparisons, conflicts = g.apply_sibling_progression_coherence(
+            [legacy, modern])
+        by = {profile['id']: profile for profile in profiles}
+
+        self.assertTrue(by['legacy_onyxia']['excluded_by_era_conflict'])
+        self.assertFalse(by['legacy_onyxia']['valid'])
+        self.assertIn('legacy era', by['legacy_onyxia']['invalid_reason'])
+        self.assertTrue(any(conflict['reason'] == 'sibling_progression_era_conflict'
+                            for conflict in conflicts))
+        self.assertTrue(any(row['reason'].startswith('sibling progression era conflict')
+                            for row in comparisons))
+
     def test_profile_range_contradiction_invalidates_encounter_integration(self):
         profile = _placement_profile('sample', 'raid', (200, 220), (80, 80))
         profile['encounters'][0]['evidence'] = {
@@ -1135,6 +1359,30 @@ class PlacementTests(unittest.TestCase):
         self.assertLessEqual(choice['distribution_weight'], 1.25)
         self.assertIn('distribution_score', choice)
 
+    def test_same_tier_raid_and_heroic_dungeon_share_equivalence_group(self):
+        raid = _placement_profile('raid_10', 'raid', (200, 200), (80, 80))
+        raid['evidence']['progression_cluster'] = {
+            'retained': tuple([200] * 8 + [213]), 'rejected': (),
+            'method': 'largest_gap_cluster', 'gap': 15, 'prefer_high': True,
+        }
+        dungeon = _placement_profile('heroic_dungeon', 'dungeon',
+                                     (200, 200), (80, 80))
+        dungeon['evidence']['progression_cluster'] = {
+            'retained': tuple([200] * 6), 'rejected': (),
+            'method': 'largest_gap_cluster', 'gap': 15, 'prefer_high': False,
+        }
+        item = {'entry': 900001, 'ItemLevel': 200, 'RequiredLevel': 80,
+                'Quality': 3, 'slot': 'head'}
+
+        candidates = g._encounter_profile_candidates(item, [raid, dungeon])
+        groups = g._encounter_candidate_groups(item, candidates)
+
+        self.assertEqual(len(candidates), 2)
+        self.assertEqual(
+            [sorted(candidate['profile']['id'] for candidate in group)
+             for group in groups],
+            [['heroic_dungeon', 'raid_10']])
+
     def test_required_level_band_width_blocks_equivalence_grouping(self):
         narrow = _placement_profile('narrow', 'dungeon', (220, 220), (80, 80))
         within_ten = _placement_profile('within_ten', 'dungeon', (220, 220),
@@ -1264,6 +1512,124 @@ class SafetyTests(unittest.TestCase):
         self.assertTrue(any('sibling_progression_era_conflict' in error
                             for error in report['errors']))
 
+    def test_unresolved_script_reward_gap_is_warning_not_failure(self):
+        profile = {
+            'id': 'map_100_difficulty_1', 'map_id': 100, 'difficulty_id': 1,
+            'map_type': 1, 'expansion': 2, 'loot_mode': 2,
+            'item_level_min': 100, 'item_level_max': 120,
+            'required_level_min': 70, 'required_level_max': 80,
+            'evidence': {}, 'encounters': [],
+        }
+        coverage = [
+            {'map_id': 100, 'map_name': 'Fine', 'map_type': 1, 'expansion': 2,
+             'difficulty_id': 1, 'profile_created': True, 'boss_count': 3,
+             'trash_target_count': 1, 'excluded_reason': ''},
+            {'map_id': 650, 'map_name': 'Trial of the Champion',
+             'map_type': 1, 'expansion': 2, 'difficulty_id': 1,
+             'profile_created': False, 'boss_count': 0,
+             'trash_target_count': 0,
+             'excluded_reason': 'no usable stock equipment loot'},
+        ]
+        catalog = {
+            'source_audit': {'script_reward_mapping': 'not_exercised'},
+            'dungeon_maps': {}, 'instance_encounters': {}, 'maps': {},
+        }
+
+        report = g.validate_encounter_integration(
+            [], {'profiles': [profile], 'coverage': coverage}, [], catalog)
+
+        self.assertTrue(report['valid'])
+        self.assertTrue(any('unexercised gameobject rewards' in warning
+                            for warning in report['warnings']))
+
+        actionable = [dict(coverage[0]), dict(coverage[1], boss_count=1)]
+        report = g.validate_encounter_integration(
+            [], {'profiles': [profile], 'coverage': actionable}, [], catalog)
+        self.assertFalse(report['valid'])
+
+    def test_irreparable_difficulty_regression_is_a_recorded_warning(self):
+        lower = _placement_profile('map_556_difficulty_0', 'dungeon',
+                                   (112, 115), (70, 80))
+        higher = _placement_profile('map_556_difficulty_1', 'dungeon',
+                                    (112, 112), (70, 70))
+        lower['map_id'] = higher['map_id'] = 556
+        conflict = {
+            'reason': 'difficulty_progression_regression', 'map_id': 556,
+            'profile_ids': ['map_556_difficulty_0', 'map_556_difficulty_1'],
+            'band': [112, 112], 'lower_band': [112, 115],
+        }
+        higher['evidence']['difficulty_progression_regression'] = [conflict]
+
+        report = g.validate_encounter_integration(
+            [], {'profiles': [lower, higher],
+                 'sibling_conflicts': [conflict]}, [],
+            {'creature_maps': {9001: {556}}})
+
+        self.assertTrue(report['valid'])
+        self.assertTrue(any('difficulty_progression_regression' in warning
+                            for warning in report['warnings']))
+
+    def test_creature_target_without_proven_map_fails_validation(self):
+        profile = _placement_profile('map_574_difficulty_0', 'dungeon',
+                                     (150, 200), (70, 80))
+        profile['map_id'] = 574
+        profile['encounters'][0]['targets'] = [{
+            'type': 'creature', 'entry': 9100, 'creature_entry': 3654,
+            'effective_creature_entry': 3654, 'source_creature_entry': 3654,
+        }]
+        catalog = {
+            'creature_maps': {3654: {43}},
+            'creature_templates': {3654: {'entry': 3654, 'lootid': 3654,
+                                          'minlevel': 22, 'maxlevel': 22}},
+        }
+
+        report = g.validate_encounter_integration(
+            [], {'profiles': [profile]}, [], catalog)
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('no proven map evidence' in error
+                            for error in report['errors']))
+
+    def test_target_difficulty_resolution_contradiction_fails_validation(self):
+        profile = _placement_profile('raid_ten', 'raid', (200, 200), (80, 80))
+        profile['difficulty_id'] = 1
+        profile['encounters'][0]['targets'] = [{
+            'type': 'creature', 'entry': 9100, 'creature_entry': 9001,
+            'effective_creature_entry': 9001, 'source_creature_entry': 9001,
+            'difficulty_resolution': 'difficulty_entry_2',
+        }]
+
+        report = g.validate_encounter_integration(
+            [], {'profiles': [profile]}, [], {'creature_maps': {9001: {631}}})
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('profile difficulty' in error
+                            for error in report['errors']))
+
+    def test_cross_map_encounter_reuse_fails_validation(self):
+        def reused_profile(profile_id, map_id):
+            profile = _placement_profile(profile_id, 'raid', (200, 200), (80, 80))
+            profile['map_id'] = map_id
+            profile['difficulty_id'] = 1
+            profile['encounters'][0]['id'] = 'boss_000218'
+            profile['encounters'][0]['targets'] = [{
+                'type': 'creature', 'entry': 9100, 'creature_entry': 31610,
+                'effective_creature_entry': 31610,
+                'source_creature_entry': 29120,
+            }]
+            return profile
+
+        profiles = [reused_profile('map_601_difficulty_1', 601),
+                    reused_profile('map_649_difficulty_1', 649)]
+        catalog = {'creature_maps': {29120: {601, 649}}}
+
+        report = g.validate_encounter_integration(
+            [], {'profiles': profiles}, [], catalog)
+
+        self.assertFalse(report['valid'])
+        self.assertTrue(any('reused across unrelated maps' in error
+                            for error in report['errors']))
+
     def test_encounter_validation_rejects_out_of_band_required_level(self):
         profile = _placement_profile('high_dungeon', 'dungeon', (100, 140), (70, 80))
         item = {
@@ -1389,7 +1755,7 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(rows[0]['reference_id'], '9200')
         self.assertEqual(
             header,
-            'reference_id,parent_target_type,parent_target_entry,effective_target_entry,parent_loot_id,map_id,difficulty_id,parent_loot_mode,reference_loot_mode,consumer_map_count,consumer_profile_count,verified_parent')
+            'reference_id,parent_target_type,parent_target_entry,effective_target_entry,parent_loot_id,map_id,difficulty_id,parent_loot_mode,reference_loot_mode,consumer_map_count,consumer_profile_count,verified_parent,provenance_depth')
 
     def test_reward_target_report_has_fixed_header(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1400,7 +1766,7 @@ class ReportTests(unittest.TestCase):
                     'difficulty_id': 0, 'encounter_id': '',
                     'encounter_name': '', 'gameobject_entry': 7001,
                     'gameobject_name': 'Reward Chest', 'loot_entry': 97001,
-                    'spawn_guid': 44, 'spawn_mask': 3,
+                    'spawn_guid': 44, 'spawn_mask': 3, 'spawn_count': 1,
                     'association_method': 'static_spawn',
                     'association_source': 'gameobject.sql',
                     'direct_item_count': 0, 'reference_item_count': 0,
@@ -1408,7 +1774,7 @@ class ReportTests(unittest.TestCase):
                 }]})
             header = paths['gameobject_rewards'].read_text(
                 encoding='utf-8').splitlines()[0]
-        self.assertEqual(header, 'profile_id,map_id,difficulty_id,encounter_id,encounter_name,gameobject_entry,gameobject_name,loot_entry,spawn_guid,spawn_mask,association_method,association_source,direct_item_count,reference_item_count,valid,invalid_reason')
+        self.assertEqual(header, 'profile_id,map_id,difficulty_id,encounter_id,encounter_name,gameobject_entry,gameobject_name,loot_entry,spawn_guid,spawn_mask,spawn_count,difficulty_scope,association_method,association_source,direct_item_count,reference_item_count,valid,invalid_reason')
     def test_gameobject_encounter_sql_uses_gameobject_table(self):
         records = {
             'profile_id': 'sample',
@@ -1836,7 +2202,9 @@ INSERT INTO `quest_template` VALUES (2,0,0,0,0);
         self.assertEqual(audit['gameobject_support'], 'not_exercised')
         self.assertEqual(audit['gameobject_source_status'], 'missing')
         self.assertEqual(audit['missing_gameobject_source_paths'],
-                         [str(path.resolve()) for path in missing])
+                         [path.name for path in missing])
+        self.assertFalse(any(str(root) in str(path)
+                             for path in audit['missing_gameobject_source_paths']))
         self.assertIn('maps', runtime['encounter_source_catalog'])
 
 
@@ -2328,9 +2696,63 @@ void InstanceTest::SetBossState(uint32 id, EncounterState state) {
         rows = g.discover_gameobject_reward_targets(catalog, 631, 0)
         self.assertEqual(rows[0]['gameobject_entry'], 7001)
         self.assertEqual(rows[0]['loot_entry'], 97001)
-        self.assertEqual(rows[0]['spawn_mask'], 3)
+        self.assertEqual(rows[0]['spawn_count'], 1)
+        self.assertEqual(rows[0]['spawn_mask'], '')
         self.assertFalse(rows[0]['valid'])
         self.assertIn('boss', rows[0]['invalid_reason'].lower())
+
+    def test_static_spawn_rejections_are_aggregated_by_default(self):
+        catalog = _catalog_with_gameobject_sources()
+        catalog['instance_encounters'] = {}
+        catalog['gameobject_spawns'] = [
+            {'guid': 44, 'id': 7001, 'map': 631, 'spawn_mask': 3},
+            {'guid': 45, 'id': 7001, 'map': 631, 'spawn_mask': 3},
+        ]
+
+        rows = g.discover_gameobject_reward_targets(catalog)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['spawn_count'], 2)
+        self.assertEqual(rows[0]['spawn_guid'], '')
+        self.assertFalse(rows[0]['valid'])
+
+        original = g.VERBOSE_AUDIT
+        g.VERBOSE_AUDIT = True
+        try:
+            verbose_rows = g.discover_gameobject_reward_targets(catalog)
+        finally:
+            g.VERBOSE_AUDIT = original
+        self.assertEqual(len(verbose_rows), 2)
+        self.assertEqual({row['spawn_guid'] for row in verbose_rows}, {44, 45})
+
+    def test_script_reward_without_static_spawn_map_stays_audit_only(self):
+        catalog = _minimal_encounter_catalog(map_id=650, map_type=1,
+                                             instance_type=1)
+        catalog['gameobject_templates'] = {
+            195710: {'entry': 195710, 'type': 3, 'name': "Champion's Cache",
+                     'lootid': 27414},
+        }
+        catalog['gameobject_spawns'] = []
+        catalog['gameobject_maps'] = {}
+        catalog['gameobject_loot_entries'] = {27414}
+        catalog['script_reward_mappings'] = [{
+            'gameobject_entry': 195710,
+            'encounter_identifier': 'InstanceTest::SetBossState',
+            'source_path': 'src/server/scripts/instance_trial_of_the_champion.cpp',
+            'difficulty_condition': '',
+            'evidence_type': 'SummonGameObject completion path',
+        }]
+
+        rows = g.discover_gameobject_reward_targets(catalog)
+
+        script_rows = [row for row in rows
+                       if row['association_method'] == 'script_summon']
+        self.assertEqual(len(script_rows), 1)
+        self.assertEqual(script_rows[0]['gameobject_entry'], 195710)
+        self.assertEqual(script_rows[0]['encounter_id'],
+                         'script_InstanceTest_SetBossState')
+        self.assertFalse(script_rows[0]['valid'])
+        self.assertIn('instance-script map anchor', script_rows[0]['invalid_reason'])
 
     def test_gameobject_instance_mapping_is_valid_only_for_the_matching_map(self):
         catalog = _catalog_with_gameobject_sources()
@@ -2350,11 +2772,17 @@ void InstanceTest::SetBossState(uint32 id, EncounterState state) {
     if (id == DATA_BOSS && state == DONE)
         instance->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
 }
+struct InstanceTestMapScript : public InstanceMapScript
+{
+    InstanceTestMapScript() : InstanceMapScript("instance_test", 574) { }
+};
 """
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
             (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
             mappings, status = g.discover_script_reward_mappings(root, {
+                'maps': {574: {'id': 574, 'directory': 'Valgarde70',
+                               'map_type': 1, 'instance_type': 1}},
                 'gameobject_templates': {7001: {'entry': 7001, 'type': 3,
                                                 'name': 'Reward Chest',
                                                 'lootid': 97001}},
@@ -2363,6 +2791,43 @@ void InstanceTest::SetBossState(uint32 id, EncounterState state) {
         self.assertEqual(status, 'exercised')
         self.assertEqual(mappings[0]['gameobject_entry'], 7001)
         self.assertIn('SummonGameObject', mappings[0]['evidence_type'])
+        self.assertTrue(mappings[0]['validated'])
+        self.assertEqual(mappings[0]['map_id'], 574)
+        self.assertEqual(mappings[0]['map_evidence'], 'instance_script_registration')
+
+    def test_conditional_summon_discovers_each_variant_entry(self):
+        source = """
+enum GameObjects { GO_REWARD_CHEST = 7001, GO_REWARD_CHEST_H = 7002 };
+void InstanceTest::SetBossState(uint32 id, EncounterState state) {
+    if (id == DATA_BOSS && state == DONE)
+        instance->SummonGameObject(instance->IsHeroic() ? GO_REWARD_CHEST_H : GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+}
+struct InstanceTestMapScript : public InstanceMapScript
+{
+    InstanceTestMapScript() : InstanceMapScript("instance_test", 574) { }
+};
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            mappings, status = g.discover_script_reward_mappings(root, {
+                'maps': {574: {'id': 574, 'directory': 'Valgarde70',
+                               'map_type': 1, 'instance_type': 1}},
+                'gameobject_templates': {
+                    7001: {'entry': 7001, 'type': 3, 'name': 'Chest',
+                           'lootid': 97001},
+                    7002: {'entry': 7002, 'type': 3, 'name': 'Heroic Chest',
+                           'lootid': 97002},
+                },
+                'gameobject_loot_entries': {97001, 97002},
+            })
+        self.assertEqual(status, 'exercised')
+        self.assertEqual(sorted(mapping['gameobject_entry']
+                                for mapping in mappings), [7001, 7002])
+        self.assertTrue(all(mapping['validated'] for mapping in mappings))
+        self.assertEqual({mapping['map_id'] for mapping in mappings}, {574})
+        self.assertEqual({mapping['difficulty_scope'] for mapping in mappings},
+                         {'normal', 'heroic'})
 
     def test_same_file_symbol_cooccurrence_is_not_script_reward_evidence(self):
         source = "enum GameObjects { GO_REWARD_CHEST = 7001 }; void Other() { }"
@@ -2372,8 +2837,118 @@ void InstanceTest::SetBossState(uint32 id, EncounterState state) {
             mappings, status = g.discover_script_reward_mappings(
                 pathlib.Path(directory), {'gameobject_templates': {7001: {}},
                                            'gameobject_loot_entries': {97001}})
-        self.assertEqual(status, 'exercised')
+        self.assertEqual(status, 'exercised_no_reward_mappings')
         self.assertEqual(mappings, [])
+    def test_script_reward_scan_reports_candidate_and_validated_counts(self):
+        source = """
+enum GameObjects { GO_REWARD_CHEST = 7001 };
+struct InstanceTestMapScript : public InstanceMapScript
+{
+    InstanceTestMapScript() : InstanceMapScript("instance_test", 574) { }
+};
+void InstanceTest::JustDied(Unit* killer)
+{
+    me->SummonGameObject(GO_REWARD_CHEST, 1, 2, 3, 4, 5, 6, 7);
+}
+void InstanceTest::DoAction(int32 param)
+{
+    me->SummonGameObject(7001, 1, 2, 3, 4, 5, 6, 7);
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            catalog = {
+                'maps': {574: {'id': 574, 'directory': 'Valgarde70',
+                               'map_type': 1, 'instance_type': 1}},
+                'gameobject_templates': {7001: {'entry': 7001, 'type': 3,
+                                                'name': 'Reward Chest',
+                                                'lootid': 97001}},
+                'gameobject_loot_entries': {97001},
+            }
+            mappings, status = g.discover_script_reward_mappings(root, catalog)
+
+        scan = catalog['source_audit']['script_reward_scan']
+        self.assertEqual(status, 'exercised')
+        self.assertEqual(scan['files_scanned'], 1)
+        self.assertEqual(scan['candidate_reward_calls'], 2)
+        self.assertEqual(scan['validated_mappings'], 1)
+        self.assertGreaterEqual(scan['rejected_mappings'], 1)
+        self.assertIn('no explicit encounter completion evidence',
+                      scan['rejection_reasons'])
+        self.assertEqual(len(mappings), 1)
+        self.assertEqual(mappings[0]['encounter_identifier'],
+                         'InstanceTest::JustDied')
+
+    def test_instance_script_creature_summon_provides_map_evidence(self):
+        source = """
+enum NPCs { NPC_MEATHOOK = 26529 };
+struct InstanceTestMapScript : public InstanceMapScript
+{
+    InstanceTestMapScript() : InstanceMapScript("instance_test", 595) { }
+};
+void InstanceTest::SetData(uint32 type, uint32 data)
+{
+    me->SummonCreature(NPC_MEATHOOK, 1.0f, 2.0f, 3.0f, 4.0f);
+}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            (root / 'instance_test.cpp').write_text(source, encoding='utf-8')
+            catalog = {
+                'maps': {595: {'id': 595, 'directory': 'CullingOfStratholme',
+                               'map_type': 1, 'instance_type': 1}},
+                'creature_templates': {26529: {'entry': 26529, 'name': 'Meathook',
+                                               'lootid': 26529, 'minlevel': 70,
+                                               'maxlevel': 70}},
+                'gameobject_templates': {},
+                'gameobject_loot_entries': set(),
+            }
+            mappings, status = g.discover_script_reward_mappings(root, catalog)
+
+        self.assertEqual(status, 'exercised_no_reward_mappings')
+        self.assertEqual(mappings, [])
+        self.assertEqual(g.creature_proven_maps(catalog, 26529), {595})
+        self.assertEqual(g.creature_map_evidence(catalog, 26529, 595),
+                         'instance_script_summon')
+
+    def test_scanner_resolves_constants_in_script_directory_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory)
+            azjol = root / 'azjol'; toc = root / 'toc'
+            azjol.mkdir(); toc.mkdir()
+            (azjol / 'azjol_nerub.h').write_text(
+                'enum { NPC_ANUBARAK = 29120 };', encoding='utf-8')
+            (azjol / 'instance_azjol_nerub.cpp').write_text(
+                'InstanceMapScript("instance_azjol_nerub", 601);\n'
+                'void InstanceTest::SetData(uint32 type, uint32 data)\n'
+                '{\n    me->SummonCreature(NPC_ANUBARAK, 1.0f, 2.0f, 3.0f, 4.0f);\n}\n',
+                encoding='utf-8')
+            (toc / 'trial_of_the_crusader.h').write_text(
+                'enum { NPC_ANUBARAK = 34564 };', encoding='utf-8')
+            (toc / 'instance_trial_of_the_crusader.cpp').write_text(
+                'InstanceMapScript("instance_trial_of_the_crusader", 649);\n'
+                'void InstanceTest::SetData(uint32 type, uint32 data)\n'
+                '{\n    me->SummonCreature(NPC_ANUBARAK, 1.0f, 2.0f, 3.0f, 4.0f);\n}\n',
+                encoding='utf-8')
+            catalog = {
+                'maps': {601: {'id': 601, 'directory': 'Azjol_Uppercity',
+                               'map_type': 1, 'instance_type': 1},
+                         649: {'id': 649, 'directory': 'TrialOfTheCrusader',
+                               'map_type': 2, 'instance_type': 1}},
+                'creature_templates': {
+                    29120: {'entry': 29120, 'name': "Anub'arak", 'lootid': 29120,
+                            'minlevel': 80, 'maxlevel': 80},
+                    34564: {'entry': 34564, 'name': "Anub'arak", 'lootid': 34564,
+                            'minlevel': 80, 'maxlevel': 80},
+                },
+                'gameobject_templates': {}, 'gameobject_loot_entries': set(),
+            }
+            g.discover_script_reward_mappings(root, catalog)
+
+        self.assertEqual(g.creature_proven_maps(catalog, 29120), {601})
+        self.assertEqual(g.creature_proven_maps(catalog, 34564), {649})
+
     def test_complete_default_gameobject_trio_is_discoverable(self):
         with tempfile.TemporaryDirectory() as directory:
             root = pathlib.Path(directory)
@@ -2484,6 +3059,9 @@ INSERT INTO `gameobject_loot_template` VALUES (97001,19001,0,1);
         self.assertEqual(catalog['supported_gameobject_entries'], {7001})
         self.assertEqual(catalog['gameobject_spawns'][0]['spawn_mask'], 1)
         self.assertEqual(catalog['gameobject_maps'][7001], {631})
+        self.assertEqual(catalog['source_audit']['gameobject_source_paths'],
+                         ['gameobject.sql', 'gameobject_template.sql',
+                          'gameobject_loot_template.sql'])
 
     def test_default_encounter_manifest_maps_source_backed_trash_and_boss_loot(self):
         catalog = {

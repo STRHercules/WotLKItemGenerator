@@ -45,6 +45,7 @@ DEFAULT_ENCOUNTER_MANIFEST = None
 ENCOUNTER_SOURCE_PATHS = None
 GAMEOBJECT_SOURCE_PATHS = None
 GAMEOBJECT_SOURCE_AUDIT = None
+VERBOSE_AUDIT = False
 BATCH_SIZE = 500
 DEFAULT_TOTAL_ITEMS = 100_000
 DEFAULT_ITEMS_PER_CLASS = 10_000
@@ -527,6 +528,13 @@ def _copy_server_itemset(client_itemset_path,output_root):
 GENERATED_LOOT_POOL_BASE = 3_000_000
 GENERATED_ENCOUNTER_POOL_BASE = 3_100_000
 GENERATED_LOOT_ATTACHMENT_ITEM_BASE = 2_000_000_000
+# Reference chains deeper than this are treated as unverified instead of being
+# trusted transitively; every hop is revalidated against the profile map.
+MAX_REFERENCE_PROVENANCE_DEPTH = 4
+# One WotLK item-tier step. Retained progress clusters within one tier step of
+# each other are equivalent destinations, so same-tier dungeon and raid profiles
+# can compete for the same generated item.
+ENCOUNTER_TIER_ITEM_LEVEL_STEP = 13
 LOOT_BRACKETS = [
     ('01-19', 1, 19), ('20-39', 20, 39), ('40-59', 40, 59),
     ('60-69', 60, 69), ('70-79', 70, 79), ('80', 80, 80),
@@ -1699,6 +1707,7 @@ def parse_args(argv=None):
     parser.add_argument('--no-animations',action='store_true',help='Keep the styled UI but disable animated spinners/refresh effects.')
     parser.add_argument('--show-items',action='store_true',help='Expand the live discovery feed with additional interesting generated items.')
     parser.add_argument('--quiet',action='store_true',help='Suppress progress output; print only errors and the final completion line.')
+    parser.add_argument('--verbose-audit',dest='verbose_audit',action='store_true',help='Emit every rejected static gameobject spawn row in the reward audit instead of the default aggregated summary.')
     args=parser.parse_args(argv)
     args.disabled_features=_expand_disabled_features(args.disable_groups)
     return args
@@ -1729,7 +1738,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT
     args=parse_args(argv) if args is None else args
     if ui: ui.startup_status('Resolving source manifest and optional encounter inputs')
     content_manifest=load_content_manifest(args.content_manifest) if args.content_manifest else None
@@ -1771,10 +1780,10 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         )
         encounter_source_paths=encounter_paths[:6]
         encounter_source_catalog.setdefault('source_audit',{}).update({
-            'azerothcore_source_root':str(source_root) if source_root else None,
+            'azerothcore_source_root':_portable_source_path(source_root) if source_root else None,
             'gameobject_source_status':gameobject_source_audit['status'],
-            'gameobject_source_candidate_paths':list(gameobject_source_audit['paths']),
-            'missing_gameobject_source_paths':list(gameobject_source_audit['missing_paths']),
+            'gameobject_source_candidate_paths':[_portable_source_path(path) for path in gameobject_source_audit['paths']],
+            'missing_gameobject_source_paths':[_portable_source_path(path) for path in gameobject_source_audit['missing_paths']],
         })
         script_root=source_root
         if ui: ui.startup_status('Scanning AzerothCore scripts for reward mappings')
@@ -1905,6 +1914,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     SOCKET_BONUS_RATE=args.socket_bonus_rate
     DISENCHANT_RATE=args.disenchant_rate
     MAX_SPECIAL_EFFECTS=args.max_special_effects
+    VERBOSE_AUDIT=bool(getattr(args,'verbose_audit',False))
     if ui: ui.status('Loading spell, proc, set, socket, and disenchant catalogs')
     FEATURE_CATALOG=load_feature_catalogs(
         item_template_source,item_set_dbc_source,spell_dbc_source,spell_enchantment_dbc_source,
@@ -2233,7 +2243,7 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
             'gameobject_loot_columns':gameobject_loot_columns,'gameobject_loot_rows':gameobject_loot_rows,
             'gameobject_loot_entries':{_sql_int(row[0]) for row in gameobject_loot_rows},
             'stock_items':stock_items,
-            'source_audit':{'gameobject_source_paths':[str(path) for path in (gameobject_path,gameobject_template_path,gameobject_loot_path) if path is not None],
+            'source_audit':{'gameobject_source_paths':[_portable_source_path(path) for path in (gameobject_path,gameobject_template_path,gameobject_loot_path) if path is not None],
                             'map_count':len(maps),'map_difficulty_count':len(difficulties),
                             'creature_template_count':len(creature_templates),'spawn_creature_count':len(creature_maps),
                             'difficulty_template_count':sum(any(template.get('difficulty_entries',())) for template in creature_templates.values()),
@@ -2244,7 +2254,7 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
                             'reference_provenance_count':0,
                             'gameobject_support':'exercised' if gameobject_path is not None else 'not_exercised',
                             'gameobject_source_status':'found' if gameobject_path is not None else 'not_configured',
-                            'gameobject_source_candidate_paths':[str(path) for path in (gameobject_path,gameobject_template_path,gameobject_loot_path) if path is not None],
+                            'gameobject_source_candidate_paths':[_portable_source_path(path) for path in (gameobject_path,gameobject_template_path,gameobject_loot_path) if path is not None],
                             'missing_gameobject_source_paths':[],
                             'script_reward_mapping':'not_exercised'}}
 
@@ -2255,6 +2265,16 @@ def loot_mode_for_difficulty(map_type=None,difficulty_id=None):
     if not 0<=difficulty<=15:
         raise ValueError(f'unsupported map difficulty for loot mode: {difficulty}')
     return 1<<difficulty
+
+def _difficulty_scope_matches(scope,map_type,difficulty_id):
+    scope=str(scope or '').strip().lower()
+    if not scope: return True
+    difficulty_id=int(difficulty_id or 0)
+    if scope=='normal': return difficulty_id==0 if int(map_type or 0)==1 else difficulty_id in (0,1)
+    if scope=='heroic': return difficulty_id>=1 if int(map_type or 0)==1 else difficulty_id>=2
+    if scope=='10': return difficulty_id in (0,2)
+    if scope=='25': return difficulty_id in (1,3)
+    return True
 
 def _item_level_bounds_for_required_level(required_level):
     required_level=max(1,min(80,int(required_level)))
@@ -2279,6 +2299,99 @@ def _item_level_band_for_creatures(creature_templates):
         ranges.append((_item_level_bounds_for_required_level(minimum)[0],_item_level_bounds_for_required_level(maximum)[1]))
     if not ranges: return 1,284
     return min(row[0] for row in ranges),max(row[1] for row in ranges)
+
+def _map_difficulty_item_levels(catalog,map_id):
+    levels=[]
+    for (current_map,_),row in (catalog.get('map_difficulties') or {}).items():
+        if int(current_map)!=int(map_id): continue
+        value=row.get('item_level')
+        if value in (None,''): continue
+        value=int(value)
+        if value>0: levels.append(value)
+    return levels
+
+def _creature_level_fits_map(catalog,creature_entry,map_id):
+    """Corroborate an instance-encounter map link with the creature's own level data."""
+    template=(catalog.get('creature_templates') or {}).get(int(creature_entry))
+    if not template: return False
+    levels=_map_difficulty_item_levels(catalog,map_id)
+    if not levels or template.get('minlevel') is None: return True
+    item_level_min,item_level_max=_item_level_band_for_creatures([template])
+    target=min(levels)
+    return not (item_level_max+40<target or item_level_min-40>target)
+
+def creature_map_evidence_index(catalog):
+    """Authoritative creature entry -> proven map evidence for encounter targeting."""
+    cache=catalog.get('_creature_map_evidence')
+    if cache is not None: return cache
+    cache={}
+    populated_maps={int(map_id) for maps in (catalog.get('creature_maps') or {}).values() for map_id in maps}
+    static_maps=defaultdict(set)
+    for entry,maps in (catalog.get('creature_maps') or {}).items():
+        for map_id in maps:
+            cache[(int(entry),int(map_id))]='static_spawn'
+            static_maps[int(entry)].add(int(map_id))
+    credited_maps=defaultdict(set)
+    for encounter in (catalog.get('instance_encounters') or {}).values():
+        if int(encounter.get('credit_type',0))!=0: continue
+        entry=int(encounter.get('credit_entry',0))
+        linked=_dungeon_map_id(catalog.get('dungeon_maps') or {},encounter.get('last_encounter_dungeon',0))
+        if linked is not None: credited_maps[entry].add(int(linked))
+    script_rows=defaultdict(list)
+    for row in (catalog.get('script_creature_map_evidence') or ()):
+        script_rows[int(row['creature_entry'])].append(row)
+    conflicts=[]
+    for entry,rows in sorted(script_rows.items()):
+        script_maps={int(row['map_id']) for row in rows}
+        if static_maps.get(entry):
+            allowed=set(static_maps[entry])
+        elif len(script_maps)==1:
+            allowed=set(script_maps)
+        else:
+            allowed=credited_maps.get(entry,set()) & script_maps
+            if not allowed:
+                conflicts.append({'creature_entry':entry,'script_maps':sorted(script_maps),
+                                  'credited_maps':sorted(credited_maps.get(entry,set())),
+                                  'resolution':'ambiguous script map evidence rejected'})
+                continue
+        for row in rows:
+            map_id=int(row['map_id'])
+            if map_id not in allowed: continue
+            cache.setdefault((entry,map_id),str(row.get('evidence_type') or 'instance_script_summon'))
+        for map_id in script_maps-allowed:
+            conflicts.append({'creature_entry':entry,'script_maps':[map_id],
+                              'static_maps':sorted(static_maps.get(entry,set())),
+                              'credited_maps':sorted(credited_maps.get(entry,set())),
+                              'resolution':'script summon cannot relocate a creature proven on another map'})
+    if conflicts:
+        audit=catalog.setdefault('source_audit',{})
+        audit.setdefault('cross_map_evidence_conflicts',[]).extend(conflicts)
+    for encounter in (catalog.get('instance_encounters') or {}).values():
+        if int(encounter.get('credit_type',0))!=0: continue
+        entry=int(encounter.get('credit_entry',0))
+        linked=_dungeon_map_id(catalog.get('dungeon_maps') or {},encounter.get('last_encounter_dungeon',0))
+        if linked is None: continue
+        if (catalog.get('creature_maps') or {}).get(entry): continue
+        if int(linked) in populated_maps:
+            # A populated map has static spawn evidence; an uncorroborated
+            # last-encounter link must not override it (classic junk rows).
+            continue
+        key=(entry,int(linked))
+        if key in cache: continue
+        if _creature_level_fits_map(catalog,entry,int(linked)):
+            cache[key]='instance_encounter_link'
+    proven=defaultdict(set)
+    for (entry,map_id) in cache: proven[int(entry)].add(int(map_id))
+    catalog['_creature_proven_maps']=proven
+    catalog['_creature_map_evidence']=cache
+    return cache
+
+def creature_proven_maps(catalog,creature_entry):
+    creature_map_evidence_index(catalog)
+    return set((catalog.get('_creature_proven_maps') or {}).get(int(creature_entry),set()))
+
+def creature_map_evidence(catalog,creature_entry,map_id):
+    return creature_map_evidence_index(catalog).get((int(creature_entry),int(map_id)))
 
 def _difficulty_label(map_row,difficulty_id,max_players=None):
     difficulty_id=int(difficulty_id)
@@ -2321,6 +2434,8 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
     requested_difficulty='' if difficulty_id is None else int(difficulty_id)
     encounters=catalog.get('instance_encounters',{})
     dungeon_maps=catalog.get('dungeon_maps',{})
+    source_path=';'.join(catalog.get('source_audit',{}).get('gameobject_source_paths') or ())
+    static_rejections=defaultdict(int)
     spawn_maps_by_entry=defaultdict(set)
     for spawn in catalog.get('gameobject_spawns',()):
         entry=int(spawn.get('id',0)); spawn_map=int(spawn.get('map',-1))
@@ -2341,18 +2456,18 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
         script_matches=[]
         for mapping in catalog.get('script_reward_mappings',()):
             if int(mapping.get('gameobject_entry',-1))!=entry: continue
-            source_map=mapping.get('source_map_id',mapping.get('map_id'))
+            source_map=mapping.get('map_id',mapping.get('source_map_id'))
             if source_map not in (None,'') and int(source_map)!=spawn_map: continue
             script_matches.append(mapping)
-        source_path=';'.join(catalog.get('source_audit',{}).get('gameobject_source_paths') or ())
         ambiguous_script_map=any(
-            mapping.get('source_map_id',mapping.get('map_id')) in (None,'') and
+            mapping.get('map_id',mapping.get('source_map_id')) in (None,'') and
             len(spawn_maps_by_entry[entry]) != 1
             for mapping in script_matches)
         base={'profile_id':f'map_{spawn_map}_difficulty_{requested_difficulty}' if requested_map is not None else '',
               'map_id':spawn_map,'difficulty_id':requested_difficulty,'gameobject_entry':entry,
               'gameobject_name':template.get('name',''),'loot_entry':loot_entry,
               'spawn_guid':int(spawn.get('guid',0)),'spawn_mask':int(spawn.get('spawn_mask',1)),
+              'spawn_count':1,
               'direct_item_count':0,'reference_item_count':0,'association_source':source_path}
         if matches:
             for encounter_entry,encounter in matches:
@@ -2369,10 +2484,11 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
                 row.update({'encounter_id':f'script_{identifier}',
                             'encounter_name':script.get('encounter_identifier',''),
                             'association_method':'script_summon',
-                            'valid':not ambiguous_script_map,
+                            'valid':bool(script.get('validated')) or not ambiguous_script_map,
                             'invalid_reason':'script summon has ambiguous map: gameobject entry is spawned on multiple maps' if ambiguous_script_map else '',
                             'association_source':';'.join(filter(None,(source_path,script.get('source_path','')))),
                             'difficulty_condition':script.get('difficulty_condition',''),
+                            'difficulty_scope':script.get('difficulty_scope',''),
                             'evidence_type':script.get('evidence_type','')})
                 rows.append(row)
             continue
@@ -2383,52 +2499,146 @@ def discover_gameobject_reward_targets(catalog, map_id=None, difficulty_id=None)
                 row.update({'encounter_id':f'script_{identifier}',
                             'encounter_name':script.get('encounter_identifier',''),
                             'association_method':'script_summon',
-                            'valid':not ambiguous_script_map,
+                            'valid':bool(script.get('validated')) or not ambiguous_script_map,
                             'invalid_reason':'script summon has ambiguous map: gameobject entry is spawned on multiple maps' if ambiguous_script_map else '',
                             'association_source':';'.join(filter(None,(source_path,script.get('source_path','')))),
                             'difficulty_condition':script.get('difficulty_condition',''),
+                            'difficulty_scope':script.get('difficulty_scope',''),
                             'evidence_type':script.get('evidence_type','')})
                 rows.append(row)
             continue
         else:
-            base.update({'encounter_id':'','encounter_name':'','association_method':'static_spawn',
+            if VERBOSE_AUDIT:
+                base.update({'encounter_id':'','encounter_name':'','association_method':'static_spawn',
+                             'valid':False,'invalid_reason':'static map/spawn has no boss association'})
+                rows.append(base)
+            else:
+                static_rejections[(spawn_map,entry,loot_entry,template.get('name',''))]+=1
+    if not VERBOSE_AUDIT:
+        for (spawn_map,entry,loot_entry,name),count in sorted(static_rejections.items()):
+            rows.append({'profile_id':'','map_id':spawn_map,'difficulty_id':'','encounter_id':'',
+                         'encounter_name':'','gameobject_entry':entry,'gameobject_name':name,
+                         'loot_entry':loot_entry,'spawn_guid':'','spawn_mask':'','spawn_count':count,
+                         'association_method':'static_spawn','association_source':source_path,
+                         'direct_item_count':0,'reference_item_count':0,
                          'valid':False,'invalid_reason':'static map/spawn has no boss association'})
-        rows.append(base)
+    for mapping in catalog.get('script_reward_mappings',()):
+        entry=int(mapping.get('gameobject_entry',-1))
+        if entry<=0 or entry in spawn_maps_by_entry: continue
+        template=catalog.get('gameobject_templates',{}).get(entry)
+        if not template or int(template.get('type',0))!=3: continue
+        loot_entry=int(template.get('lootid') or 0)
+        if loot_entry<=0 or loot_entry not in catalog.get('gameobject_loot_entries',set()): continue
+        script_map=mapping.get('map_id')
+        if requested_map is not None and (not script_map or int(script_map)!=requested_map): continue
+        validated=bool(mapping.get('validated'))
+        identifier=re.sub(r'[^A-Za-z0-9_]+','_',str(mapping.get('encounter_identifier') or 'reward'))
+        rows.append({'profile_id':'','map_id':int(script_map) if script_map else '','difficulty_id':'',
+                     'encounter_id':f'script_{identifier}',
+                     'encounter_name':mapping.get('encounter_identifier',''),'gameobject_entry':entry,
+                     'gameobject_name':template.get('name',''),'loot_entry':loot_entry,
+                     'spawn_guid':'','spawn_mask':'','spawn_count':0,
+                     'association_method':'script_summon',
+                     'association_source':';'.join(filter(None,(source_path,mapping.get('source_path','')))),
+                     'difficulty_condition':mapping.get('difficulty_condition',''),
+                     'difficulty_scope':mapping.get('difficulty_scope',''),
+                     'evidence_type':mapping.get('evidence_type',''),
+                     'direct_item_count':0,'reference_item_count':0,'valid':validated,
+                     'invalid_reason':'' if validated else (
+                         'script summon has no explicit instance-script map anchor' if not script_map
+                         else 'script reward relationship is not validated')})
+    audit=catalog.setdefault('source_audit',{})
+    audit['gameobject_static_spawn_rejection_count']=sum(static_rejections.values())
+    audit['gameobject_static_spawn_rejection_groups']=len(static_rejections)
     return rows
 
-def discover_script_reward_mappings(source_root, catalog):
-    """Find explicit completion-path summons; file-level symbol co-occurrence is insufficient."""
-    if source_root is None: return [], 'not_exercised'
+def discover_script_reward_mappings(source_root,catalog):
+    """Find explicit completion-path reward relationships in AzerothCore sources."""
+    templates=catalog.get('gameobject_templates',{})
+    loot_entries=set(catalog.get('gameobject_loot_entries',set()))
+    creature_templates=catalog.get('creature_templates',{})
+    kill_credit_entries={int(row.get('credit_entry',0) or 0)
+                         for row in (catalog.get('instance_encounters') or {}).values()
+                         if int(row.get('credit_type',0))==1}
+    scan={'files_scanned':0,'instance_script_anchors':0,'candidate_reward_calls':0,
+          'candidate_creature_summons':0,'validated_mappings':0,'rejected_mappings':0,
+          'rejection_reasons':{}}
+    def reject(reason):
+        scan['rejected_mappings']+=1
+        scan['rejection_reasons'][reason]=scan['rejection_reasons'].get(reason,0)+1
+    if source_root is None:
+        scan['status']='not_exercised'
+        catalog.setdefault('source_audit',{})['script_reward_scan']=scan
+        return [], 'not_exercised'
     root=Path(source_root)
     scan_root=root/'src'/'server'/'scripts' if (root/'src'/'server'/'scripts').is_dir() else root
     files=sorted((path for path in scan_root.rglob('*')
                   if path.is_file() and path.suffix.lower() in {'.cpp','.h','.hpp','.cc','.c'}),
                  key=lambda path:str(path))
-    constants={}
-    templates=catalog.get('gameobject_templates',{})
-    text_by_file=[]
-    for path in files:
-        text=path.read_text(encoding='utf-8',errors='ignore'); text_by_file.append((path,text))
-        for name,value in re.findall(r'\b(GO_[A-Za-z0-9_]+)\s*=\s*(\d+)',text): constants[name]=int(value)
-        for name,value in re.findall(r'\b(?:const(?:ant)?\s+)?(?:uint\w*|int)\s+(GO_[A-Za-z0-9_]+)\s*=\s*(\d+)',text):
-            constants[name]=int(value)
+    texts=[(path,path.read_text(encoding='utf-8',errors='ignore')) for path in files]
+    scan['files_scanned']=len(files)
 
-    def matching_brace(text, opening, limit):
+    constants={}; constant_values=defaultdict(set); directory_constants=defaultdict(dict)
+
+    def collect_constants(text,target):
+        for pattern in (r'\b((?:GO|NPC|MAP)_[A-Za-z0-9_]+)\s*=\s*(\d+)',
+                        r'#define\s+((?:GO|NPC|MAP)_[A-Za-z0-9_]+)\s+(\d+)'):
+            for name,value in re.findall(pattern,text):
+                value=int(value)
+                constants.setdefault(name,value)
+                constant_values[name].add(value)
+                target.setdefault(name,value)
+
+    for path,text in texts:
+        collect_constants(text,directory_constants[path.parent])
+    constant_files=set(files)
+    header_root=root/'src' if (root/'src').is_dir() else root
+    definition_texts=[(path,path.read_text(encoding='utf-8',errors='ignore'))
+                      for path in sorted(header_root.rglob('*'))
+                      if path.is_file() and path.suffix.lower() in {'.h','.hpp'} and path not in constant_files]
+    for _,text in definition_texts:
+        collect_constants(text,{})
+
+    def resolve_constant(token,local):
+        if token in local: return int(local[token])
+        values=constant_values.get(token)
+        if values and len(values)==1: return next(iter(values))
+        return None
+
+    maps=catalog.get('maps',{})
+    file_map_anchors={}; directory_map_anchors=defaultdict(set)
+    for path,text in texts:
+        for match in re.finditer(r'InstanceMapScript\s*\(\s*"[^"]*"\s*,\s*([A-Za-z0-9_]+)\s*\)',text):
+            token=match.group(1)
+            map_id=int(token) if token.isdigit() else (resolve_constant(token,directory_constants.get(path.parent,{})) or 0)
+            if map_id>0 and map_id in maps:
+                file_map_anchors[path]=(map_id,'instance_script_registration')
+                directory_map_anchors[path.parent].add(map_id)
+    scan['instance_script_anchors']=len(file_map_anchors)
+
+    def map_anchor(path):
+        if path in file_map_anchors: return file_map_anchors[path]
+        maps_in_directory=directory_map_anchors.get(path.parent,set())
+        if len(maps_in_directory)==1:
+            return next(iter(maps_in_directory)),'instance_script_directory'
+        return None,''
+
+    def matching_brace(text,opening,limit):
         depth=0
-        for index in range(opening, limit):
+        for index in range(opening,limit):
             if text[index]=='{': depth+=1
             elif text[index]=='}':
                 depth-=1
                 if depth==0: return index
         return None
 
-    def statement_end(text, start, limit):
+    def statement_end(text,start,limit):
         parentheses=0; braces=0
-        for index in range(start, limit):
+        for index in range(start,limit):
             character=text[index]
             if character=='(': parentheses+=1
             elif character==')' and parentheses: parentheses-=1
-            elif character=='{' : braces+=1
+            elif character=='{': braces+=1
             elif character=='}':
                 if braces: braces-=1
                 elif not parentheses: return index
@@ -2436,32 +2646,141 @@ def discover_script_reward_mappings(source_root, catalog):
                 return index+1
         return limit
 
-    function_pattern=re.compile(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*\{')
-    control_pattern=re.compile(r'\bif\s*\(([^(){}]*(?:\([^(){}]*\)[^(){}]*)*)\)',re.S)
-    summon_pattern=re.compile(r'\b(?:SummonGameObject|SummonGameobject|summonGameObject)\s*\(\s*([^,)]+)')
-    excluded_function_names={'if','for','while','switch','catch'}
+    def first_call_argument(text,start):
+        depth=0; index=start
+        while index<len(text):
+            character=text[index]
+            if character in '([{': depth+=1
+            elif character in ')]}':
+                if depth==0: return text[start:index]
+                depth-=1
+            elif character==',' and depth==0:
+                return text[start:index]
+            index+=1
+        return text[start:index]
 
-    def control_scopes(text, body_start, body_end):
+    def call_body(text,start):
+        depth=0; index=start
+        while index<len(text):
+            character=text[index]
+            if character=='(':
+                depth+=1
+            elif character==')':
+                if depth==0: return text[start:index]
+                depth-=1
+            index+=1
+        return text[start:index]
+
+    def split_top_level(text,separator=','):
+        parts=[]; depth=0; current=''
+        for character in text:
+            if character in '([{': depth+=1
+            elif character in ')]}': depth-=1
+            if character==separator and depth==0:
+                parts.append(current); current=''
+            else:
+                current+=character
+        parts.append(current)
+        return parts
+
+    def top_level_index(text,marker):
+        depth=0
+        for index,character in enumerate(text):
+            if character in '([{': depth+=1
+            elif character in ')]}': depth-=1
+            elif character==marker and depth==0: return index
+        return None
+
+    def entry_tokens(segment,local):
+        entries=[]
+        for token in re.findall(r'\b(?:GO|NPC)_[A-Za-z0-9_]+',segment):
+            value=resolve_constant(token,local)
+            if value is not None: entries.append(value)
+        entries.extend(int(value) for value in
+                       re.findall(r'(?<![A-Za-z0-9_])(\d{3,})(?![A-Za-z0-9_])',segment))
+        return list(dict.fromkeys(entries))
+
+    def scoped_entries(argument,local):
+        macro=re.search(r'\b(DUNGEON_MODE|RAID_MODE)\s*\(',argument)
+        if macro:
+            inner=call_body(argument,macro.end())
+            parts=split_top_level(inner,',')
+            scopes=('normal','heroic') if macro.group(1)=='DUNGEON_MODE' else ('10','25')
+            rows=[]
+            for scope,part in zip(scopes,parts):
+                rows.extend((entry,scope) for entry in entry_tokens(part,local))
+            return rows
+        question=top_level_index(argument,'?')
+        if question is not None:
+            rest=argument[question+1:]
+            colon=top_level_index(rest,':')
+            if colon is not None:
+                condition=argument[:question].lower()
+                left=rest[:colon]; right=rest[colon+1:]
+                if 'heroic' in condition: pairs=(('heroic',left),('normal',right))
+                elif '25' in condition: pairs=(('25',left),('10',right))
+                else: pairs=((None,left),(None,right))
+                rows=[]
+                for scope,part in pairs:
+                    rows.extend((entry,scope) for entry in entry_tokens(part,local))
+                return rows
+        return [(entry,None) for entry in entry_tokens(argument,local)]
+
+    function_pattern=re.compile(r'([A-Za-z_]\w*(?:::\w+)*)\s*\([^{};]*\)\s*(?:const\s*)?(?:override\s*)?(?:final\s*)?(?:noexcept\s*)?\{')
+    control_pattern=re.compile(r'\bif\s*\(([^(){}]*(?:\([^(){}]*\)[^(){}]*)*)\)',re.S)
+    reward_pattern=re.compile(r'\b(?:SummonGameObject|SummonGameobject|summonGameObject|DoRespawnGameObject)\s*\(')
+    creature_pattern=re.compile(r'\bSummonCreature\s*\(')
+    excluded_function_names={'if','for','while','switch','catch'}
+    death_hook_pattern=re.compile(r'(JustDied|_JustDied|HandleBothDead|EndTribunalFight)')
+
+    def control_scopes(text,body_start,body_end):
         scopes=[]
-        for control in control_pattern.finditer(text, body_start, body_end):
+        for control in control_pattern.finditer(text,body_start,body_end):
             after=control.end()
             while after<body_end and text[after].isspace(): after+=1
             if after>=body_end: continue
             if text[after]=='{':
                 close=matching_brace(text,after,body_end)
                 if close is None: continue
-                scope_end=close
-                scope_start=after+1
+                scope_start=after+1; scope_end=close
             else:
-                scope_start=after
-                scope_end=statement_end(text,after,body_end)
+                scope_start=after; scope_end=statement_end(text,after,body_end)
             scopes.append({'condition':control.group(1).strip(),
                            'condition_start':control.start(),
                            'start':scope_start,'end':scope_end})
         return scopes
 
-    mappings=[]
-    for path,text in text_by_file:
+    discriminator_pattern=re.compile(r'\b(DATA_[A-Za-z0-9_]+|id\s*==|GetEntry\s*\(|GetData\s*\()')
+
+    def completion_marker(segment):
+        if re.search(r'\bm_auiEncounter\s*\[[^\]]*\]\s*=\s*(?:DONE|EncounterState::DONE)\b',segment):
+            return 'instance_encounter_state'
+        if re.search(r'\bSetBossState\s*\([^;{}]*\bDONE\b',segment): return 'set_boss_state'
+        if re.search(r'\bIsBossDone\s*\(',segment): return 'boss_done_guard'
+        for call in re.finditer(r'\bCastSpell\s*\(',segment):
+            end=segment.find(';',call.end())
+            window=segment[call.end():end if end!=-1 else len(segment)]
+            for value in re.findall(r'(?<![A-Za-z0-9_])(\d{3,})(?![A-Za-z0-9_])',window):
+                if int(value) in kill_credit_entries: return 'kill_credit_spell'
+        return ''
+
+    def completion_evidence(text,call_start,function_name,scopes,body_start,body_end):
+        if death_hook_pattern.search(function_name): return 'boss_death_hook'
+        chain=sorted(scopes,key=lambda scope:(scope['end']-scope['start'],-scope['condition_start']))
+        if chain and re.search(r'\bDONE\b',chain[0]['condition']): return 'done_condition'
+        chain=list(chain)+[{'condition':'','start':body_start,'end':body_end}]
+        for index,scope in enumerate(chain):
+            marker=completion_marker(text[scope['start']:call_start])
+            if not marker: continue
+            intervening=chain[:index]
+            if any(discriminator_pattern.search(row['condition']) for row in intervening): return ''
+            return marker
+        return ''
+
+    mappings=[]; creature_evidence=[]
+    for path,text in texts:
+        anchor_map,anchor_kind=map_anchor(path)
+        local_constants=directory_constants.get(path.parent,{})
         functions=[]
         for candidate in function_pattern.finditer(text):
             if candidate.group(1) in excluded_function_names: continue
@@ -2469,43 +2788,73 @@ def discover_script_reward_mappings(source_root, catalog):
             end=matching_brace(text,opening,len(text))
             if end is not None:
                 functions.append((candidate,opening+1,end))
-        for match in summon_pattern.finditer(text):
+        for call in reward_pattern.finditer(text):
+            scan['candidate_reward_calls']+=1
             containing=next((row for row in reversed(functions)
-                             if row[1] <= match.start() < row[2]),None)
-            if containing is None: continue
+                             if row[1]<=call.start()<row[2]),None)
+            if containing is None:
+                reject('reward call outside a recognised function body'); continue
             function,body_start,function_end=containing
+            block=text[body_start:call.start()]
             scopes=[scope for scope in control_scopes(text,body_start,function_end)
-                    if scope['start'] <= match.start() < scope['end']]
-            block=text[body_start:match.start()]
-            accepted=False
-            if scopes:
-                innermost=min(scopes,key=lambda scope:(scope['end']-scope['start'],-scope['condition_start']))
-                if re.search(r'\bDONE\b',innermost['condition']):
-                    accepted=True
-                elif 'difficulty' in innermost['condition'].lower():
-                    for ancestor in scopes:
-                        if ancestor is innermost or not re.search(r'\bDONE\b',ancestor['condition']):
-                            continue
-                        segment=text[ancestor['start']:match.start()]
-                        if re.search(r'\bSetBossState\s*\([^;{}]*\bDONE\b[^;{}]*\)',segment):
-                            accepted=True
-                            break
-            else:
-                accepted=bool(re.search(
-                    r'\bSetBossState\s*\([^;{}]*\bDONE\b[^;{}]*\)', block))
-            if not accepted: continue
-            token=match.group(1).strip(); entry=constants.get(token)
-            if entry is None and token.isdigit(): entry=int(token)
-            template=templates.get(entry,{}) if entry is not None else {}
-            if entry is None or int(template.get('type',0))!=3 or int(template.get('lootid') or 0) not in catalog.get('gameobject_loot_entries',set()): continue
+                    if scope['start']<=call.start()<scope['end']]
+            evidence=completion_evidence(text,call.start(),function.group(1),scopes,body_start,function_end)
+            if not evidence:
+                reject('no explicit encounter completion evidence'); continue
+            argument=first_call_argument(text,call.end())
+            candidates=scoped_entries(argument,local_constants)
+            if not candidates:
+                identifier=argument.strip()
+                if re.fullmatch(r'[A-Za-z_]\w*',identifier):
+                    for assignment in re.finditer(r'\b'+re.escape(identifier)+r'\s*=\s*([^;]+);',
+                                                  text[body_start:function_end]):
+                        candidates.extend(scoped_entries(assignment.group(1),local_constants))
+            if not candidates:
+                reject('reward call has no resolvable gameobject entry'); continue
             condition=''
             visible_lines=[line.strip() for line in block.splitlines()
                            if 'difficulty' in line.lower() and ('if' in line or '==' in line)]
             if visible_lines: condition=visible_lines[-1]
-            mappings.append({'source_path':str(path.relative_to(root) if path.is_relative_to(root) else path),
-                             'encounter_identifier':function.group(1),'gameobject_entry':entry,
-                             'difficulty_condition':condition,'evidence_type':'SummonGameObject completion path'})
-    return mappings, 'exercised'
+            source_path=str(path.relative_to(root) if path.is_relative_to(root) else path)
+            for entry,scope in candidates:
+                template=templates.get(entry) or {}
+                if int(template.get('type',0))!=3 or int(template.get('lootid') or 0) not in loot_entries:
+                    reject('call target is not a loot-bearing type-3 gameobject'); continue
+                mappings.append({'source_path':source_path,
+                                 'encounter_identifier':function.group(1),'gameobject_entry':entry,
+                                 'difficulty_condition':condition,'difficulty_scope':scope or '',
+                                 'evidence_type':f'SummonGameObject completion path ({evidence})',
+                                 'map_id':anchor_map,'map_evidence':anchor_kind,
+                                 'validated':bool(anchor_map)})
+                if anchor_map: scan['validated_mappings']+=1
+                else: reject('no explicit instance-script map anchor')
+        for call in creature_pattern.finditer(text):
+            scan['candidate_creature_summons']+=1
+            argument=first_call_argument(text,call.end())
+            entries=[]
+            for token in re.findall(r'\bNPC_[A-Za-z0-9_]+',argument):
+                value=resolve_constant(token,local_constants)
+                if value is not None: entries.append(value)
+            entries.extend(int(value) for value in
+                           re.findall(r'(?<![A-Za-z0-9_])(\d{3,})(?![A-Za-z0-9_])',argument))
+            entries=[entry for entry in dict.fromkeys(entries) if int(entry) in creature_templates]
+            if not entries:
+                reject('creature summon has no resolvable NPC entry'); continue
+            if not anchor_map:
+                reject('creature summon has no explicit instance-script map anchor'); continue
+            line=text[:call.start()].count('\n')+1
+            source_path=str(path.relative_to(root) if path.is_relative_to(root) else path)
+            for entry in entries:
+                creature_evidence.append({'creature_entry':entry,'map_id':anchor_map,
+                                          'source_path':source_path,'line':line,
+                                          'evidence_type':'instance_script_summon'})
+    catalog.setdefault('source_audit',{})['script_reward_scan']=scan
+    catalog['script_creature_map_evidence']=creature_evidence
+    catalog.pop('_creature_map_evidence',None)
+    catalog.pop('_creature_proven_maps',None)
+    status='exercised' if scan['validated_mappings'] else 'exercised_no_reward_mappings'
+    scan['status']=status
+    return mappings,status
 
 def _merge_stock_evidence(evidences,source_kind='profile_aggregate',encounter_kind='profile'):
     usable=[evidence for evidence in evidences if evidence and evidence.get('item_level_min') is not None]
@@ -2569,7 +2918,7 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
             template=catalog['creature_templates'].get(credit_entry)
             if not template: continue
             target_type='creature'; target_entry=credit_entry
-            candidate_maps=set(catalog['creature_maps'].get(credit_entry,set()))
+            candidate_maps=creature_proven_maps(catalog,credit_entry)
         elif credit_type==1:
             audit_id=f'boss_{int(encounter_entry):06d}'
             audit_rows=[row for row in catalog.get('gameobject_reward_targets',())
@@ -2579,9 +2928,6 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
             candidate_maps={int(row['map_id']) for row in audit_rows}
         else:
             continue
-        if credit_type==0 and not candidate_maps and encounter.get('last_encounter_dungeon'):
-            mapped=_dungeon_map_id(catalog.get('dungeon_maps',{}),encounter['last_encounter_dungeon'])
-            if mapped is not None: candidate_maps.add(mapped)
         for map_id in sorted(candidate_maps):
             if map_id in dungeon_or_raid_maps:
                 boss_entries[map_id].append((int(encounter_entry),target_type,target_entry))
@@ -2591,7 +2937,8 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
         map_id=int(row['map_id'])
         if map_id in dungeon_or_raid_maps:
             key=row['encounter_id']
-            boss_entries[map_id].append((key,'gameobject',int(row['gameobject_entry'])))
+            boss_entries[map_id].append((key,'gameobject',int(row['gameobject_entry']),
+                                         row.get('difficulty_scope','')))
 
     for map_id,map_row in sorted(dungeon_or_raid_maps.items()):
         difficulty_ids=sorted(difficulty_id for current_map,difficulty_id in catalog['map_difficulties'] if current_map==map_id)
@@ -2609,8 +2956,17 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                                                          'template':template,'resolution':resolution})
             bosses=[]; boss_loot=set()
             resolution_evidence=[]
-            for encounter_entry,target_type,target_entry in boss_entries.get(map_id,()):
+            for boss_entry in boss_entries.get(map_id,()):
+                encounter_entry,target_type,target_entry=boss_entry[:3]
+                difficulty_scope=boss_entry[3] if len(boss_entry)>3 else ''
+                if difficulty_scope and not _difficulty_scope_matches(difficulty_scope,map_row.get('map_type'),difficulty_id):
+                    continue
                 if target_type=='creature':
+                    map_evidence=creature_map_evidence(catalog,target_entry,map_id)
+                    if map_evidence is None:
+                        resolution_evidence.append({'encounter_entry':encounter_entry,'base_creature_entry':target_entry,
+                                                    'resolution':'unproven_map_membership'})
+                        continue
                     template,effective_entry,resolution=resolve_creature_template_for_difficulty(catalog,target_entry,difficulty_id)
                     if template is None:
                         resolution_evidence.append({'encounter_entry':encounter_entry,'base_creature_entry':target_entry,
@@ -2638,7 +2994,9 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                 boss_loot.add(boss_key)
                 bosses.append({'encounter_entry':encounter_entry,'target_type':target_type,
                                'source_entry':target_entry,'effective_entry':effective_entry,
-                               'loot_entry':loot_entry,'template':template,'resolution':resolution})
+                               'loot_entry':loot_entry,'template':template,'resolution':resolution,
+                               'difficulty_scope':difficulty_scope,
+                               'map_evidence':map_evidence if target_type=='creature' else 'gameobject_source'})
             trash=[{'type':'creature','entry':loot_entry,'creature_entry':record['creature_entry']}
                    for loot_entry,record in sorted(loot_by_entry.items())
                    if ('creature',loot_entry) not in boss_loot]
@@ -2664,8 +3022,10 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                     target['creature_entry']=boss['effective_entry']
                     target['effective_creature_entry']=boss['effective_entry']
                     target['source_creature_entry']=boss['source_entry']
+                    target['map_evidence']=boss.get('map_evidence','')
                 else:
                     target['gameobject_entry']=boss['effective_entry']
+                    target['difficulty_scope']=boss.get('difficulty_scope','')
                 target['difficulty_resolution']=boss['resolution']
                 resolution_evidence.append({'target_type':target_type,'source_entry':boss['source_entry'],
                                             'effective_entry':boss['effective_entry'],'loot_entry':loot_entry,
@@ -2682,6 +3042,11 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                     for target in targets:
                         context={'map_id':map_id,'difficulty_id':difficulty_id,'loot_mode':loot_mode}
                         context['difficulty_template_source']=str(target.get('difficulty_resolution','')).startswith('difficulty_entry_')
+                        if target.get('type')=='gameobject' and target.get('difficulty_scope'):
+                            # A difficulty-scoped reward object (DUNGEON_MODE/RAID_MODE or
+                            # IsHeroic ternary) carries its own difficulty context, so its
+                            # loot table is difficulty-specific by construction.
+                            context['difficulty_template_source']=True
                         if target.get('type')=='creature':
                             template=catalog.get('creature_templates',{}).get(int(target.get('effective_creature_entry',target.get('creature_entry',target.get('entry',0)))),{})
                             context['creature_level_min']=template.get('minlevel')
@@ -2788,6 +3153,14 @@ def build_default_encounter_manifest(catalog,additional_drop_chance=2.0):
                              'evidence':profile_evidence,'additional_drop_chance':float(additional_drop_chance),
                              'encounters':encounters})
     profiles,difficulty_comparisons,sibling_conflicts=apply_sibling_progression_coherence(profiles)
+    era_excluded={profile['id']:profile for profile in profiles if profile.pop('excluded_by_era_conflict',False)}
+    if era_excluded:
+        profiles=[profile for profile in profiles if profile.get('id') not in era_excluded]
+        for row in coverage:
+            profile_id=f"map_{row['map_id']}_difficulty_{row['difficulty_id']}"
+            if profile_id in era_excluded:
+                row['profile_created']=False
+                row['excluded_reason']=era_excluded[profile_id].get('invalid_reason','sibling progression era conflict')
     manifest={'version':1,'profiles':profiles,'coverage':coverage,'difficulty_comparisons':difficulty_comparisons,
               'sibling_conflicts':sibling_conflicts,
               'gameobject_reward_targets':catalog.get('gameobject_reward_targets',()),'recipes':[],'quest_targets':[],
@@ -2906,7 +3279,7 @@ def _encounter_candidates_are_equivalent(left,right,required_fallback=None):
     if left_cluster and right_cluster:
         if abs(sum(left_cluster)/len(left_cluster)-sum(right_cluster)/len(right_cluster))>15:
             return False
-        if abs((left_cluster[-1]-left_cluster[0])-(right_cluster[-1]-right_cluster[0]))>10:
+        if abs((left_cluster[-1]-left_cluster[0])-(right_cluster[-1]-right_cluster[0]))>ENCOUNTER_TIER_ITEM_LEVEL_STEP:
             return False
     return True
 
@@ -3097,7 +3470,12 @@ def validate_targeted_source_membership(manifest,catalog):
                         and _dungeon_map_id(catalog.get('dungeon_maps',{}),row.get('last_encounter_dungeon',0))==map_id
                         for row in catalog['instance_encounters'].values()
                     )
-                    if not mapped and not (encounter.get('kind')=='boss' and scripted):
+                    reward_target=any(
+                        row.get('valid') and int(row.get('map_id') or -1)==map_id
+                        and int(row.get('gameobject_entry',-1))==gameobject_entry
+                        for row in catalog.get('gameobject_reward_targets',())
+                    )
+                    if not mapped and not (encounter.get('kind')=='boss' and (scripted or reward_target)):
                         raise ValueError(f'gameobject {gameobject_entry} is not present on map {map_id} for profile {profile["id"]}')
                     continue
                 creature_entry=int(target.get('creature_entry',entry))
@@ -3110,7 +3488,10 @@ def validate_targeted_source_membership(manifest,catalog):
                     and _dungeon_map_id(catalog.get('dungeon_maps',{}),row.get('last_encounter_dungeon',0))==map_id
                     for row in catalog['instance_encounters'].values()
                 )
-                if not spawned and not (encounter.get('kind')=='boss' and scripted):
+                proven=creature_map_evidence(catalog,source_creature_entry,map_id)
+                if not spawned and not proven:
+                    raise ValueError(f'creature {source_creature_entry} has no proven map evidence for map {map_id} in profile {profile["id"]}')
+                if not spawned and not (encounter.get('kind')=='boss' and (scripted or proven)):
                     raise ValueError(f'creature {source_creature_entry} is not spawned on map {map_id} for profile {profile["id"]}')
                 if encounter.get('kind')=='boss' and not any(row['credit_entry']==source_creature_entry for row in catalog['instance_encounters'].values()):
                     raise ValueError(f'boss target {source_creature_entry} is not present in instance_encounters.sql')
@@ -3344,12 +3725,88 @@ def apply_sibling_progression_coherence(profiles):
         (profile.get('item_level_min'),profile.get('item_level_max')),
         (profile.get('required_level_min'),profile.get('required_level_max')))
                  for profile in profiles}
+
+    def apply_cluster(profile,profile_evidence,candidates,chosen,supporters,method='sibling_supported_cluster'):
+        required=_paired_required_cluster(profile,chosen)
+        new_encounters=[]
+        for encounter in list(profile.get('encounters',())):
+            evidence=encounter.get('evidence')
+            if evidence:
+                filtered=_recompute_evidence_cluster(evidence,chosen,required,encounter.get('kind','boss'))
+                if filtered is None and evidence.get('_stock_item_records'):
+                    continue
+                if filtered is not None:
+                    if not filtered.get('valid',True):
+                        profile['valid']=False
+                        profile['invalid_reason']=filtered.get('invalid_reason') or f'{method} encounter evidence is invalid'
+                    encounter['evidence']=filtered
+                    encounter['item_level']=[filtered['item_level_min'],filtered['item_level_max']]
+                    encounter['required_level_min']=filtered.get('required_level_min')
+                    encounter['required_level_max']=filtered.get('required_level_max')
+            new_encounters.append(encounter)
+        profile['encounters']=new_encounters
+        source_encounters=[encounter for encounter in new_encounters
+                           if encounter.get('kind')!='trash'] if profile.get('map_type')==2 else new_encounters
+        evidence_rows=[encounter.get('evidence') for encounter in source_encounters if encounter.get('evidence')]
+        if not evidence_rows:
+            rebuild_encounter_prerequisites(profile.get('encounters',()))
+            return False
+        source_kind=profile_evidence.get('band_source','profile_aggregate')
+        recomputed=_merge_stock_evidence(evidence_rows,source_kind,
+            'raid_profile' if profile.get('map_type')==2 else 'profile')
+        original_candidates=profile_evidence.get('candidate_clusters',candidates)
+        recomputed['candidate_clusters']=original_candidates
+        recomputed['progression_cluster']={'retained':chosen['values'],
+            'rejected':tuple(sorted(set(value for row in original_candidates for value in row.get('values',()))-set(chosen['values']))),
+            'method':method,'gap':15,
+            'prefer_high':bool((profile_evidence.get('progression_cluster') or {}).get('prefer_high',False))}
+        recomputed['sibling_support']=list(profile_evidence.get('sibling_support',()))+list(supporters or ())
+        if method=='progression_floor_enforced':
+            recomputed['progression_floor_adjustment']={'retained':list(chosen['values'])}
+        prior_rejections=list(profile_evidence.get('rejections',()))
+        merged_rejections=[]
+        for rejection in prior_rejections+list(recomputed.get('rejections',())):
+            if rejection not in merged_rejections:
+                merged_rejections.append(rejection)
+        recomputed['rejections']=merged_rejections
+        recomputed['rejected_required_level_count']=max(
+            int(profile_evidence.get('rejected_required_level_count',0) or 0),
+            int(recomputed.get('rejected_required_level_count',0) or 0))
+        recomputed['rejected_required_levels']=tuple(sorted(
+            {int(level) for level in profile_evidence.get('rejected_required_levels',())}
+            | {int(level) for level in recomputed.get('rejected_required_levels',())}))
+        profile['evidence']=recomputed
+        if not recomputed.get('valid',True):
+            profile['valid']=False
+            profile['invalid_reason']=recomputed.get('invalid_reason') or f'{method} evidence is invalid'
+        profile['item_level_min']=recomputed.get('item_level_min')
+        profile['item_level_max']=recomputed.get('item_level_max')
+        profile['required_level_min']=recomputed.get('required_level_min')
+        profile['required_level_max']=recomputed.get('required_level_max')
+        profile['qualities']=recomputed.get('qualities',())
+        rebuild_encounter_prerequisites(profile.get('encounters',()))
+        return True
+
+    def promote_to_floor(profile,floor_min,floor_max):
+        band=(profile.get('item_level_min'),profile.get('item_level_max'))
+        if None in band: return False
+        profile_evidence=profile.get('evidence') or {}
+        candidates=_profile_cluster_rows(profile)
+        records=tuple(profile_evidence.get('_candidate_item_records') or profile_evidence.get('_stock_item_records',()))
+        upper=max(int(band[1]),int(floor_max))
+        window=[row for row in records if int(floor_min)<=int(row.get('item_level',0))<=upper]
+        values=tuple(sorted({int(row.get('item_level',0)) for row in window}))
+        if not window or not values: return False
+        chosen={'values':values,'width':values[-1]-values[0],
+                'center':sum(values)/len(values),'count':len(window)}
+        return apply_cluster(profile,profile_evidence,candidates,chosen,(),'progression_floor_enforced')
+
     groups=defaultdict(list)
     for profile in profiles:
         for family in _profile_active_families(profile):
             groups[(int(profile.get('map_id',-1)),family)].append(profile)
     for group in groups.values():
-        for profile in group:
+        for profile in sorted(group,key=lambda row:int(row.get('difficulty_id',0))):
             candidates=_profile_cluster_rows(profile)
             profile_evidence=profile.get('evidence') or {}
             active_values=tuple(sorted(int(value) for value in
@@ -3367,62 +3824,64 @@ def apply_sibling_progression_coherence(profiles):
                         _profile_cluster_rows(sibling)[-1]['center']) for sibling in group if sibling is not profile),candidate,supporters))
             if not choices: continue
             _,_,chosen,supporters=max(choices,key=lambda row:(row[0],row[1]))
-            required=_paired_required_cluster(profile,chosen)
-            new_encounters=[]
-            for encounter in profile.get('encounters',()):
-                evidence=encounter.get('evidence')
-                if evidence:
-                    filtered=_recompute_evidence_cluster(evidence,chosen,required,encounter.get('kind','boss'))
-                    if filtered is None and evidence.get('_stock_item_records'):
-                        continue
-                    if filtered is not None:
-                        if not filtered.get('valid',True):
-                            profile['valid']=False
-                            profile['invalid_reason']=filtered.get('invalid_reason') or 'sibling-adjusted encounter evidence is invalid'
-                        encounter['evidence']=filtered
-                        encounter['item_level']=[filtered['item_level_min'],filtered['item_level_max']]
-                        encounter['required_level_min']=filtered.get('required_level_min')
-                        encounter['required_level_max']=filtered.get('required_level_max')
-                new_encounters.append(encounter)
-            profile['encounters']=new_encounters
-            source_encounters=[encounter for encounter in new_encounters
-                               if encounter.get('kind')!='trash'] if profile.get('map_type')==2 else new_encounters
-            evidence_rows=[encounter.get('evidence') for encounter in source_encounters if encounter.get('evidence')]
-            if evidence_rows:
-                source_kind=profile_evidence.get('band_source','profile_aggregate')
-                recomputed=_merge_stock_evidence(evidence_rows,source_kind,
-                    'raid_profile' if profile.get('map_type')==2 else 'profile')
-                original_candidates=profile_evidence.get('candidate_clusters',candidates)
-                recomputed['candidate_clusters']=original_candidates
-                recomputed['progression_cluster']={'retained':chosen['values'],
-                    'rejected':tuple(sorted(set(value for row in original_candidates for value in row.get('values',()))-set(chosen['values']))),
-                    'method':'sibling_supported_cluster','gap':15,
-                    'prefer_high':bool((profile_evidence.get('progression_cluster') or {}).get('prefer_high',False))}
-                recomputed['sibling_support']=list(profile_evidence.get('sibling_support',()))+supporters
-                prior_rejections=list(profile_evidence.get('rejections',()))
-                merged_rejections=[]
-                for rejection in prior_rejections+list(recomputed.get('rejections',())):
-                    if rejection not in merged_rejections:
-                        merged_rejections.append(rejection)
-                recomputed['rejections']=merged_rejections
-                recomputed['rejected_required_level_count']=max(
-                    int(profile_evidence.get('rejected_required_level_count',0) or 0),
-                    int(recomputed.get('rejected_required_level_count',0) or 0))
-                recomputed['rejected_required_levels']=tuple(sorted(
-                    {int(level) for level in profile_evidence.get('rejected_required_levels',())}
-                    | {int(level) for level in recomputed.get('rejected_required_levels',())}))
-                profile['evidence']=recomputed
-                if not recomputed.get('valid',True):
-                    profile['valid']=False
-                    profile['invalid_reason']=recomputed.get('invalid_reason') or 'sibling-adjusted evidence is invalid'
-                profile['item_level_min']=recomputed.get('item_level_min')
-                profile['item_level_max']=recomputed.get('item_level_max')
-                profile['required_level_min']=recomputed.get('required_level_min')
-                profile['required_level_max']=recomputed.get('required_level_max')
-                profile['qualities']=recomputed.get('qualities',())
-            rebuild_encounter_prerequisites(profile.get('encounters',()))
+            apply_cluster(profile,profile_evidence,candidates,chosen,supporters)
     conflicts=[]
+    by_map=defaultdict(list)
+    for profile in profiles: by_map[int(profile.get('map_id',-1))].append(profile)
+    for map_id,map_profiles in sorted(by_map.items()):
+        floor=None; floor_id=None
+        for profile in sorted(map_profiles,key=lambda row:int(row.get('difficulty_id',0))):
+            band=(profile.get('item_level_min'),profile.get('item_level_max'))
+            if floor is not None and None not in band:
+                floor_min,floor_max=floor
+                if int(band[0])<int(floor_min) or int(band[1])<int(floor_max):
+                    promoted=promote_to_floor(profile,floor_min,floor_max)
+                    band=(profile.get('item_level_min'),profile.get('item_level_max'))
+                    if not (promoted and None not in band and int(band[0])>=int(floor_min) and int(band[1])>=int(floor_max)):
+                        conflict={'reason':'difficulty_progression_regression','map_id':map_id,
+                                  'profile_ids':[floor_id,profile.get('id')],
+                                  'band':list(band),'lower_band':[floor_min,floor_max]}
+                        conflicts.append(conflict)
+                        profile['evidence']=profile.get('evidence') or {}
+                        profile['evidence'].setdefault('difficulty_progression_regression',[]).append(conflict)
+            if None not in band:
+                floor=band if floor is None else (max(int(floor[0]),int(band[0])),max(int(floor[1]),int(band[1])))
+                floor_id=profile.get('id')
     comparisons=[]
+    for map_id,map_profiles in sorted(by_map.items()):
+        ordered=sorted(map_profiles,key=lambda row:int(row.get('difficulty_id',0)))
+        bands=[(profile.get('item_level_min'),profile.get('item_level_max')) for profile in ordered]
+        if len(ordered)<2 or any(None in band for band in bands): continue
+        centers=[(int(band[0])+int(band[1]))/2 for band in bands]
+        if max(centers)-min(centers)<=45: continue
+        weakest=min(ordered,key=lambda profile:(int(profile.get('item_level_min',0))+int(profile.get('item_level_max',0))))
+        strongest=max(ordered,key=lambda profile:(int(profile.get('item_level_min',0))+int(profile.get('item_level_max',0))))
+        if weakest is strongest: continue
+        weakest_families=_profile_active_families(weakest); strongest_families=_profile_active_families(strongest)
+        if weakest_families and strongest_families and weakest_families & strongest_families:
+            # Same encounter family: the sibling coherence pass above already owns
+            # era reconciliation, so leave its outcome in place.
+            continue
+        lower_band=bands[ordered.index(weakest)]; higher_band=bands[ordered.index(strongest)]
+        reason=(f'sibling progression era conflict: {weakest.get("id")} band {list(lower_band)} '
+                f'is a legacy era against {strongest.get("id")} band {list(higher_band)}')
+        weakest['valid']=False
+        weakest['invalid_reason']=reason
+        weakest['excluded_by_era_conflict']=True
+        conflict={'reason':'sibling_progression_era_conflict','map_id':map_id,
+                  'profile_ids':[weakest.get('id'),strongest.get('id')],
+                  'band':list(lower_band),'sibling_band':list(higher_band),
+                  'exclusion_reason':reason}
+        conflicts.append(conflict)
+        comparisons.append({'map_id':map_id,'instance':weakest.get('instance',str(map_id)),
+            'difficulty_a':weakest.get('difficulty_id'),'difficulty_b':strongest.get('difficulty_id'),
+            'stock_item_count_a':(weakest.get('evidence') or {}).get('item_count',0),
+            'stock_item_count_b':(strongest.get('evidence') or {}).get('item_count',0),
+            'independent_band_a':list(lower_band),'independent_band_b':list(higher_band),
+            'final_band_a':list(lower_band),'final_band_b':list(higher_band),
+            'band_a':list(lower_band),'band_b':list(higher_band),
+            'loot_mode_a':weakest.get('loot_mode'),'loot_mode_b':strongest.get('loot_mode'),
+            'identical':False,'reason':'sibling progression era conflict (legacy-era profile excluded)'})
     for group_key,group in groups.items():
         group=sorted(group,key=lambda row:int(row.get('difficulty_id',0)))
         for left_index,left in enumerate(group):
@@ -3442,6 +3901,10 @@ def apply_sibling_progression_coherence(profiles):
                         profile['evidence'].setdefault('sibling_progression_era_conflict',[]).append(conflict)
                 elif (left.get('evidence') or {}).get('sibling_support') or (right.get('evidence') or {}).get('sibling_support'):
                     reason='sibling-supported alternate progression cluster'
+                elif (left.get('evidence') or {}).get('progression_floor_adjustment') or (right.get('evidence') or {}).get('progression_floor_adjustment'):
+                    reason='sibling progression floor enforced'
+                elif (left.get('evidence') or {}).get('difficulty_progression_regression') or (right.get('evidence') or {}).get('difficulty_progression_regression'):
+                    reason='difficulty progression regression recorded'
                 comparisons.append({'map_id':group_key[0],'instance':left.get('instance',str(group_key[0])),
                     'difficulty_a':left.get('difficulty_id'),'difficulty_b':right.get('difficulty_id'),
                     'stock_item_count_a':(left.get('evidence') or {}).get('item_count',0),
@@ -3620,18 +4083,19 @@ def reference_provenance_rows(catalog):
             'consumer_map_count':int(row.get('consumer_map_count',0)),
             'consumer_profile_count':int(row.get('consumer_profile_count',0)),
             'verified_parent':bool(row.get('verified_parent',False)),
+            'provenance_depth':int(row.get('provenance_depth',0)),
         }
         key=tuple(normalized[field] for field in (
             'reference_id','parent_target_type','parent_target_entry',
             'effective_target_entry','parent_loot_id','map_id','difficulty_id',
             'parent_loot_mode','reference_loot_mode','consumer_map_count',
-            'consumer_profile_count','verified_parent'))
+            'consumer_profile_count','verified_parent','provenance_depth'))
         if key not in seen:
             seen.add(key); rows.append(normalized)
     fields=('reference_id','parent_target_type','parent_target_entry',
             'effective_target_entry','parent_loot_id','map_id','difficulty_id',
             'parent_loot_mode','reference_loot_mode','consumer_map_count',
-            'consumer_profile_count','verified_parent')
+            'consumer_profile_count','verified_parent','provenance_depth')
     def sort_value(value):
         return (0,int(value)) if value not in ('',None) and not isinstance(value,bool) else (1,str(value))
     return sorted(rows,key=lambda row:tuple(
@@ -3713,12 +4177,20 @@ def collect_target_stock_evidence(catalog,profile_context,target):
                     int(profile_target.get('gameobject_entry',-1))==root_parent_entry and
                     profile_target.get('difficulty_id','') in ('',difficulty_id)):
                 explicit_profile_target=True
-        if target_type=='gameobject':
-            return bool(target_source_valid and records)
-        return bool(target_source_valid and records and (explicit_profile_target or any(
-            record.get('difficulty_specific') and
-            int(record.get('difficulty_id',-1))==difficulty_id
-            for record in records)))
+        if not (target_source_valid and records):
+            return False
+        consumers=_reference_consumer_maps(catalog,reference)
+        if not consumers or consumers-{int(profile_map)}:
+            return False
+        if target_type=='gameobject' or explicit_profile_target:
+            return True
+        if any(record.get('difficulty_specific') and
+               int(record.get('difficulty_id',-1))==difficulty_id
+               for record in records):
+            return True
+        if profile_context.get('difficulty_template_source'):
+            return False
+        return any(not record.get('difficulty_specific') for record in records)
 
     def collect(parent_entry,table_type=target_type,source_kind='direct',path_context=None):
         parent_entry=int(parent_entry)
@@ -3739,9 +4211,13 @@ def collect_target_stock_evidence(catalog,profile_context,target):
                 consumer_records=_reference_consumer_records(catalog,reference)
                 consumer_profiles=_reference_consumer_profile_keys(catalog,consumer_records)
                 if path_context is not None:
-                    verified=bool(path_context.get('verified_parent'))
+                    depth=int(path_context.get('depth',0))
+                    verified=(bool(path_context.get('verified_parent')) and
+                              depth<MAX_REFERENCE_PROVENANCE_DEPTH)
                 else:
+                    depth=0
                     verified=verified_root_edge(reference,parent_entry)
+                consumers_confined=bool(consumers) and profile_map is not None and not (consumers-{int(profile_map)})
                 consumer_map_count=len(consumers)
                 consumer_profile_count=len(consumer_profiles)
                 provenance_row={
@@ -3757,10 +4233,11 @@ def collect_target_stock_evidence(catalog,profile_context,target):
                     'consumer_map_count':consumer_map_count,
                     'consumer_profile_count':consumer_profile_count,
                     'verified_parent':verified and bool(applicable_reference_rows),
+                    'provenance_depth':depth,
                 }
                 add_provenance(provenance_row)
-                if (not verified or not applicable_reference_rows or
-                        (path_context is None and (profile_map is None or not consumers))):
+                if (not verified or not consumers_confined or not applicable_reference_rows or
+                        (path_context is None and profile_map is None)):
                     if reference not in rejected_refs:
                         rejected_refs.add(reference)
                         rejections.append({'reference':reference,'reason':'shared or unresolved reference context'})
@@ -3771,7 +4248,7 @@ def collect_target_stock_evidence(catalog,profile_context,target):
                 visited.add(visit_key)
                 collect(reference,'reference','reference',{
                     'parent_target_entry':reference,'effective_target_entry':reference,
-                    'verified_parent':verified})
+                    'verified_parent':verified,'depth':depth+1})
                 continue
             meta=stock_items.get(item)
             if not _stock_equipment(meta):
@@ -4665,17 +5142,37 @@ def validate_encounter_integration(items,manifest,records,catalog):
     gameobject_reward_targets=_encounter_gameobject_reward_summary(manifest,catalog)
     sibling_conflicts=list((manifest or {}).get('sibling_conflicts',()))
     for profile in profiles.values():
-        sibling_conflicts.extend((profile.get('evidence') or {}).get('sibling_progression_era_conflict',()))
+        evidence=profile.get('evidence') or {}
+        sibling_conflicts.extend(evidence.get('sibling_progression_era_conflict',()))
+        sibling_conflicts.extend(evidence.get('difficulty_progression_regression',()))
     seen_conflicts=set()
     for conflict in sibling_conflicts:
         key=(conflict.get('reason'),tuple(conflict.get('profile_ids',())))
         if key in seen_conflicts: continue
         seen_conflicts.add(key)
-        message='sibling_progression_era_conflict for profiles '+','.join(str(profile_id) for profile_id in conflict.get('profile_ids',()))
-        if _sibling_conflict_is_active(conflict,profiles): errors.append(message)
+        message=str(conflict.get('reason') or 'sibling_progression_era_conflict')+' for profiles '+','.join(str(profile_id) for profile_id in conflict.get('profile_ids',()))
+        if conflict.get('reason')=='difficulty_progression_regression':
+            # A higher difficulty resolved weaker than its lower sibling because the
+            # source evidence has no item at or above the sibling floor; keep the
+            # placement valid but surface the exact bands for the operator.
+            warnings.append(message+f" (band {conflict.get('band')} below lower sibling band {conflict.get('lower_band')})")
+        elif _sibling_conflict_is_active(conflict,profiles): errors.append(message)
         else: warnings.append(message+' (diagnostic only)')
     encounter_map={(profile['id'],encounter['id']):encounter
                    for profile in profiles.values() for encounter in profile.get('encounters',())}
+    encounter_identity_maps=defaultdict(set)
+    for profile in profiles.values():
+        profile_map=int(profile.get('map_id') or -1)
+        for encounter in profile.get('encounters',()):
+            for target in encounter.get('targets',()):
+                if target.get('type')!='creature': continue
+                source_entry=int(target.get('source_creature_entry',target.get('creature_entry',target.get('entry',0))) or 0)
+                effective_entry=int(target.get('effective_creature_entry',target.get('creature_entry',target.get('entry',0))) or 0)
+                encounter_identity_maps[(str(encounter.get('id')),source_entry,effective_entry)].add(profile_map)
+    for (encounter_id,source_entry,effective_entry),maps in sorted(encounter_identity_maps.items()):
+        if len(maps)>1:
+            errors.append(f'encounter {encounter_id} (source creature {source_entry}, effective creature '
+                          f'{effective_entry}) is reused across unrelated maps {sorted(maps)}')
     for profile in profiles.values():
         if profile.get('valid',True) is False: errors.append(f'profile {profile["id"]} is invalid')
         if profile.get('item_level_min') is None or profile.get('item_level_max') is None:
@@ -4693,12 +5190,24 @@ def validate_encounter_integration(items,manifest,records,catalog):
             if evidence.get('required_level_min') is not None and profile.get('required_level_min') is not None and (int(evidence['required_level_min'])<int(profile['required_level_min']) or int(evidence['required_level_max'])>int(profile.get('required_level_max',evidence['required_level_max']))):
                 errors.append(f'profile {profile["id"]}/{encounter["id"]} RequiredLevel range contradicts the profile range')
             for target in encounter.get('targets',()):
-                if target.get('type')!='gameobject':
+                target_type=str(target.get('type','creature'))
+                difficulty_resolution=str(target.get('difficulty_resolution') or '')
+                resolution_match=re.fullmatch(r'difficulty_entry_(\d+)',difficulty_resolution)
+                if resolution_match and int(resolution_match.group(1))!=int(profile.get('difficulty_id',0) or 0):
+                    errors.append(f'target {target.get("entry")} of {profile["id"]}/{encounter["id"]} resolves '
+                                  f'{difficulty_resolution} but the profile difficulty is {profile.get("difficulty_id")}')
+                if target_type=='creature':
+                    source_entry=int(target.get('source_creature_entry',target.get('creature_entry',target.get('entry',0))) or 0)
+                    if creature_map_evidence(catalog or {},source_entry,profile.get('map_id')) is None:
+                        errors.append(f'creature target {source_entry} for {profile["id"]}/{encounter["id"]} '
+                                      f'has no proven map evidence for map {profile.get("map_id")}')
+                    continue
+                if target_type!='gameobject':
                     continue
                 gameobject_entry=int(target.get('gameobject_entry',target.get('entry',0)))
                 loot_entry=int(target.get('entry',0))
                 matching=[row for row in gameobject_reward_targets
-                          if int(row.get('map_id',-1))==int(profile.get('map_id',-1))
+                          if int(row.get('map_id') or -1)==int(profile.get('map_id') or -1)
                           and int(row.get('gameobject_entry',-1))==gameobject_entry
                           and int(row.get('loot_entry',-1))==loot_entry
                           and row.get('difficulty_id','') in ('',profile.get('difficulty_id'))]
@@ -4723,16 +5232,32 @@ def validate_encounter_integration(items,manifest,records,catalog):
     heroic_profiles={(int(profile.get('map_id')),int(profile.get('difficulty_id'))) for profile in profiles.values() if int(profile.get('map_type',0) or 0)==1 and int(profile.get('difficulty_id',-1))==1 and int(profile.get('expansion',-1) or -1)==2 and profile.get('valid',True)}
     heroic_candidate_keys={(int(row.get('map_id')),int(row.get('difficulty_id'))) for row in heroic_candidates}
     missing_heroic=heroic_candidate_keys-heroic_profiles
-    unexercised_gameobject_missing=[row for row in heroic_candidates if (int(row.get('map_id')),int(row.get('difficulty_id'))) in missing_heroic and row.get('excluded_reason')=='gameobject reward source not_exercised']
-    if gameobject_support_state(catalog if catalog else {})=='not_exercised':
-        unexercised_gameobject_missing.extend(row for row in heroic_candidates if (int(row.get('map_id')),int(row.get('difficulty_id'))) in missing_heroic and int(row.get('boss_count',0) or 0)==0 and int(row.get('trash_target_count',0) or 0)==0 and row not in unexercised_gameobject_missing)
+    catalog=catalog if catalog else {}
+    source_audit=catalog.get('source_audit',{})
+    script_reward_gap=(source_audit.get('script_reward_mapping','not_exercised')!='exercised' or any(
+        int(row.get('credit_type',0))==1 and
+        _dungeon_map_id(catalog.get('dungeon_maps',{}),row.get('last_encounter_dungeon',0)) is None
+        for row in catalog.get('instance_encounters',{}).values()))
+    gameobject_not_exercised=gameobject_support_state(catalog)=='not_exercised'
+
+    def _unresolved_reward_gap(row):
+        if row.get('excluded_reason')=='gameobject reward source not_exercised': return True
+        if int(row.get('boss_count',0) or 0)==0 and int(row.get('trash_target_count',0) or 0)==0:
+            # No static creature evidence exists for this map at all; the only
+            # possible reward evidence is an unresolved scripted cache.
+            return bool(gameobject_not_exercised or script_reward_gap)
+        return False
+
+    unexercised_gameobject_missing=[row for row in heroic_candidates
+                                    if (int(row.get('map_id')),int(row.get('difficulty_id'))) in missing_heroic
+                                    and _unresolved_reward_gap(row)]
     actionable_missing=missing_heroic-{(int(row.get('map_id')),int(row.get('difficulty_id'))) for row in unexercised_gameobject_missing}
     if heroic_candidates and not heroic_profiles:
         errors.append(f'catastrophic Heroic dungeon coverage failure: 0/{len(heroic_candidates)} profiles are valid')
     elif actionable_missing:
         errors.append(f'Heroic dungeon coverage incomplete: {len(heroic_profiles)}/{len(heroic_candidates)} profiles are valid; unresolved={sorted(actionable_missing)}')
     elif missing_heroic:
-        warnings.append(f'Heroic dungeon coverage incomplete only for unexercised gameobject rewards: {len(heroic_profiles)}/{len(heroic_candidates)} profiles are valid')
+        warnings.append(f'Heroic dungeon coverage incomplete only for unresolved scripted/unexercised gameobject rewards: {len(heroic_profiles)}/{len(heroic_candidates)} profiles are valid; unresolved={sorted(missing_heroic)}')
 
     set_profiles=defaultdict(set); set_targets=defaultdict(set); placed_entries=set()
     for item in items:
@@ -6324,6 +6849,7 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
     reward_path=output_dir/'gameobject_reward_targets.csv'
     reward_fields=['profile_id','map_id','difficulty_id','encounter_id','encounter_name',
                    'gameobject_entry','gameobject_name','loot_entry','spawn_guid','spawn_mask',
+                   'spawn_count','difficulty_scope',
                    'association_method','association_source','direct_item_count','reference_item_count',
                    'valid','invalid_reason']
     with reward_path.open('w',encoding='utf-8',newline='') as f:
@@ -6342,7 +6868,8 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
     reference_provenance_fields=['reference_id','parent_target_type','parent_target_entry',
                                  'effective_target_entry','parent_loot_id','map_id',
                                  'difficulty_id','parent_loot_mode','reference_loot_mode',
-                                 'consumer_map_count','consumer_profile_count','verified_parent']
+                                 'consumer_map_count','consumer_profile_count','verified_parent',
+                                 'provenance_depth']
     provenance_rows=[]
     if source_catalog:
         provenance_rows.extend(reference_provenance_rows(source_catalog))
@@ -6365,7 +6892,7 @@ def write_placement_reports(items,loot,records,output_dir,manifest=None,source_c
                             'effective_target_entry','parent_loot_id',
                             'parent_loot_mode','reference_loot_mode',
                             'consumer_map_count','consumer_profile_count',
-                            'verified_parent')
+                            'verified_parent','provenance_depth')
     unique_provenance.sort(key=lambda row:tuple(
         provenance_sort_value(row[field]) if field not in ('parent_target_type','verified_parent')
         else (0,str(row[field])) for field in provenance_sort_fields))
@@ -6767,7 +7294,9 @@ def write_outputs(items,ui=None,name_changes=()):
         'gameobject.sql':gameobject_status_label,
         'gameobject_template.sql':gameobject_status_label,
         'gameobject_loot_template.sql':gameobject_status_label,
-        'script_reward_mapping':'EXERCISED' if source_audit.get('script_reward_mapping')=='exercised' else 'not_exercised',
+        'script_reward_mapping':{'exercised':'EXERCISED',
+                                 'exercised_no_reward_mappings':'EXERCISED (no validated reward mappings)'}.get(
+                                     source_audit.get('script_reward_mapping'),'not_exercised'),
     }
     report={'seed':SEED,'requested_number':TARGET_ITEM_COUNT,'selected_classes':generated_class_names,
             'total_items':len(items),'entry_min':min(x['entry'] for x in items),'entry_max':max(x['entry'] for x in items),
@@ -6827,8 +7356,12 @@ def write_outputs(items,ui=None,name_changes=()):
                 'reference_consumer_map_count':ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}).get('reference_consumer_map_count',0),
                 'reference_consumer_profile_count':ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}).get('reference_consumer_profile_count',0),
                 'reference_provenance_count':ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}).get('reference_provenance_count',0),
+                'gameobject_static_spawn_rejection_count':ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}).get('gameobject_static_spawn_rejection_count',0),
+                'gameobject_static_spawn_rejection_groups':ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}).get('gameobject_static_spawn_rejection_groups',0),
+                'script_reward_scan':ENCOUNTER_SOURCE_CATALOG.get('source_audit',{}).get('script_reward_scan'),
                 'profile_count':0 if DEFAULT_ENCOUNTER_MANIFEST is None else len(DEFAULT_ENCOUNTER_MANIFEST['profiles']),
             },
+            'verbose_audit':VERBOSE_AUDIT,
             'quest_reward_count':len(quest_records),'quest_rewards':quest_records,
             'random_effects_enabled':feature_enabled('spell-effects'),'socket_bonus_ids_generated':feature_enabled('socket-bonuses'),
             'disenchant_ids_generated':feature_enabled('disenchant'),'chance_on_hit_enabled':feature_enabled('chance-on-hit'),
@@ -6859,8 +7392,8 @@ Reference-loot source: `{_portable_source_path(REFERENCE_LOOT_SOURCE)}`<br>
 Dungeon/raid source files: `{', '.join(_portable_source_path(path) for path in (ENCOUNTER_SOURCE_PATHS or ())) or 'none'}`<br>
 Optional gameobject source files: `{', '.join(_portable_source_path(path) for path in (GAMEOBJECT_SOURCE_PATHS or ())) or 'none'}`<br>
 Gameobject source discovery: the complete optional `gameobject.sql`, `gameobject_template.sql`, and `gameobject_loot_template.sql` trio is used when present; `gameobject_template.Data1` supplies the loot relationship.<br>
-Gameobject association methods: `explicit_instance_mapping`, `script_summon`, and diagnostic `static_spawn` rows; static map-only rows are never guessed as boss rewards.<br>
-Script reward mapping: `{encounter_source_statuses['script_reward_mapping']}`<br>
+Gameobject association methods: `explicit_instance_mapping`, `script_summon`, and diagnostic `static_spawn` rows; static map-only rows are never guessed as boss rewards. Rejected static spawns are aggregated per map/reward object by default; add `--verbose-audit` for the full per-spawn audit.<br>
+Script reward mapping: `{encounter_source_statuses['script_reward_mapping']}` (files scanned: `{(source_audit.get('script_reward_scan') or {}).get('files_scanned',0)}`, candidate reward calls: `{(source_audit.get('script_reward_scan') or {}).get('candidate_reward_calls',0)}`, validated mappings: `{(source_audit.get('script_reward_scan') or {}).get('validated_mappings',0)}`, rejected mappings: `{(source_audit.get('script_reward_scan') or {}).get('rejected_mappings',0)}`)<br>
 Item-template source: `{_portable_source_path(ITEM_TEMPLATE_SOURCE)}`<br>
 Client Item.dbc sources: `{', '.join(_portable_source_path(path) for path in ITEM_DBC_SOURCES)}`<br>
 ItemSet.dbc source: `{_portable_source_path(ITEM_SET_DBC_SOURCE)}`<br>
@@ -6900,6 +7433,7 @@ Target: AzerothCore / WotLK 3.3.5a
 - `--no-animations` - keep the styled dashboard but disable animated spinners.
 - `--show-items` - expand the live discovery feed beyond the default Legendary, set, proc, and special-effect callouts.
 - `--quiet` - suppress progress output and print only errors plus the final completion line.
+- `--verbose-audit` - keep every rejected static gameobject spawn row in `gameobject_reward_targets.csv`; the default aggregates them per map, reward object, and loot entry.
 - Rich is optional. If installed, interactive `--ui auto` runs use the live dashboard; otherwise the generator automatically falls back to the standard-library plain UI.
 
 Flags can be combined in any order. The default remains 100,000 total and world-loot attachment chance defaults to 2%. Explicit `--number` is capped at 200,000 total and 20,000 per selected class.

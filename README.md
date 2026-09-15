@@ -85,9 +85,16 @@ Use `--number` and `--class` to control pack size. Use `--seed` when you need th
 --set-rate / --set-min-level / --set-size
 --ui auto|fancy|plain         Terminal presentation
 --quiet                       Errors and final completion line only
+--azerothcore-source-root PATH  AzerothCore checkout used to scan scripted reward caches
+--verbose-audit               Keep every rejected static gameobject spawn row instead of the aggregated audit
 ```
 
 Run `py generate_pack.py --help` for the complete option list. Use [Docs/content_manifest.example.json](Docs/content_manifest.example.json) for targeted-content syntax.
+
+`--azerothcore-source-root PATH` runs the AzerothCore script audit and reports the files scanned, candidate
+reward calls, candidate creature summons, validated mappings, and rejected mappings in
+`validation_report.json` (`encounter_source_audit.script_reward_scan`). `script_reward_mapping` is
+`EXERCISED` only when at least one reward relationship validated from source.
 
 ## Generated output
 

@@ -28,6 +28,34 @@ class CliUiTests(unittest.TestCase):
         self.assertEqual(g.resolve_ui_mode('auto', is_tty=False, rich_available=True), 'plain')
         self.assertEqual(g.resolve_ui_mode('auto', is_tty=True, rich_available=True), 'fancy')
 
+    def test_plain_ui_ignores_startup_status_hooks(self):
+        stream = io.StringIO()
+        ui = g.PlainTerminalUI(stream=stream)
+        ui.startup('Preparing source catalogs')
+        ui.startup_status('Mapping dungeon and raid loot profiles')
+        self.assertEqual(stream.getvalue(), '')
+
+    @unittest.skipUnless(g.RICH_AVAILABLE, 'Rich is optional')
+    def test_fancy_ui_reports_preflight_stage_before_sources(self):
+        ui = g.FancyTerminalUI(stream=io.StringIO(), animations=True)
+        ui.startup('Preparing source catalogs')
+        self.assertEqual(ui._phase, 'Starting WotLK item forge')
+        self.assertEqual(ui.current, 'Preparing source catalogs')
+        ui.startup_status('Mapping dungeon and raid loot profiles')
+        self.assertEqual(ui.current, 'Mapping dungeon and raid loot profiles')
+        self.assertGreater(ui.phase_started, 0)
+
+    @unittest.skipUnless(g.RICH_AVAILABLE, 'Rich is optional')
+    def test_fancy_live_refresh_rebuilds_elapsed_renderable(self):
+        ui = g.FancyTerminalUI(stream=io.StringIO(), animations=True)
+        ui.startup('Loading encounter catalog')
+        ui.banner()
+        try:
+            first = ui.live.get_renderable()
+            self.assertIsNot(ui.live.get_renderable(), first)
+        finally:
+            ui.close()
+
     def test_plain_ui_has_stable_phase_and_summary_output(self):
         stream = io.StringIO()
         ui = g.PlainTerminalUI(stream=stream, animations=False, show_items=True)
