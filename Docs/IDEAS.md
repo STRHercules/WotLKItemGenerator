@@ -1,5 +1,13 @@
 # Ideas
 
+- More questions
+    - Which Expansions?
+    - Magic Effects?
+    - Legendaries?
+        - Artifacts?
+
+
+
 
 - Ability to insert generated items to quest rewards
 
