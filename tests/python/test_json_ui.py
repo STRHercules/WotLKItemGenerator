@@ -28,6 +28,17 @@ def test_json_event_stream_takes_precedence_over_quiet_and_terminal_mode():
     assert isinstance(ui, gp.JsonLineUI)
 
 
+def test_json_line_ui_emits_banner_event():
+    stream = io.StringIO()
+    ui = gp.JsonLineUI(stream=stream)
+
+    ui.banner()
+
+    record = _records(stream)[0]
+    assert record["type"] == "banner"
+    assert record["payload"]["title"] == "WotLK Item Forge"
+
+
 def test_json_configure_emits_a_small_runtime_summary():
     stream = io.StringIO()
     ui = gp.JsonLineUI(stream=stream)

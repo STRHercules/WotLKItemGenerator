@@ -650,7 +650,7 @@ class JsonLineUI(PlainTerminalUI):
         self._emit('startup_status', {'message': str(text)})
 
     def banner(self):
-        pass
+        self._emit('banner', {'title': 'WotLK Item Forge'})
 
     def configure(self, runtime):
         self.runtime = runtime
