@@ -1,3 +1,11 @@
-/__pycache__
-/Tests/__pycache__
-Docs/superowers/
+.worktrees/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+node_modules/
+dist/
+src-tauri/target/
+
+*.tsbuildinfo
+/vite.config.js
+/vite.config.d.ts
