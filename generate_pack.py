@@ -81,6 +81,36 @@ INTERACTIVE_OPTIONAL_DATA_FILES = {
     'DBC': ('Item.custom.dbc',),
     'SQL': ('gameobject.sql', 'gameobject_template.sql', 'gameobject_loot_template.sql'),
 }
+
+def inspect_source_directory(data_dir):
+    data_dir = Path(data_dir).expanduser().resolve()
+    rows = []
+    for kind, names in INTERACTIVE_REQUIRED_DATA_FILES.items():
+        for name in names:
+            path = data_dir / name
+            rows.append({
+                "kind": kind,
+                "name": name,
+                "required": True,
+                "found": path.is_file(),
+                "path": str(path),
+            })
+    for kind, names in INTERACTIVE_OPTIONAL_DATA_FILES.items():
+        for name in names:
+            path = data_dir / name
+            rows.append({
+                "kind": kind,
+                "name": name,
+                "required": False,
+                "found": path.is_file(),
+                "path": str(path),
+            })
+    return {
+        "data_dir": str(data_dir),
+        "ready": all(row["found"] for row in rows if row["required"]),
+        "files": rows,
+    }
+
 def _default_data_source(filename):
     return DATA_DIR / filename
 
@@ -2147,6 +2177,7 @@ def _class_arg(value):
 def parse_args(argv=None):
     parser=argparse.ArgumentParser(description='Generate randomized AzerothCore WotLK items.')
     parser.add_argument('--data-dir',type=Path,default=DATA_DIR,metavar='PATH',help='Directory containing default WotLK DBC and SQL sources.')
+    parser.add_argument('--inspect-sources',action='store_true',help='Print the machine-readable source manifest and exit.')
     parser.add_argument('--output-root',type=Path,default=ROOT,metavar='PATH',help='Parent directory for generated-<seed> output folders.')
     parser.add_argument('--seed',type=_seed_arg,help='Use this exact numeric seed instead of generating one automatically.')
     parser.add_argument('--number',type=_number_arg,help=f'Generate exactly this many items (max {MAX_TOTAL_ITEMS:,} total; max {MAX_ITEMS_PER_CLASS:,} per class).')
@@ -8121,6 +8152,9 @@ def main(argv=None):
             return None
     else:
         args=parse_args(argv)
+    if args.inspect_sources:
+        print(json.dumps(inspect_source_directory(args.data_dir)))
+        return None
     ui=create_terminal_ui(args)
     started=time.monotonic()
     try:
