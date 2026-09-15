@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "tauri": "tauri",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run"
   },
@@ -20,6 +21,7 @@
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
     "@vitejs/plugin-react": "^5.0.2",
+    "@tauri-apps/cli": "^2.8.0",
     "jsdom": "^26.1.0",
     "typescript": "~5.9.2",
     "vite": "^7.1.3",

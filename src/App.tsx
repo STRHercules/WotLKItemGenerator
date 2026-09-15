@@ -21,12 +21,14 @@ export default function App() {
         <h1>WotLK Item Forge</h1>
       </header>
 
-      <nav aria-label="Forge sections" className="tabs">
+      <nav aria-label="Forge sections" className="tabs" role="tablist">
         {tabs.map((tab) => (
           <button
             key={tab}
             type="button"
             role="tab"
+            id={`tab-${tab.toLowerCase()}`}
+            aria-controls={`panel-${tab.toLowerCase()}`}
             aria-selected={activeTab === tab}
             onClick={() => setActiveTab(tab)}
           >
@@ -35,7 +37,13 @@ export default function App() {
         ))}
       </nav>
 
-      <section role="tabpanel" aria-label={`${activeTab} page`} className="placeholder-page">
+      <section
+        id={`panel-${activeTab.toLowerCase()}`}
+        role="tabpanel"
+        aria-labelledby={`tab-${activeTab.toLowerCase()}`}
+        aria-label={`${activeTab} page`}
+        className="placeholder-page"
+      >
         <h2>{activeTab}</h2>
         <p>This placeholder page is ready for the next task.</p>
       </section>

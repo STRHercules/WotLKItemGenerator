@@ -76,3 +76,56 @@ The checkpoint contains a focused frontend test added with the scaffold. It asse
 - `npm install` reports two moderate audit vulnerabilities; dependency remediation was outside Task 6 and was not changed.
 - `cargo check` validates compilation only; no live packaged Windows launch smoke test was performed.
 - The icon was generated as a minimal app asset and has not been visually validated in the Windows shell/taskbar.
+
+## Fix round 1
+
+Addressed findings verbatim:
+
+- P1 — Tauri dev launch is misconfigured: `vite.config.ts` now serves port `1420` with `strictPort: true`, matching `tauri.conf.json`.
+- P1 — No repository-local Tauri CLI: `@tauri-apps/cli` is now a dev dependency and `npm run tauri` is declared.
+- P2 — CSP is disabled: `tauri.conf.json` now has a restrictive CSP allowing only same-origin/static resources, Tauri IPC, local dev HMR connections, asset URLs, and inline styles required by the shell.
+- P2 — Dependency installation is not reproducible: `package-lock.json` is now generated and retained.
+- P2 — Tab accessibility contract is incomplete: the shell now uses `role="tablist"`, tab IDs, `aria-controls`, panel IDs, and matching `aria-labelledby` values.
+- P3 — Tests cover only static presence: the React test now clicks `Generation` and asserts selected state, controlled panel identity, and rendered panel heading.
+
+### TDD evidence
+
+The new test was written first. Initial execution exposed a pre-existing test cleanup issue because Vitest left the first rendered `App` mounted; adding `afterEach(cleanup)` made the test fail for the intended reason: `aria-controls` was absent. After the minimum implementation, the focused test passed 2/2, followed by the full test suite passing 2/2.
+
+### Fix-round commands and output
+
+```text
+rtk npm install
+added 2 packages, and audited 166 packages in 4s
+2 moderate severity vulnerabilities
+```
+
+```text
+rtk npm test
+✓ src/App.test.tsx (2 tests) 100ms
+Test Files  1 passed (1)
+Tests  2 passed (2)
+```
+
+```text
+rtk npm run build
+> tsc --noEmit && vite build
+✓ 29 modules transformed.
+✓ built in 1.17s
+```
+
+```text
+rtk cargo check --manifest-path src-tauri/Cargo.toml
+cargo build (1 crates compiled)
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.26s
+exit code: 0
+```
+
+After verification, generated `node_modules`, `dist`, `src-tauri/target`, and cache artifacts were removed. `package-lock.json` was retained. `generate_pack.py`, Python tests, `Data`, assets, and `Clipboard Image.jpg` were preserved.
+
+### Fix-round self-review and concerns
+
+- No UI library or later-task behavior was added.
+- CSP includes `unsafe-eval` solely for Vite development tooling; production static shell resources remain same-origin constrained.
+- `npm install` continues to report two moderate audit vulnerabilities; dependency remediation is outside this checkpoint.
+- Build and cargo check do not prove a live Windows Tauri launch or HMR session.
