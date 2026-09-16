@@ -62,7 +62,7 @@
 .forge-scene-title { left:16px; color:#d7e8f0; }
 .forge-scene-phase { right:16px; color:var(--forge-cyan); }
 .forge-machine { position:absolute; z-index:2; inset:38px 0 30px; }
-.forge-hammer { position:absolute; top:-40px; left:calc(50% - 23px); width:100px; height:112px; transform-origin:78px 0; animation:forge-hammer-cycle 1.8s cubic-bezier(.35,.05,.2,1) infinite; }
+.forge-hammer { position:absolute; top:-40px; left:calc(50% - 23px); width:100px; height:112px; transform-origin:88px 27px; animation:forge-hammer-cycle 1.8s cubic-bezier(.55,.05,.1,1) infinite; }
 .forge-hammer-handle { position:absolute; bottom:10px; left:31px; width:8px; height:92px; transform:rotate(35deg); transform-origin:50% 100%; border:1px solid #8f6236; border-radius:5px; background:linear-gradient(90deg,#4a2c16,#c48a4c 45%,#70431f); }
 .forge-hammer-head { position:absolute; bottom:0; left:0; width:46px; height:21px; border:1px solid #d9e5ee; border-radius:3px 3px 1px 1px; background:linear-gradient(180deg,#f5f8fc,#727884); box-shadow:0 0 12px rgba(185,198,212,.2); }
 .forge-striking-face { position:absolute; bottom:0; left:13px; width:20px; height:3px; border:1px solid #f5f8fc; border-radius:1px; background:#f5f8fc; box-shadow:0 0 8px rgba(245,248,252,.32); }
@@ -142,11 +142,11 @@
   to { background-position:24px 24px,24px 24px; }
 }
 @keyframes forge-hammer-cycle {
-  0%,28% { transform:translate(28px,-30px) rotate(-18deg); }
-  44% { transform:translate(14px,-15px) rotate(-10deg); }
-  55% { transform:translate(0,0) rotate(0deg); }
-  61% { transform:translate(0,2px) rotate(2deg); }
-  72%,100% { transform:translate(28px,-30px) rotate(-18deg); }
+  0%,26% { transform:rotate(24deg); }
+  48% { transform:rotate(18deg); }
+  58% { transform:rotate(5deg); }
+  64%,68% { transform:rotate(0deg); }
+  78%,100% { transform:rotate(24deg); }
 }
 @keyframes forge-impact-flash {
   0%,48% { opacity:0; transform:translateX(-50%) scale(.3); }
