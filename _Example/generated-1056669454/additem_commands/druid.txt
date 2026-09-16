@@ -1,0 +1,1000 @@
+.additem 380000 1 -- Dreamwoven Pants
+.additem 380001 1 -- Bloodbound Branch of Dawnwatch
+.additem 380002 1 -- Devout Cloak
+.additem 380003 1 -- Breeches of the Ashen Pact
+.additem 380004 1 -- Strap of Frenzyheart Hill
+.additem 380005 1 -- Striders, Spell Pact
+.additem 380006 1 -- The Stalwart Legwraps
+.additem 380007 1 -- Glacial Cinch
+.additem 380008 1 -- Warstaff of Iron Crown
+.additem 380009 1 -- Nightsteel Beads of the Wild Hunt
+.additem 380010 1 -- First Keeper's Stonebound Grips
+.additem 380011 1 -- Shadowkeeper's Treads of the Void Ritual
+.additem 380012 1 -- Wildkeeper's Profane Jerkin
+.additem 380013 1 -- Moonkeeper's Sepulchral Legwraps
+.additem 380014 1 -- Fel Ember Footguards
+.additem 380015 1 -- Frozen Bodkin
+.additem 380016 1 -- Mystwoven Royal Cloak
+.additem 380017 1 -- Walkers of Star Crown
+.additem 380018 1 -- Dawnsteel Tunic of the Amber Ledge
+.additem 380019 1 -- Twilightcaller's Weathered Royal Cloak
+.additem 380020 1 -- Stoic Pendant Chain of the Mimiron Forge
+.additem 380021 1 -- Plagueborn Claws
+.additem 380022 1 -- Rune-carved Armguards of the Violet Gate
+.additem 380023 1 -- Ancient King's Warband of the Frost Watch
+.additem 380024 1 -- Siegebound Wristbands of Makers Vault
+.additem 380025 1 -- The Northwind Trousers
+.additem 380026 1 -- Shattered Pendant of the Westguard Keep
+.additem 380027 1 -- Silversteel Leggings of Ivory Crown
+.additem 380028 1 -- Illusory Archmage Staff
+.additem 380029 1 -- Runewarden's Gloves
+.additem 380030 1 -- Ominous Breeches, Argent Crusader's Oath
+.additem 380031 1 -- Footguards, Bright Roar
+.additem 380032 1 -- The Pitiless Vest
+.additem 380033 1 -- Leafwoven Harness of the Red Dragonflight
+.additem 380034 1 -- Coal-black Claws
+.additem 380035 1 -- Hand Hammer of Twilight Reach
+.additem 380036 1 -- Warmaster Treads of the Dragon Spirit
+.additem 380037 1 -- Starlit Archmage Staff of Blood Crown
+.additem 380038 1 -- Serpent Crush Mantle
+.additem 380039 1 -- High Ward Waistband
+.additem 380040 1 -- Boar Reaver Footguards
+.additem 380041 1 -- The Bloodstained Wargrips
+.additem 380042 1 -- Bloodkeeper's Longcloak of the Ghost Moon
+.additem 380043 1 -- Trousers of the Pale Flame
+.additem 380044 1 -- Sorrowful Lens of Astral Watch
+.additem 380045 1 -- Boneforged Hoop of Wild King
+.additem 380046 1 -- Ancient Gloom Wristbands
+.additem 380047 1 -- Long Wind Footguards
+.additem 380048 1 -- Marauding Claws of Silent Road
+.additem 380049 1 -- Drakebound Headdress
+.additem 380050 1 -- Frozen Queen's Legguards
+.additem 380051 1 -- Ash Plate Carapace
+.additem 380052 1 -- Conqueror Signet Ring
+.additem 380053 1 -- Frostguard's Tablet of the Soul Forge
+.additem 380054 1 -- Dragonstalker's Warden Spaulders
+.additem 380055 1 -- Starwarden's Seal Ring
+.additem 380056 1 -- Ghostwarden's Whitefrost Bracers
+.additem 380057 1 -- Sable Branch Runemaul
+.additem 380058 1 -- Titan Keeper's Collar
+.additem 380059 1 -- Lost Warden's Cinch
+.additem 380060 1 -- Soulwarden's Grips
+.additem 380061 1 -- Thornbound Cape of the Silver Flame
+.additem 380062 1 -- Ice Branch Armguards
+.additem 380063 1 -- Moon Queen's Greatstaff
+.additem 380064 1 -- Medallion of the Rainspeaker Canopy
+.additem 380065 1 -- Doomed Tunic of Emerald Wilds
+.additem 380066 1 -- Aged Headdress of Ice King
+.additem 380067 1 -- Nether Fang Veil
+.additem 380068 1 -- The Darkforged Footguards
+.additem 380069 1 -- Lost Ripper Shoulderguards
+.additem 380070 1 -- Colossal Maul, Lost Death
+.additem 380071 1 -- Carapace of the Crimson Crown
+.additem 380072 1 -- Virtuous Armguards of Stone Forge
+.additem 380073 1 -- Unwavering Stalkers
+.additem 380074 1 -- The Flamebound Longcloak
+.additem 380075 1 -- The Plaguetouched Wargrips
+.additem 380076 1 -- Ring of Emerald Watch
+.additem 380077 1 -- Sky Ward Handguards
+.additem 380078 1 -- The Mossbound Belt
+.additem 380079 1 -- Rime-coated Chestpiece of the Deep Hall
+.additem 380080 1 -- Gravekeeper's Dawnlit Deathmask
+.additem 380081 1 -- Lightwoven Cap of the Titan Crown
+.additem 380082 1 -- Bonekeeper's Sunblessed Veil
+.additem 380083 1 -- Stonecarved Walkers of Silver Banner
+.additem 380084 1 -- Cap of the Fel Watch
+.additem 380085 1 -- The Ironthane Stalkers
+.additem 380086 1 -- Wolfsworn Jerkin of Wind Spirit
+.additem 380087 1 -- Sunforged Medallion of the Last Vigil
+.additem 380088 1 -- Ferocious Great Stave of Frozen Gate
+.additem 380089 1 -- Frostfire Grave Shoulderguards
+.additem 380090 1 -- Idol of Ancient Frost
+.additem 380091 1 -- Legwraps of Sky Watch
+.additem 380092 1 -- The Brightsteel Vest
+.additem 380093 1 -- Sorrowful Chestguard of Light Crown
+.additem 380094 1 -- Old Knight's Fireforged Grips
+.additem 380095 1 -- Scourgeforged Hoop of Grim Watch
+.additem 380096 1 -- Eye of the Endless Night
+.additem 380097 1 -- Radiant Chestpiece of Iron King
+.additem 380098 1 -- Cap of Ancient Frost
+.additem 380099 1 -- The Dragonforged Wristbands
+.additem 380100 1 -- Corrupted Bone of Ebon Crown
+.additem 380101 1 -- Arcanized Runemaul of Golden Light
+.additem 380102 1 -- Violet Mage's Claws
+.additem 380103 1 -- Clouded Runestaff
+.additem 380104 1 -- Bloodcaller's Mantle of the Moonwell
+.additem 380105 1 -- Moonfire Legacy Headdress
+.additem 380106 1 -- Shoulderwraps, Shattered Chain
+.additem 380107 1 -- East Bane Ring
+.additem 380108 1 -- Warchief's Hammer of the Amphitheater
+.additem 380109 1 -- Tempered Tunic of the Ancient Spirit
+.additem 380110 1 -- Solemn Gorget of the Hidden Vault
+.additem 380111 1 -- Last Warden's Headdress of the White Crown
+.additem 380112 1 -- Ironlord's Bindings of the Silver Promise
+.additem 380113 1 -- Holy Striders
+.additem 380114 1 -- Lightlord's Waistband of the Skorn
+.additem 380115 1 -- Cabalistic Vest
+.additem 380116 1 -- Warder Cloak of the Dead Watch
+.additem 380117 1 -- Shoulderpads of Bone March
+.additem 380118 1 -- Frostbound Legguards of the Runekeeper
+.additem 380119 1 -- Bracers of the Grizzlemaw
+.additem 380120 1 -- Black Star Fang
+.additem 380121 1 -- Duskbound Headguard of Scourge Watch
+.additem 380122 1 -- Skullforged Strap of Fel Ritual
+.additem 380123 1 -- Siege Hammer of Ironforge Guard
+.additem 380124 1 -- Spaulders, Wolf Judgment
+.additem 380125 1 -- The Ethereal Breeches
+.additem 380126 1 -- Shadow King's Bright Ancient Relic
+.additem 380127 1 -- Locket of Blue Flame
+.additem 380128 1 -- Deathknight's Grips of the Makers Forge
+.additem 380129 1 -- Stalkers of Unquiet King
+.additem 380130 1 -- Moon Queen's Battle Mace
+.additem 380131 1 -- Pendant Chain, Bear Talon
+.additem 380132 1 -- Bonebound Walkers, Silent King's Oath
+.additem 380133 1 -- Crusader Grips of the Storm Watch
+.additem 380134 1 -- Windwarden's Helm of the Scourge Lord
+.additem 380135 1 -- Striders, Mana Ash
+.additem 380136 1 -- Divine Crook, Bloodwarden's Oath
+.additem 380137 1 -- Gleaming Gorget, Shadowguard's Oath
+.additem 380138 1 -- Flawless Loop of the Frost Crown
+.additem 380139 1 -- Trousers of the Dread Watch
+.additem 380140 1 -- Radiant Legguards of the Ashen Pact
+.additem 380141 1 -- The Stormscarred Sledge
+.additem 380142 1 -- The Heavy Oathring
+.additem 380143 1 -- Waistguard, Wyrm Rebuke
+.additem 380144 1 -- Circle of Alterac Mountains
+.additem 380145 1 -- Forgeblessed Cinch
+.additem 380146 1 -- The Hexed Legwraps
+.additem 380147 1 -- Enduring Tunic of the Blood Tide
+.additem 380148 1 -- Graven Walkers of the Wyrm Forge
+.additem 380149 1 -- Harness of the Silver Covenant
+.additem 380150 1 -- Spaulders of Silver Promise
+.additem 380151 1 -- Flamecaller's Girdle of the Far North
+.additem 380152 1 -- Holy Bonecrusher of the War Forge
+.additem 380153 1 -- Shoulderpads of the Alterac Mountains
+.additem 380154 1 -- Pillar of Burning Star
+.additem 380155 1 -- Wargrips, Argent Hymn
+.additem 380156 1 -- Warmaster Carapace of Thorim Arena
+.additem 380157 1 -- Medallion, Scourge Creed
+.additem 380158 1 -- Titan Keeper's Haunted Legwraps
+.additem 380159 1 -- Bracers of the Pale Crown
+.additem 380160 1 -- Forgekeeper's Waistband
+.additem 380161 1 -- Blood Queen's Valiant Forgehammer
+.additem 380162 1 -- Goldbound Shawl of Dark Moon
+.additem 380163 1 -- Skullwarden's Azure Shroud
+.additem 380164 1 -- Wristbands of the Storm Banner
+.additem 380165 1 -- Waistguard of the Fallen King
+.additem 380166 1 -- The Soulforged Warband
+.additem 380167 1 -- The Ferocious Bindings
+.additem 380168 1 -- Emberwrought Grips of the Cold Hearth
+.additem 380169 1 -- Stonekeeper's Rune Band
+.additem 380170 1 -- The Wolfsworn Pants
+.additem 380171 1 -- Duskrun Traveling Cloak
+.additem 380172 1 -- Blood King's Treads of the Ebon Blade
+.additem 380173 1 -- Greatstaff, Gray Hunter
+.additem 380174 1 -- Argent Templar's Pendant of the Dread Host
+.additem 380175 1 -- Wargrips, Frozen Reach
+.additem 380176 1 -- Wristguards of the Ashen March
+.additem 380177 1 -- Clouded Bone of the Black Temple
+.additem 380178 1 -- Faithful Chestguard
+.additem 380179 1 -- Grips of Crypt Watch
+.additem 380180 1 -- The Feathered Brooch
+.additem 380181 1 -- Emberwrought Belt
+.additem 380182 1 -- Stonehammer of the Spellweaver
+.additem 380183 1 -- Talisman, Moon Brand
+.additem 380184 1 -- The Winterborn Tunic
+.additem 380185 1 -- Warlord's Runering
+.additem 380186 1 -- Warborn Armguards of Pale Moon
+.additem 380187 1 -- Lost Vigil Shoulder Drape
+.additem 380188 1 -- Argent Knight's Spire
+.additem 380189 1 -- Deepdelver Spaulders
+.additem 380190 1 -- Coil of the Forgotten Memory
+.additem 380191 1 -- Bitter Banner Bindings
+.additem 380192 1 -- Eternal Steel Torc
+.additem 380193 1 -- Cap of Ebon Blade
+.additem 380194 1 -- Wolfheart Night Band
+.additem 380195 1 -- Runed Cap of Thor Modan
+.additem 380196 1 -- Chilled Legguards of Deep Forge
+.additem 380197 1 -- The Ominous Strap
+.additem 380198 1 -- The Nightmare Staff
+.additem 380199 1 -- The Primeval Clutches
+.additem 380200 1 -- Warchief's Carapace of the Broken Shield
+.additem 380201 1 -- Resolute Battlecloak of Ebon Vanguard
+.additem 380202 1 -- Pants of the First King
+.additem 380203 1 -- Haunted Wargrips, Argent Crusader's Oath
+.additem 380204 1 -- Ebon Heart Shaman Staff
+.additem 380205 1 -- Froststeel Walkers of the Light Eternal
+.additem 380206 1 -- Legguards, Earth Rime
+.additem 380207 1 -- Hearthwarden's Legwraps of the Bear Spirit
+.additem 380208 1 -- Charmstone, Hallowed Roar
+.additem 380209 1 -- Silent Forge Stalkers
+.additem 380210 1 -- Bloodsoaked Carapace, Lightcaller's Oath
+.additem 380211 1 -- The Sinister Stonehammer
+.additem 380212 1 -- High Hail Breeches
+.additem 380213 1 -- The Jagged Shoulderpads
+.additem 380214 1 -- Chillborn Bracers of Iron Banner
+.additem 380215 1 -- Girdle of Makers Overlook
+.additem 380216 1 -- Deathly Warcloak of the High King
+.additem 380217 1 -- Thunderlord's Warmaster Runering
+.additem 380218 1 -- Stonehammer, Forge Seed
+.additem 380219 1 -- Icetouched Harness
+.additem 380220 1 -- Twilightwarden's Runemarked Chestguard
+.additem 380221 1 -- Chestpiece of Stone King
+.additem 380222 1 -- Sunbound Belt of the Sholazar
+.additem 380223 1 -- Merciless Jerkin of the Light Guard
+.additem 380224 1 -- Necklace of Burning Sky
+.additem 380225 1 -- The Brutish Greatstaff
+.additem 380226 1 -- Wyrmwarden's Girdle of the High Citadel
+.additem 380227 1 -- Wyrmwarden's Bindings of the Ice Queen
+.additem 380228 1 -- Strap, Plague Grave
+.additem 380229 1 -- Legwraps, Ash Frost
+.additem 380230 1 -- Striders, Far Flame
+.additem 380231 1 -- Stalkers, Icefang Spark
+.additem 380232 1 -- Spell Stave, Wild Whisper
+.additem 380233 1 -- Firekeeper's Cloak
+.additem 380234 1 -- Battlemage's Devout Bindings
+.additem 380235 1 -- Feathered Branch of Blood Oath
+.additem 380236 1 -- Nether Fire Girdle
+.additem 380237 1 -- The Deepforged Chestpiece
+.additem 380238 1 -- Drakebound Skull
+.additem 380239 1 -- Wind Edge Talisman
+.additem 380240 1 -- Chestpiece of the Red Dawn
+.additem 380241 1 -- Harsh Spaulders of Blackrock Mountain
+.additem 380242 1 -- Flamewarden's Bracers
+.additem 380243 1 -- Crusader's Coin
+.additem 380244 1 -- Frostforged Belt
+.additem 380245 1 -- The Wildforged Headguard
+.additem 380246 1 -- Nether Breath Cudgel
+.additem 380247 1 -- Dread Death Vest
+.additem 380248 1 -- Sanctified Coil of the Blood Oath
+.additem 380249 1 -- High Voice Leggings
+.additem 380250 1 -- Carapace, Spell Thorn
+.additem 380251 1 -- Winter Forge Cap
+.additem 380252 1 -- Frozen Queen's Rune-carved Warcloak
+.additem 380253 1 -- Wargrips of the Holy Watch
+.additem 380254 1 -- The Razor-edged Great Maul
+.additem 380255 1 -- Broken Warden's Terrible Armguards
+.additem 380256 1 -- The Titan-carved Longcloak
+.additem 380257 1 -- Shadowmage's Consecrated Medallion
+.additem 380258 1 -- Armored Blade
+.additem 380259 1 -- Winterwarden's Crystal
+.additem 380260 1 -- Infused Fingerband of Iron Gate
+.additem 380261 1 -- Lost Knight's Wargrips of the White Banner
+.additem 380262 1 -- Moonkeeper's Violet Wargrips
+.additem 380263 1 -- Mournful Spaulders of Wild Crown
+.additem 380264 1 -- Carapace, Red Carver
+.additem 380265 1 -- Grips of Storm Watch
+.additem 380266 1 -- Plaguelord's Rune Band of the Fallen Watch
+.additem 380267 1 -- The Mystic Footguards
+.additem 380268 1 -- The Dragonforged Clutches
+.additem 380269 1 -- Tunic of Titan Watcher
+.additem 380270 1 -- Crypt Reckoning Warcloak
+.additem 380271 1 -- Crypt Bolt Battlecloak
+.additem 380272 1 -- The Earthwoven Wristguards
+.additem 380273 1 -- Void Anchor Torque
+.additem 380274 1 -- Coal-black Runering
+.additem 380275 1 -- Darksteel Tunic of the Astral Gate
+.additem 380276 1 -- Lost Keeper's Branch of the Westguard Keep
+.additem 380277 1 -- Armored Seal Ring of Altar of Sseratus
+.additem 380278 1 -- Chestguard, Gray Judgment
+.additem 380279 1 -- Ghostkeeper's Cinch of the Iron Banner
+.additem 380280 1 -- Neckchain of the Dragon Spirit
+.additem 380281 1 -- Iron Mace of the Sun Watch
+.additem 380282 1 -- Crusader's Manaforged Headguard
+.additem 380283 1 -- Silverguard's Ivory Spaulders
+.additem 380284 1 -- Shadow Wyrm Signet
+.additem 380285 1 -- Deep Cleaver Scarab
+.additem 380286 1 -- Cowl, Dragon Claw
+.additem 380287 1 -- Kingsworn Cinch of the Thor Modan
+.additem 380288 1 -- Storm Queen's Hateful Mark
+.additem 380289 1 -- Forgemaster's Sunsteel Harness
+.additem 380290 1 -- The Tempered Gloves
+.additem 380291 1 -- Striders of Endless Path
+.additem 380292 1 -- The Pitiless Maul
+.additem 380293 1 -- The Shattered Cap
+.additem 380294 1 -- Emberwarden's Legwraps of the Scarlet Dawn
+.additem 380295 1 -- Belt, Crypt Sorrow
+.additem 380296 1 -- Headdress of the Dread Crown
+.additem 380297 1 -- Flameforged Libram
+.additem 380298 1 -- Frozen King's Talisman
+.additem 380299 1 -- Carapace of Dying Light
+.additem 380300 1 -- Last Queen's Corroded Maul
+.additem 380301 1 -- Frostguard's Aged Pants
+.additem 380302 1 -- Twilight Rider Handguards
+.additem 380303 1 -- Ironlord's Dragonsteel Skinner
+.additem 380304 1 -- Torque of the Unquiet King
+.additem 380305 1 -- Mask of the Bitter Memory
+.additem 380306 1 -- Shadowwarden's Wintersteel Legwraps
+.additem 380307 1 -- Band of the Frozen Heart
+.additem 380308 1 -- Stalkers, Serpent Starfall
+.additem 380309 1 -- Frostmarked Branch
+.additem 380310 1 -- Blessed Walkers
+.additem 380311 1 -- The Deepfrost Trousers
+.additem 380312 1 -- Longstaff of the Warsong Hold
+.additem 380313 1 -- Frostlord's Runering
+.additem 380314 1 -- Ashen Headguard of the Ancestor Spirit
+.additem 380315 1 -- Icekeeper's Chestpiece
+.additem 380316 1 -- Warped Armguards
+.additem 380317 1 -- Last King's Lightforged Chestpiece
+.additem 380318 1 -- Spire, Moonfire Pact
+.additem 380319 1 -- Burial Waistband
+.additem 380320 1 -- Gray Emblem of the Frozen King
+.additem 380321 1 -- Sun Queen's Torc of the Venture Bay
+.additem 380322 1 -- Last King's Northwind Ringlet
+.additem 380323 1 -- Merciless Footguards of the Black Flight
+.additem 380324 1 -- Azure Deathmask, Argent Champion's Oath
+.additem 380325 1 -- Graveborn Girdle of the Sable Moon
+.additem 380326 1 -- Clutches of Dalaran Watch
+.additem 380327 1 -- Corroded Shoulderguards of Pit of Saron
+.additem 380328 1 -- Winterworn Tunic
+.additem 380329 1 -- Hearthwarden's Gleaming Feather
+.additem 380330 1 -- Spiritforged Wristbands of Red Dragon
+.additem 380331 1 -- Bindings of the Khaz Modan
+.additem 380332 1 -- Frostlord's Fierce Footguards
+.additem 380333 1 -- Celestial Storm Mantle
+.additem 380334 1 -- Ravenwarden's Great Cape of the Avalanche
+.additem 380335 1 -- Ghostwarden's Idol of the Storm Queen
+.additem 380336 1 -- The Earthwoven Legwraps
+.additem 380337 1 -- Gloves of Sun Flame
+.additem 380338 1 -- The Fearsome Band
+.additem 380339 1 -- Crimson Claws, Kingskeeper's Oath
+.additem 380340 1 -- Soulcaller's Tempered Jerkin
+.additem 380341 1 -- Wolfmarked Chestguard, Frozen King's Oath
+.additem 380342 1 -- Duskbound Bindings of the Frost Moon
+.additem 380343 1 -- The Wildbound Cape
+.additem 380344 1 -- Sunhallowed Claws of the Dead March
+.additem 380345 1 -- Stoneward Collar, Silverguard's Oath
+.additem 380346 1 -- Gloves, East Chill
+.additem 380347 1 -- Highkeeper's Clutches
+.additem 380348 1 -- Wyrmkeeper's Warmaster Torque
+.additem 380349 1 -- Earthshaker, Shattered Promise
+.additem 380350 1 -- Stonewarden's War Mace of the Deep Vault
+.additem 380351 1 -- Bonebound Neckchain of the Ashen Pact
+.additem 380352 1 -- Earth Sigil Promise
+.additem 380353 1 -- Headdress of the Fallen Lord
+.additem 380354 1 -- Headguard, East Piercer
+.additem 380355 1 -- Whitegold Choker of the Scholomance
+.additem 380356 1 -- Green Fist Mantle
+.additem 380357 1 -- Armored Boots of Final Promise
+.additem 380358 1 -- Wristguards of Avalanche
+.additem 380359 1 -- Jerkin of Wind Spirit
+.additem 380360 1 -- Clasp of the Karazhan
+.additem 380361 1 -- Breeches of the Final Promise
+.additem 380362 1 -- Last Dusk Footguards
+.additem 380363 1 -- Eternal Hand Hammer of the High King
+.additem 380364 1 -- Manaforged Seer Staff of Burning Shadow
+.additem 380365 1 -- Eye of Drak Tharon Keep
+.additem 380366 1 -- Jerkin of the Warsong Hold
+.additem 380367 1 -- Legguards, Stone Knuckle
+.additem 380368 1 -- Dawnkeeper's Windbound Girdle
+.additem 380369 1 -- Rune King's Hammer
+.additem 380370 1 -- Sainted Gloves of Mana Tide
+.additem 380371 1 -- Bonecaller's Legguards of the Violet Crown
+.additem 380372 1 -- Drape of the Crimson Banner
+.additem 380373 1 -- Earth Bringerless Deathmask
+.additem 380374 1 -- Hellforged Vest of Light Breach
+.additem 380375 1 -- Ironforged Legguards of Amberpine Lodge
+.additem 380376 1 -- Greatstaff of Yogg Prison
+.additem 380377 1 -- Rod of Northern Watch
+.additem 380378 1 -- Shroud of the Searing Gorge
+.additem 380379 1 -- Stonelord's Woeful Carapace
+.additem 380380 1 -- Handguards, Hollow Flame
+.additem 380381 1 -- Frost Queen's Infused Bracers
+.additem 380382 1 -- Forgotten Will Spaulders
+.additem 380383 1 -- The Northforged Shawl
+.additem 380384 1 -- Soulshard Song Bindings
+.additem 380385 1 -- Spaulders, Primal Anchor
+.additem 380386 1 -- Cowl, Eternal Curse
+.additem 380387 1 -- Nightmare Mantle
+.additem 380388 1 -- Forgemaster's Skull of the Howling Fjord
+.additem 380389 1 -- Gravekeeper's Wrap of the Storm Banner
+.additem 380390 1 -- Wyrmbound Wristbands of Bone Wastes
+.additem 380391 1 -- Pants of Dying Promise
+.additem 380392 1 -- Stalkers of Ancient Thorn
+.additem 380393 1 -- Witchbound Harness
+.additem 380394 1 -- Shadow Gaze Shroud
+.additem 380395 1 -- Grim Cowl
+.additem 380396 1 -- The Scourged Shoulderpads
+.additem 380397 1 -- Bonewarden's Cabalistic Boots
+.additem 380398 1 -- Shadow King's Illusory Dragon Spear
+.additem 380399 1 -- Forge Dusk Seer Staff
+.additem 380400 1 -- Spellbound Helm of Scale Queen
+.additem 380401 1 -- Ashen King's Worldforged Walkers
+.additem 380402 1 -- Shoulderpads of the Demon Lord
+.additem 380403 1 -- Stalkers of the Old Gods
+.additem 380404 1 -- Nightshrouded Cudgel
+.additem 380405 1 -- The Froststeel Battlehammer
+.additem 380406 1 -- Runering, Mana Clutch
+.additem 380407 1 -- Forgekeeper's Glasslike Pillar
+.additem 380408 1 -- Tombforged Tunic of Bronze Dragon
+.additem 380409 1 -- Shoulderwraps of Moonwell
+.additem 380410 1 -- The Dwarven Ritual Knife
+.additem 380411 1 -- The Purified Wristbands
+.additem 380412 1 -- The Rotting Battlehammer
+.additem 380413 1 -- Cryptborn Boots of Great Eagle
+.additem 380414 1 -- Moon Queen's Amulet
+.additem 380415 1 -- Devout Legwraps of the Sacred Dawn
+.additem 380416 1 -- Celestial Pact Shoulderpads
+.additem 380417 1 -- Crown Cry Chestpiece
+.additem 380418 1 -- Age-darkened Stalkers of the Ancient Frost
+.additem 380419 1 -- Timeworn Mantle of Wyrm Queen
+.additem 380420 1 -- Wristbands of the Crusaders Coliseum
+.additem 380421 1 -- Warwarden's Armguards of the Ancient Storm
+.additem 380422 1 -- Wolf Echo Headdress
+.additem 380423 1 -- Forgekeeper's Beastbound Legguards
+.additem 380424 1 -- Stormwrought Spaulders of Ancient Night
+.additem 380425 1 -- Ghostkeeper's Grips
+.additem 380426 1 -- Great Cape of Last King
+.additem 380427 1 -- Rimecaller's Strap
+.additem 380428 1 -- Spellbinder's Band of the Soul Crown
+.additem 380429 1 -- Bloodmarked Bracers of Grave Lord
+.additem 380430 1 -- Sun Queen's Harsh Runering
+.additem 380431 1 -- The Clawmarked Waistguard
+.additem 380432 1 -- Wyrm Queen's Undying Shawl
+.additem 380433 1 -- Grips of the Plague Watch
+.additem 380434 1 -- Winterborn Runemaul of the Moon Spirit
+.additem 380435 1 -- Titan Keeper's Bracers
+.additem 380436 1 -- The Runewoven Shoulderwraps
+.additem 380437 1 -- Patient Collar of the Frozen Dead
+.additem 380438 1 -- Scarlet Forge Headdress
+.additem 380439 1 -- Spiritforged Girdle of the White Flame
+.additem 380440 1 -- Stalkers of Raven Queen
+.additem 380441 1 -- Deathmask of the Bronze Flight
+.additem 380442 1 -- Frostworn Shoulderwraps of Ruby Sanctum
+.additem 380443 1 -- Vest of Golden King
+.additem 380444 1 -- Runehammer, Green Guard
+.additem 380445 1 -- Rune, Dream Storm
+.additem 380446 1 -- Battlesage's Legwraps of the Shadowbinder
+.additem 380447 1 -- The Moonbound Walking Staff
+.additem 380448 1 -- Rune King's Dragonbound Girdle
+.additem 380449 1 -- Doom Requiem Spaulders
+.additem 380450 1 -- Ironbound Shadowblade, Lost Keeper's Oath
+.additem 380451 1 -- Darkwarden's Trousers
+.additem 380452 1 -- Wolfsworn Shard
+.additem 380453 1 -- Deepwarden's Spellbound Amulet
+.additem 380454 1 -- Relic, Far Breaker
+.additem 380455 1 -- The Celestial Cinch
+.additem 380456 1 -- Sorcerous Claws
+.additem 380457 1 -- Frostcaller's Ringlet
+.additem 380458 1 -- Deathknight's Wristguards
+.additem 380459 1 -- The Frostbitten Trousers
+.additem 380460 1 -- Nightforged Clutches of Wintergrasp
+.additem 380461 1 -- Moonkeeper's Moonwoven Warband
+.additem 380462 1 -- Lost Keeper's Gray Trousers
+.additem 380463 1 -- Cowl, Shield Piercer
+.additem 380464 1 -- Armguards of War Forge
+.additem 380465 1 -- Coal-black Shoulderpads of Ironforge Guard
+.additem 380466 1 -- Grips of the Karazhan
+.additem 380467 1 -- Voidshard Wall Armguards
+.additem 380468 1 -- Torc of Rimefang
+.additem 380469 1 -- Scarlet Marshal's Rune-carved Deathmask
+.additem 380470 1 -- Nightforged Cinch of Silver Pact
+.additem 380471 1 -- Sable Vigil Legwraps
+.additem 380472 1 -- Wristbands of Silent Watch
+.additem 380473 1 -- The Sacred Greatstaff
+.additem 380474 1 -- Coil of the Rime Forge
+.additem 380475 1 -- Legwraps, Ghostfire Scar
+.additem 380476 1 -- The Silverblessed Sigil
+.additem 380477 1 -- Belt of the Borean Tundra
+.additem 380478 1 -- Prime Thirst Pendant Chain
+.additem 380479 1 -- Ashen Wristbands of Hallowed Crown
+.additem 380480 1 -- Last King's Walkers of the Emerald Star
+.additem 380481 1 -- Dreadbound Wristbands
+.additem 380482 1 -- Vest, Soulshard Roar
+.additem 380483 1 -- The Scarlet Runed Staff
+.additem 380484 1 -- Spirit Staff of the Dragonblight
+.additem 380485 1 -- Warguard's Raider Vest
+.additem 380486 1 -- Lightforged Staff of Dalaran
+.additem 380487 1 -- Furious Siege Hammer of Winter Memory
+.additem 380488 1 -- Saronite Waistband of Ivory Crown
+.additem 380489 1 -- Corroded Carapace of Frozen Pact
+.additem 380490 1 -- Earthwarden's Seer Staff
+.additem 380491 1 -- Spell Flame Trousers
+.additem 380492 1 -- Vest of the Alterac Mountains
+.additem 380493 1 -- Rimewalker's Ornate Deathmask
+.additem 380494 1 -- Warcloak of the Hallowed Ground
+.additem 380495 1 -- Hoop, Bear Keeper
+.additem 380496 1 -- Grimkeeper's Cape
+.additem 380497 1 -- Cloak of the Ancient Earth
+.additem 380498 1 -- Argent Carapace of Kaskala
+.additem 380499 1 -- Far Dancer Girdle
+.additem 380500 1 -- Clouded Runed Staff
+.additem 380501 1 -- Stalkers of Blood Price
+.additem 380502 1 -- First Keeper's Wristbands
+.additem 380503 1 -- Great Cape, Emerald Star
+.additem 380504 1 -- Archmage's Deathmask
+.additem 380505 1 -- Waistband of the Black Moon
+.additem 380506 1 -- Dreadforged Stalkers, Drakelord's Oath
+.additem 380507 1 -- Drape of Deep Mountain
+.additem 380508 1 -- Leggings of Death Rise
+.additem 380509 1 -- Wyrmkeeper's Charm of the Scourge Lord
+.additem 380510 1 -- Legguards of the Zul Drak
+.additem 380511 1 -- Shadowlord's Breeches
+.additem 380512 1 -- Ashen Grips of the Crimson Flame
+.additem 380513 1 -- Earthcaller's Bone
+.additem 380514 1 -- First Queen's Dreadforged Carapace
+.additem 380515 1 -- Headdress of the Ancient Earth
+.additem 380516 1 -- Bracers, Iron Blade
+.additem 380517 1 -- The Eternal Tunic
+.additem 380518 1 -- Violet Piercer Grips
+.additem 380519 1 -- Helm, Light Flare
+.additem 380520 1 -- Last King's Darkforged Knobbed Mace
+.additem 380521 1 -- Clawmarked Clutches of Dark Portal
+.additem 380522 1 -- Berserker Breeches
+.additem 380523 1 -- Dread Creed Walkers
+.additem 380524 1 -- Icy Chestpiece, Windcaller's Oath
+.additem 380525 1 -- Stormcaller's Silent Chestpiece
+.additem 380526 1 -- Winterlord's Lightblessed Shaman Staff
+.additem 380527 1 -- Iceforged Circle
+.additem 380528 1 -- Nightshrouded Drape of the Golden Dawn
+.additem 380529 1 -- Pale Lady's Hammered Jerkin
+.additem 380530 1 -- Frozen Keeper's Wristguards
+.additem 380531 1 -- Crusher of Sky Forge
+.additem 380532 1 -- Waistband of the Amphitheater
+.additem 380533 1 -- Eternal Chestpiece
+.additem 380534 1 -- First Queen's Relicbound Cinch
+.additem 380535 1 -- Deathkeeper's Stormmarked Jerkin
+.additem 380536 1 -- Hammered Legguards
+.additem 380537 1 -- Wristguards, Hallowed Ray
+.additem 380538 1 -- Sacred Reaver Clutches
+.additem 380539 1 -- Legwraps, Argent Tooth
+.additem 380540 1 -- Shoulderwraps, Skull Bane
+.additem 380541 1 -- The Whispering Shoulder Drape
+.additem 380542 1 -- Chestguard of Frost Crown
+.additem 380543 1 -- Vest of Fallen Lord
+.additem 380544 1 -- Sunbound Flanged Mace of the Red Flight
+.additem 380545 1 -- Voidkeeper's Cap of the Grizzly Hills
+.additem 380546 1 -- Wyrmforged Mage Staff of the Black Anvil
+.additem 380547 1 -- Armguards of the Gjalerbron
+.additem 380548 1 -- Veiled Wrap of Frostborn
+.additem 380549 1 -- Bloodstained Leggings
+.additem 380550 1 -- First Warden's Bracers
+.additem 380551 1 -- Eagle Feather Spell Stave
+.additem 380552 1 -- Voidcaller's Maul of the Searing Gorge
+.additem 380553 1 -- Headdress, Wind Roar
+.additem 380554 1 -- Cap, Eternal Spell
+.additem 380555 1 -- Stalkers of the Dragon Spirit
+.additem 380556 1 -- Stoic Band of Emerald Dream
+.additem 380557 1 -- Sunforged War Mace
+.additem 380558 1 -- The Prayerbound Tunic
+.additem 380559 1 -- Boots of the Winter King
+.additem 380560 1 -- Farseer's Footguards
+.additem 380561 1 -- Breeches, Sun Spear
+.additem 380562 1 -- Dragon Queen's Rune-etched Chestpiece
+.additem 380563 1 -- The Glittering Chestguard
+.additem 380564 1 -- Unyielding Morningstar
+.additem 380565 1 -- Calm Walkers of Death Lord
+.additem 380566 1 -- Hellforged Chestpiece of the Sky Forge
+.additem 380567 1 -- Stormforged Strap
+.additem 380568 1 -- Glacial Libram of the Freya Garden
+.additem 380569 1 -- The Dreambound Vest
+.additem 380570 1 -- Vest of the Silver Watch
+.additem 380571 1 -- The Cruel Cinch
+.additem 380572 1 -- Cracked Waistguard of the Sacred Flame
+.additem 380573 1 -- Dreamkeeper's Lightforged Shoulderpads
+.additem 380574 1 -- Deathly Cowl
+.additem 380575 1 -- Rimeforged Ring of Dark Rider
+.additem 380576 1 -- Voidforged Walkers
+.additem 380577 1 -- The Hardened Shoulderpads
+.additem 380578 1 -- Walkers of the Violet Hold
+.additem 380579 1 -- Gold Bloom Waistband
+.additem 380580 1 -- Trousers of Shadow Ritual
+.additem 380581 1 -- Mask of the Cold Watch
+.additem 380582 1 -- The Fernwoven Spaulders
+.additem 380583 1 -- Far Wrath Spirit Staff
+.additem 380584 1 -- Blessed Wrap
+.additem 380585 1 -- Scarlet Templar's Blessed Boots
+.additem 380586 1 -- Glacial Backcloth of Endless Road
+.additem 380587 1 -- Belt of the Burning Crown
+.additem 380588 1 -- Ravenbound Thunder Hammer
+.additem 380589 1 -- Gemmed Band of Frozen North
+.additem 380590 1 -- Totem of the Frozen Throne
+.additem 380591 1 -- Starcaller's Goldbound Harness
+.additem 380592 1 -- Northwind Stalkers
+.additem 380593 1 -- Mournful Spaulders
+.additem 380594 1 -- Charred Nightcloak of Green Flame
+.additem 380595 1 -- Legguards, Serpent Creed
+.additem 380596 1 -- Wyrm Queen's Conqueror Pants
+.additem 380597 1 -- Handguards of Forgotten Dead
+.additem 380598 1 -- Warforged Stone Relic of Violet Hold
+.additem 380599 1 -- Eternal War Dagger of the Frozen Forge
+.additem 380600 1 -- The Gleaming Claws
+.additem 380601 1 -- Thunderforged Bindings, Cryptlord's Oath
+.additem 380602 1 -- Scale-bound Treads
+.additem 380603 1 -- Moonlord's Bracers
+.additem 380604 1 -- Nightcaller's Winterborn Carapace
+.additem 380605 1 -- Splintered Chestpiece
+.additem 380606 1 -- Wildwoven Mantle
+.additem 380607 1 -- Fierce Song Clutches
+.additem 380608 1 -- Twilight Skull Mask
+.additem 380609 1 -- Wristbands of the Tempest Keep
+.additem 380610 1 -- Tunic of the Lost Watch
+.additem 380611 1 -- Woeful Crusher of Northern Forge
+.additem 380612 1 -- Brassbound Claws of Second Dawn
+.additem 380613 1 -- Warchief's Fingerband of the Ancient Oak
+.additem 380614 1 -- First King's Brightmoon Legwraps
+.additem 380615 1 -- Serpent Bite Headdress
+.additem 380616 1 -- First King's Blighted Iron Mace
+.additem 380617 1 -- Nameless Warden's Ironclad Ring
+.additem 380618 1 -- Mournful Armguards
+.additem 380619 1 -- Spell Stave of the Fel Flame
+.additem 380620 1 -- Highguard's Thunderforged Trousers
+.additem 380621 1 -- Chestpiece of the Thor Modan
+.additem 380622 1 -- Tombwarden's Runehammer
+.additem 380623 1 -- Saronite Handguards of the Iron Banner
+.additem 380624 1 -- Sledge, West Sorrow
+.additem 380625 1 -- Ironforged Helm of Ancient Titan
+.additem 380626 1 -- Stormshard Ash Shoulderpads
+.additem 380627 1 -- Bronze Plate Waistguard
+.additem 380628 1 -- Battlemage's Leggings
+.additem 380629 1 -- Headguard of the Kamagua
+.additem 380630 1 -- Stiletto of the Plague Lord
+.additem 380631 1 -- Walkers of the Wild King
+.additem 380632 1 -- Age-darkened Poniard
+.additem 380633 1 -- Bracers, Deep Light
+.additem 380634 1 -- Signet of the Terokkar
+.additem 380635 1 -- Wolfbound Branch of Ironforge Mountain
+.additem 380636 1 -- Warscarred Leggings of the Golden Dawn
+.additem 380637 1 -- Ironwarden's Vrykul Veil
+.additem 380638 1 -- Ivory Bane Wristguards
+.additem 380639 1 -- Deathmask of the Hidden Forge
+.additem 380640 1 -- Wyrmcaller's Emberforged Legwraps
+.additem 380641 1 -- Bloodbound Legwraps of the Storm Spirit
+.additem 380642 1 -- Sunkeeper's Walkers of the Grave Watch
+.additem 380643 1 -- The Violet Shoulderwraps
+.additem 380644 1 -- Wintertouched Pendant of the Frozen Moon
+.additem 380645 1 -- Warband of the Mage Lord
+.additem 380646 1 -- Wyrmwarden's Ironthane Legguards
+.additem 380647 1 -- Belt of the Shadow Vault
+.additem 380648 1 -- Ebon Champion's Trousers
+.additem 380649 1 -- Deathcaller's Boots
+.additem 380650 1 -- The Leafbound Shaman Staff
+.additem 380651 1 -- Spaulders of Wild Moon
+.additem 380652 1 -- Boots of Sacred Flame
+.additem 380653 1 -- Mournful Footguards of War Forge
+.additem 380654 1 -- Shadow Feather Vest
+.additem 380655 1 -- Shaman Staff of Frozen Gate
+.additem 380656 1 -- Warmaster's Jerkin
+.additem 380657 1 -- Spaulders of Bronze Dragon
+.additem 380658 1 -- Bracers, Rime Ward
+.additem 380659 1 -- Grim Mark
+.additem 380660 1 -- Red Judgment Harness
+.additem 380661 1 -- Bloodmarked Carapace of the Avalanche
+.additem 380662 1 -- Rune-carved Coil
+.additem 380663 1 -- Unwavering Strap of the Red Moon
+.additem 380664 1 -- Band of the Final Stand
+.additem 380665 1 -- Duskbound Boots of the Moon Pact
+.additem 380666 1 -- Mask of Azure Moon
+.additem 380667 1 -- Duskwoven Legwraps
+.additem 380668 1 -- Black Dirge Stonehammer
+.additem 380669 1 -- Earthen Clutches
+.additem 380670 1 -- Bonecaller's Chestpiece of the Broken Gate
+.additem 380671 1 -- Mask, Sable Ember
+.additem 380672 1 -- Wind Beacon War Relic
+.additem 380673 1 -- Clasp, Red Steel
+.additem 380674 1 -- Deathmask of Mage Lord
+.additem 380675 1 -- Battlesage's Frost-rimed Shoulderwraps
+.additem 380676 1 -- Leggings, Stormshard Plate
+.additem 380677 1 -- Rimewarden's Purified Medallion
+.additem 380678 1 -- Argent Defender's Strap of the Deep Forge
+.additem 380679 1 -- Legwraps, North Ice
+.additem 380680 1 -- Shawl of Abyssal Flame
+.additem 380681 1 -- Forgeblessed Royal Band of Avalanche
+.additem 380682 1 -- Scarlet Templar's Carapace
+.additem 380683 1 -- Grips of Silver Hand
+.additem 380684 1 -- Mantle of Rune King
+.additem 380685 1 -- Old King's Shadowforged Waistguard
+.additem 380686 1 -- Bonebound Stalkers of Iron Dwarf
+.additem 380687 1 -- Handguards, Icefang Woe
+.additem 380688 1 -- Druid Staff, Coldfire Memory
+.additem 380689 1 -- Dragonstalker's Girdle
+.additem 380690 1 -- Old Keeper's Boots of the Wild Heart
+.additem 380691 1 -- Argent Champion's Earthforged Great Lance
+.additem 380692 1 -- Cinch, Eternal Chill
+.additem 380693 1 -- Flame Memory Shoulderwraps
+.additem 380694 1 -- Bloodmage's Trousers of the Dragonblight
+.additem 380695 1 -- Breeches, Scourge Hymn
+.additem 380696 1 -- Mystic Amulet of Storm Peaks
+.additem 380697 1 -- Forsaken Heart
+.additem 380698 1 -- Icewarden's Austere Mantle
+.additem 380699 1 -- Lightcaller's Mantle
+.additem 380700 1 -- Warped Mantle
+.additem 380701 1 -- Wargrips of the Midnight Crown
+.additem 380702 1 -- Hexed Shoulderpads of the Sacred Flame
+.additem 380703 1 -- Shadowguard's Darksteel Wargrips
+.additem 380704 1 -- Black Chill Bracers
+.additem 380705 1 -- Clublike Mace, White Night
+.additem 380706 1 -- Wayfarer's Amulet
+.additem 380707 1 -- Profane Pants of the Dragon Spirit
+.additem 380708 1 -- Grimdark Pillar of the Final Watch
+.additem 380709 1 -- The Wyrmcarved Cowl
+.additem 380710 1 -- Mournful Harness
+.additem 380711 1 -- Battlemaiden's Bracers
+.additem 380712 1 -- Stonefather's Bindings
+.additem 380713 1 -- Wyrm King's Royal Band
+.additem 380714 1 -- Helm of the New Agamand
+.additem 380715 1 -- Battlemage's Bonebound Carapace
+.additem 380716 1 -- Headguard of Silent Moon
+.additem 380717 1 -- Blade Ray Breeches
+.additem 380718 1 -- Runewoven Waistguard
+.additem 380719 1 -- Legwraps of Deep Earth
+.additem 380720 1 -- Grips of Lost Vanguard
+.additem 380721 1 -- Cudgel of the Scale Queen
+.additem 380722 1 -- Walkers of Frozen Promise
+.additem 380723 1 -- The Winterforged Collar
+.additem 380724 1 -- Shoulder Drape of the Mystic Eye
+.additem 380725 1 -- Trousers, Darkfire Briar
+.additem 380726 1 -- Sun Singer Cinch
+.additem 380727 1 -- Draconic Chain of Emerald Watch
+.additem 380728 1 -- Legwraps of the Stormwind Keep
+.additem 380729 1 -- Gorget, Falcon Banner
+.additem 380730 1 -- Shadowlord's Ravenous Cap
+.additem 380731 1 -- Icefang Shadow Wargrips
+.additem 380732 1 -- Deathlord's Boots of the Thunder King
+.additem 380733 1 -- Tombwarden's Warborn Breeches
+.additem 380734 1 -- Gray Helm of the Plague Watch
+.additem 380735 1 -- Rimewalker's Gleaming Wristguards
+.additem 380736 1 -- Blood Queen's Stoic Strap
+.additem 380737 1 -- Ashcaller's Neckchain
+.additem 380738 1 -- Great Cape of Iron Giant
+.additem 380739 1 -- Charm, Red Voice
+.additem 380740 1 -- Bearhide Chestguard
+.additem 380741 1 -- Shieldbearer's Consecrated Keepsake
+.additem 380742 1 -- Dragon Queen's Handguards
+.additem 380743 1 -- Wildfire Mail Cudgel
+.additem 380744 1 -- Wolfbound Shadowblade of Drowned Hall
+.additem 380745 1 -- Ancient Queen's Armguards
+.additem 380746 1 -- Pants of Wyrm Queen
+.additem 380747 1 -- Moonfire Bringerless Trousers
+.additem 380748 1 -- Ebon Champion's Harness of the Wild Moon
+.additem 380749 1 -- Witchcaller's Brutal Clutches
+.additem 380750 1 -- Cryptborn Carapace of the Grizzlemaw
+.additem 380751 1 -- The Reinforced Jerkin
+.additem 380752 1 -- Brightsteel Strap of the Frost Queen
+.additem 380753 1 -- Jerkin of the Kings Promise
+.additem 380754 1 -- Legguards of the Iron Dwarf
+.additem 380755 1 -- The Stonebound Vest
+.additem 380756 1 -- Warlord's Loop
+.additem 380757 1 -- Permafrost Trousers of the Sun Flame
+.additem 380758 1 -- Vigilant Wristguards of the Wild Path
+.additem 380759 1 -- Frostbound Mask of the Titan Watch
+.additem 380760 1 -- Ancient King's Gloves
+.additem 380761 1 -- Hollow Trousers
+.additem 380762 1 -- Whispering Mantle
+.additem 380763 1 -- Primal Pants of the Fire Spirit
+.additem 380764 1 -- Siege Hammer of Dragon Forge
+.additem 380765 1 -- Gray Leaf Runestone
+.additem 380766 1 -- Vest of Bloodguard
+.additem 380767 1 -- Spellforged Legguards of Blue Dragon
+.additem 380768 1 -- Handguards, Red Bringerless
+.additem 380769 1 -- Nightkeeper's Royal Band of the Pale Flame
+.additem 380770 1 -- Coil, Wildfire Bite
+.additem 380771 1 -- Brazen Wristguards of the Thunder Forge
+.additem 380772 1 -- Pants of Astral Watch
+.additem 380773 1 -- Darkcaller's Scourged Claws
+.additem 380774 1 -- The Bronzed Gloves
+.additem 380775 1 -- Armguards, Dream Promise
+.additem 380776 1 -- Darkened Pillar of the Shadow Crown
+.additem 380777 1 -- Briarbound Gloves of the Shadow Crown
+.additem 380778 1 -- Ironthane Cinch
+.additem 380779 1 -- Arcanist's Circle
+.additem 380780 1 -- Moonfire Forge Breeches
+.additem 380781 1 -- Astral Stalkers of Mount Hyjal
+.additem 380782 1 -- Stormmarked Scale of the Star King
+.additem 380783 1 -- Shoulderguards of the Ancient Night
+.additem 380784 1 -- Deathwarden's Chestpiece
+.additem 380785 1 -- Dreadforged Claws of Ebon March
+.additem 380786 1 -- Spiritbound Legguards of Sunwell
+.additem 380787 1 -- Arcane Gloves of Silver Flame
+.additem 380788 1 -- Legwraps of the Arcane Eye
+.additem 380789 1 -- Cinch, Titan Fury
+.additem 380790 1 -- Stoneward Battle Staff
+.additem 380791 1 -- Skullkeeper's Waistguard
+.additem 380792 1 -- Fel Blade Mask
+.additem 380793 1 -- North Requiem Staff
+.additem 380794 1 -- Abyss Beacon Legguards
+.additem 380795 1 -- Gravelord's Helm
+.additem 380796 1 -- Argent Templar's Mark
+.additem 380797 1 -- Legguards, Ghost Starfall
+.additem 380798 1 -- Stormbound Clublike Mace of Raven Queen
+.additem 380799 1 -- Warrior-forged Bracers of the Storm Banner
+.additem 380800 1 -- Brittle Band of the Lost Road
+.additem 380801 1 -- The Rootwoven Shoulderwraps
+.additem 380802 1 -- Headdress of the Bear Spirit
+.additem 380803 1 -- Light Verse Vest
+.additem 380804 1 -- Warlord's Ringlet
+.additem 380805 1 -- The Barbed Mantle
+.additem 380806 1 -- Sinister Headguard of the Frost Giant
+.additem 380807 1 -- Highguard's Striders of the Earthshaper
+.additem 380808 1 -- Flamekeeper's Signet Ring
+.additem 380809 1 -- Stonebound Bindings of Scarlet Banner
+.additem 380810 1 -- Boneforged Mantle
+.additem 380811 1 -- Silverblessed Girdle, Drakelord's Oath
+.additem 380812 1 -- The Drakescale Walkers
+.additem 380813 1 -- Ferocious Longstaff of the Dead Watch
+.additem 380814 1 -- The Graveborn Tunic
+.additem 380815 1 -- Ancient King's Headguard
+.additem 380816 1 -- Ebon Champion's Veil
+.additem 380817 1 -- Runesteel Wristbands of the Stormcaller
+.additem 380818 1 -- Worldforged Chestguard of the Autumn Wind
+.additem 380819 1 -- Ironthane's Neckguard of the Hodir Hall
+.additem 380820 1 -- Jeweled Harness, Ghostcaller's Oath
+.additem 380821 1 -- Walkers of Demon Lord
+.additem 380822 1 -- Undying Claws of the Dawnwatch
+.additem 380823 1 -- Dragonstalker's Charred Shoulderwraps
+.additem 380824 1 -- Spirit Strike Ring
+.additem 380825 1 -- Breeches of Ice Queen
+.additem 380826 1 -- Bloodforged Totem of the Valiance Keep
+.additem 380827 1 -- The Doomforged Armguards
+.additem 380828 1 -- Vrykul Battlecloak of the Dark Iron Clan
+.additem 380829 1 -- Scythe, Wind Branch
+.additem 380830 1 -- Wyrmforged Headdress
+.additem 380831 1 -- Walkers of the Black Temple
+.additem 380832 1 -- Gloves of Temple of Storms
+.additem 380833 1 -- The Carrion Armguards
+.additem 380834 1 -- Leggings, Drake Bringerless
+.additem 380835 1 -- Ravenlord's Tablet of the Broken Banner
+.additem 380836 1 -- Voidkeeper's Mountainborn Compass
+.additem 380837 1 -- Lost King's Carapace of the Dark Star
+.additem 380838 1 -- Glasslike War Maul of the Star Forge
+.additem 380839 1 -- Heavy Girdle
+.additem 380840 1 -- Coil of Ancient Grove
+.additem 380841 1 -- Grimkeeper's Rod of the Iron Watch
+.additem 380842 1 -- Lightlord's Grips of the Lost Memory
+.additem 380843 1 -- Shadow Queen's Eternal Bindings
+.additem 380844 1 -- Flamewarden's Enduring Breeches
+.additem 380845 1 -- Dragonsteel Boots of Violet Crown
+.additem 380846 1 -- Sepulchral Chestguard, Old Keeper's Oath
+.additem 380847 1 -- Winter King's Sainted Cloak
+.additem 380848 1 -- Sunbound Breeches of Storm Spirit
+.additem 380849 1 -- The Rime-coated War Pike
+.additem 380850 1 -- Last King's Jerkin of the Wild Moon
+.additem 380851 1 -- Crimson Flare Heart
+.additem 380852 1 -- Forgekeeper's Leggings of the Crypt Watch
+.additem 380853 1 -- Baneful Armguards
+.additem 380854 1 -- Frost King's Undying Cinch
+.additem 380855 1 -- Moonkeeper's Handguards
+.additem 380856 1 -- Armorsmith's Waistguard of the Bone Wastes
+.additem 380857 1 -- Silent Knight's Claws
+.additem 380858 1 -- Stiletto of the Spellweaver
+.additem 380859 1 -- Ghost Tongue Leggings
+.additem 380860 1 -- Promise of Winter Crown
+.additem 380861 1 -- Silverwarden's Corrupted Nightcloak
+.additem 380862 1 -- Armorsmith's Token
+.additem 380863 1 -- Grimdark Collar of Silver Flame
+.additem 380864 1 -- Kingsguard's Jerkin of the Long Night
+.additem 380865 1 -- Nether Dirge Choker
+.additem 380866 1 -- Silver King's Rune of the Hallowed Watch
+.additem 380867 1 -- Wargrips of the Demon Watch
+.additem 380868 1 -- The Crimson Walkers
+.additem 380869 1 -- Shoulderpads of the Moon Path
+.additem 380870 1 -- The Spiritforged Warder Cloak
+.additem 380871 1 -- Claws, Unbroken Glaive
+.additem 380872 1 -- Pillar of the Ebon Crown
+.additem 380873 1 -- The Corpsebound Gloves
+.additem 380874 1 -- Thorned Carapace of the Light Eternal
+.additem 380875 1 -- Highguard's Ritual Breeches
+.additem 380876 1 -- Soulforged Legguards of Second Dawn
+.additem 380877 1 -- Skullwarden's Feather
+.additem 380878 1 -- The Marauding Breeches
+.additem 380879 1 -- Dawncaller's Claws
+.additem 380880 1 -- Bloodwarden's Coldfire Stalkers
+.additem 380881 1 -- Titanforger's Shadowforged Legwraps
+.additem 380882 1 -- Cinch, Astral Seal
+.additem 380883 1 -- The Frostveined Striders
+.additem 380884 1 -- Trousers of Wind King
+.additem 380885 1 -- Highguard's Neckchain
+.additem 380886 1 -- Dream Grave Grips
+.additem 380887 1 -- Waistband of the Crimson Flame
+.additem 380888 1 -- Spiritcaller's Seal of the Netherstorm
+.additem 380889 1 -- Thunderkeeper's Wyrmcarved Deathmask
+.additem 380890 1 -- Silent Warden's Undying Headdress
+.additem 380891 1 -- Mantle of the Dark Ritual
+.additem 380892 1 -- Icecaller's Wargrips
+.additem 380893 1 -- Nightbound Pants
+.additem 380894 1 -- Iron Queen's Pants of the Ruby Sanctum
+.additem 380895 1 -- Beastbound Cap of the Final Promise
+.additem 380896 1 -- Nightmare Trousers of the Autumn Wind
+.additem 380897 1 -- Grey Winter Backcloth
+.additem 380898 1 -- Chestpiece of Moon Crown
+.additem 380899 1 -- Forgehammer of Bone Crown
+.additem 380900 1 -- Waistguard of Iron Gate
+.additem 380901 1 -- Rune-carved Great Hammer of Blue Dragon
+.additem 380902 1 -- Worldkeeper's Thunderous Harness
+.additem 380903 1 -- Amulet, Boar Helm
+.additem 380904 1 -- Frozen Shard Cinch
+.additem 380905 1 -- Wristguards, Spell Shine
+.additem 380906 1 -- Deepdelver Pants
+.additem 380907 1 -- Darkrider's Gloves
+.additem 380908 1 -- Wyrmkeeper's Waistguard of the North Road
+.additem 380909 1 -- Boots, Bloodfang Winter
+.additem 380910 1 -- Legwraps, Sable Void
+.additem 380911 1 -- Treads of the Plague Wing
+.additem 380912 1 -- Headdress, East Tooth
+.additem 380913 1 -- Fingerband of the Dragon Pact
+.additem 380914 1 -- Dreamwarden's Stalkers of the Emerald Path
+.additem 380915 1 -- Soulfire Cold Helm
+.additem 380916 1 -- Violet Cloak of Sable Moon
+.additem 380917 1 -- Unwavering Amulet of Wild Path
+.additem 380918 1 -- Mournbound Bracers of the Makers Vault
+.additem 380919 1 -- Wyrmlord's Talisman of the Makers Overlook
+.additem 380920 1 -- Cap, Star Grip
+.additem 380921 1 -- Shoulderguards, Red Judgment
+.additem 380922 1 -- Heart of the Dark Star
+.additem 380923 1 -- Grim Blade Armguards
+.additem 380924 1 -- Kingsworn Footguards of the Avalanche
+.additem 380925 1 -- Runecaller's Loop
+.additem 380926 1 -- Highlord's Starsteel Ring
+.additem 380927 1 -- Wristguards of Endless Night
+.additem 380928 1 -- Rimewalker's Jerkin
+.additem 380929 1 -- Froststeel Veil of the Black Harvest
+.additem 380930 1 -- Wind Thorn Shaman Staff
+.additem 380931 1 -- Bloodbound Forgehammer of the Dragon Rider
+.additem 380932 1 -- Nameless Chestguard of the Golden Flame
+.additem 380933 1 -- Royal Stonehammer of Void Crown
+.additem 380934 1 -- Titan Hammer, Dusk Wall
+.additem 380935 1 -- Razor-edged Gloves, Crusader's Oath
+.additem 380936 1 -- Heroic Legguards
+.additem 380937 1 -- Starfang Anchor Trousers
+.additem 380938 1 -- Vest, Prime Edge
+.additem 380939 1 -- Cap of the K3
+.additem 380940 1 -- Last Keeper's Grips of the Stormwind Keep
+.additem 380941 1 -- Fel Striders
+.additem 380942 1 -- Pants, Grim Talon
+.additem 380943 1 -- Legwraps of Dread Crown
+.additem 380944 1 -- Blackguard's Pants
+.additem 380945 1 -- The Ancient Mantle
+.additem 380946 1 -- Frostforged Trousers of the Hodir Hall
+.additem 380947 1 -- Unholy Seal Ring of Wild Moon
+.additem 380948 1 -- Soul Chill Bindings
+.additem 380949 1 -- Moonwarden's Spaulders of the Hidden Road
+.additem 380950 1 -- Ancient Voice Chestguard
+.additem 380951 1 -- Seer's Pants
+.additem 380952 1 -- Carapace of Bone Ritual
+.additem 380953 1 -- Neckchain, High Seal
+.additem 380954 1 -- Waistband, Earthshard Reaver
+.additem 380955 1 -- The Ravenous Royal Cloak
+.additem 380956 1 -- Earthen-forged Pants, Warwarden's Oath
+.additem 380957 1 -- Warden's Signet Ring of the Storm Watch
+.additem 380958 1 -- Mantle, Hallowed Twilight
+.additem 380959 1 -- Mantle, Demon Leaf
+.additem 380960 1 -- Ancient Grips of the Final Oath
+.additem 380961 1 -- Crusader's Chestpiece
+.additem 380962 1 -- Living Mask of Valgarde
+.additem 380963 1 -- Walkers, Night Guard
+.additem 380964 1 -- Warpriest's Stormwrought Pendant
+.additem 380965 1 -- Veil of the Dark Ritual
+.additem 380966 1 -- Moonlit Stalkers
+.additem 380967 1 -- South Storm Claws
+.additem 380968 1 -- Skullwarden's Mantle of the Far North
+.additem 380969 1 -- Gemmed Band of the Last King
+.additem 380970 1 -- Cowl of the Titan Pact
+.additem 380971 1 -- Warcloak, Ice Legacy
+.additem 380972 1 -- Treads, West Bolt
+.additem 380973 1 -- The Charred Carapace
+.additem 380974 1 -- Dawnwarden's Stoneforged Spaulders
+.additem 380975 1 -- Shaman Staff of Burning Sky
+.additem 380976 1 -- Walkers of the Golden King
+.additem 380977 1 -- Circle of the Ebon Flame
+.additem 380978 1 -- Mallet of the Wind Crown
+.additem 380979 1 -- Enchanted Cinch of the Winter Watch
+.additem 380980 1 -- Cerulean Belt of Burning Sky
+.additem 380981 1 -- Treads, Red Dawn
+.additem 380982 1 -- Bloodbound Vest
+.additem 380983 1 -- Darkfire Flare Neckchain
+.additem 380984 1 -- Bracers of the Rime Crown
+.additem 380985 1 -- Titan-carved Boots
+.additem 380986 1 -- Deepforged Clutches of Frozen Halls
+.additem 380987 1 -- Broken Mark Armguards
+.additem 380988 1 -- Jerkin of Dark Star
+.additem 380989 1 -- Marauding Talisman of Ancient Grove
+.additem 380990 1 -- Frozen Warden's Stonehewn Leggings
+.additem 380991 1 -- Frostmage's Leggings of the Black Anvil
+.additem 380992 1 -- Nightshrouded Spaulders
+.additem 380993 1 -- Nameless Chestguard of the Sun Spirit
+.additem 380994 1 -- Kingskeeper's Boots of the Arcane Eye
+.additem 380995 1 -- Skullwarden's Waistguard
+.additem 380996 1 -- Moon King's Brassbound Stalkers
+.additem 380997 1 -- Lance, Bear Dancer
+.additem 380998 1 -- Wintercaller's Legwraps
+.additem 380999 1 -- The Dreamwoven Chestguard
