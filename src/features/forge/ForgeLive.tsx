@@ -62,7 +62,7 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
             <div className="forge-scene-title">HAMMER &amp; ANVIL</div>
             <div className="forge-scene-phase">{forgeStageLabel(state.lifecycle)}</div>
             <div className="forge-machine">
-              <div className="forge-hammer" data-testid="forge-hammer" data-pivot="handle-end" data-handle-attachment="head-bottom-right"><span className="forge-hammer-handle" /><span className="forge-hammer-head"><span className="forge-striking-face" /></span></div>
+              <div className="forge-hammer" data-testid="forge-hammer" data-pivot="handle-end" data-handle-attachment="head-center"><span className="forge-hammer-handle" /><span className="forge-hammer-head"><span className="forge-striking-face" /></span></div>
               <div className="forge-impact">✦</div>
               <div className="forge-anvil"><span className="forge-anvil-face" /><span className="forge-anvil-body" /></div>
               <span className="forge-spark forge-spark-1" data-testid="forge-spark">✦</span>

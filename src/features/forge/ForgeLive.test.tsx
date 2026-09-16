@@ -43,7 +43,7 @@ describe('ForgeLive', () => {
     expect(scene.querySelector('.forge-hammer')).not.toBeNull();
     const hammer = screen.getByTestId('forge-hammer');
     expect(hammer).toHaveAttribute('data-pivot', 'handle-end');
-    expect(hammer).toHaveAttribute('data-handle-attachment', 'head-bottom-right');
+    expect(hammer).toHaveAttribute('data-handle-attachment', 'head-center');
     expect(scene.querySelector('.forge-anvil')).not.toBeNull();
     expect(scene.querySelector('.forge-anvil-face')).not.toBeNull();
     expect(scene.querySelector('.forge-striking-face')).not.toBeNull();
