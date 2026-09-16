@@ -16,6 +16,9 @@ export type ConfiguredEvent = EngineEventBase & {
   magic_effects?: string;
   loot_destinations?: string[];
   disabled_features?: string[];
+  source_cache_status?: 'hit' | 'miss' | 'partial';
+  source_cache_elapsed_ms?: number;
+  source_catalog_rebuilt?: boolean;
   [key: string]: unknown;
 };
 

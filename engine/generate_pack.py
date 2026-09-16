@@ -470,13 +470,9 @@ def _source_cache_files(source_root):
     if source_root is None:
         return ()
     root=Path(source_root)
-    scan_root=root/'src'/'server'/'scripts' if (root/'src'/'server'/'scripts').is_dir() else root
-    header_root=root/'src' if (root/'src').is_dir() else root
+    scan_root=root/'src' if (root/'src').is_dir() else root
     suffixes={'.cpp','.h','.hpp','.cc','.c'}
-    files=set()
-    for base in (scan_root,header_root):
-        if base.is_dir():
-            files.update(path for path in base.rglob('*') if path.is_file() and path.suffix.lower() in suffixes)
+    files={path for path in scan_root.rglob('*') if path.is_file() and path.suffix.lower() in suffixes} if scan_root.is_dir() else set()
     return tuple(sorted(files,key=lambda path:str(path)))
 
 def _source_cache_key(paths,source_root=None,loot_chance=None,expansion=None,destinations=None):
@@ -907,6 +903,7 @@ class JsonEventUI(PlainTerminalUI):
             'loot_chance','disabled_features','set_rate','set_min_level','set_size',
             'spell_effect_rate_multiplier','proc_rate_multiplier','on_use_rate_multiplier',
             'effect_ilvl_window','socket_bonus_rate','disenchant_rate','max_special_effects',
+            'source_cache_status','source_cache_elapsed_ms','source_catalog_rebuilt',
         )
         self._emit('configured',**{field:runtime.get(field) for field in fields if field in runtime})
 
@@ -2627,6 +2624,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     cache_paths=(*encounter_paths,item_template_source,*item_dbc_sources,item_set_dbc_source,
                  spell_dbc_source,spell_enchantment_dbc_source,disenchant_source,spell_proc_source,
                  spell_script_names_source,*gameobject_source_audit['paths'])
+    cache_started=time.perf_counter()
     source_cache_key=_source_cache_key(cache_paths,source_root,args.loot_chance,EXPANSION,LOOT_DESTINATIONS)
     source_cache=_load_source_cache(SOURCE_CACHE_FILE,source_cache_key)
     cached_reference_catalog=source_cache.get('reference_catalog') if source_cache else None
@@ -2639,6 +2637,9 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
                         (wants_encounter and cached_encounter_catalog is None) or
                         (content_manifest is None and wants_encounter and cached_encounter_manifest is None) or
                         (needs_feature_catalog and cached_feature_catalog is None))
+    source_cache_status='hit' if source_cache is not None else 'miss'
+    source_cache_elapsed_ms=round((time.perf_counter()-cache_started)*1000,2)
+    source_catalog_rebuilt=cache_write_needed
     if source_cache is not None and ui:
         ui.startup_status('Using cached source mappings')
     if cached_reference_catalog:
@@ -2878,6 +2879,8 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
         'proc_rate_multiplier':PROC_RATE_MULTIPLIER,'on_use_rate_multiplier':ON_USE_RATE_MULTIPLIER,
         'effect_ilvl_window':EFFECT_ILVL_WINDOW,'socket_bonus_rate':SOCKET_BONUS_RATE,
         'disenchant_rate':DISENCHANT_RATE,'max_special_effects':MAX_SPECIAL_EFFECTS,
+        'source_cache_status':source_cache_status,'source_cache_elapsed_ms':source_cache_elapsed_ms,
+        'source_catalog_rebuilt':source_catalog_rebuilt,
     }
 
 DBC_HEADER=struct.Struct('<4s4I')

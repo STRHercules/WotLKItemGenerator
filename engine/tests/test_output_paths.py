@@ -53,3 +53,26 @@ def test_source_cache_file_can_be_overridden(tmp_path):
     cache = tmp_path / "cache" / "source-cache.json.gz"
     args = engine.parse_args(["--number", "1", "--source-cache-file", str(cache)])
     assert args.source_cache_file == cache
+
+
+def test_source_cache_files_walks_source_tree_once(tmp_path, monkeypatch):
+    engine = load_engine()
+    (tmp_path / "src" / "server" / "scripts").mkdir(parents=True)
+    (tmp_path / "src" / "include").mkdir()
+    script = tmp_path / "src" / "server" / "scripts" / "example.cpp"
+    header = tmp_path / "src" / "include" / "example.h"
+    script.write_text("// script")
+    header.write_text("// header")
+    original_rglob = Path.rglob
+    calls = []
+
+    def counted_rglob(path, pattern):
+        calls.append(path)
+        return original_rglob(path, pattern)
+
+    monkeypatch.setattr(Path, "rglob", counted_rglob)
+    files = engine._source_cache_files(tmp_path)
+
+    assert calls == [tmp_path / "src"]
+    assert files == tuple(sorted((script, header), key=lambda path: str(path)))
+    assert len(files) == len(set(files))

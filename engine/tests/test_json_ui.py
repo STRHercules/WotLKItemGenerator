@@ -70,6 +70,19 @@ def test_configured_event_serializes_paths_and_sets():
     assert event["disabled_features"] == ["sets"]
 
 
+def test_configured_event_preserves_bounded_source_cache_metadata():
+    event = one_event(lambda ui: ui.configure({
+        "seed": "123",
+        "number": 1,
+        "source_cache_status": "partial",
+        "source_cache_elapsed_ms": 12.34,
+        "source_catalog_rebuilt": True,
+    }))
+    assert event["source_cache_status"] == "partial"
+    assert event["source_cache_elapsed_ms"] == 12.34
+    assert event["source_catalog_rebuilt"] is True
+
+
 def test_notable_item_becomes_discovery_event():
     event = one_event(lambda ui: ui.item({
         "Quality": 5,

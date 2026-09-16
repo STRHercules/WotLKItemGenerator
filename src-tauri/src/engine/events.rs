@@ -18,6 +18,12 @@ pub enum EngineEvent {
         magic_effects: Option<String>,
         loot_destinations: Option<Vec<String>>,
         disabled_features: Option<Vec<String>>,
+        #[serde(default)]
+        source_cache_status: Option<String>,
+        #[serde(default)]
+        source_cache_elapsed_ms: Option<f64>,
+        #[serde(default)]
+        source_catalog_rebuilt: Option<bool>,
     },
     Phase {
         protocol_version: u32,
