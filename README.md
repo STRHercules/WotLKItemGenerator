@@ -1,6 +1,6 @@
 # WotLK Item Forge
 
-![WotLK Item Forge desktop workbench](https://i.imgur.com/o2Z0IkP.png)
+[![Video Preview](https://img.youtube.com/vi/JyAfgg5msl4/maxresdefault.jpg)](https://youtu.be/JyAfgg5msl4)
 
 A Tauri desktop workbench for deterministic AzerothCore / World of Warcraft: Wrath of the Lich King 3.3.5a (build 12340) item generation.
 
@@ -16,22 +16,6 @@ The app reads local WotLK DBC/SQL sources, generates reviewable SQL and client/s
 - A writable output folder
 
 On startup, the app scans required and optional sources. Forge stays blocked until required data, the AzerothCore source root, DBC baselines, and the output location are ready.
-
-### Run from source
-
-```powershell
-npm install
-npm run tauri dev
-```
-
-The development app uses the staged Windows engine in `src-tauri/binaries/`. To build the complete Windows release, install the sidecar build dependencies and run:
-
-```powershell
-py -m pip install -r engine/requirements-build.txt
-.\scripts\build-windows-release.ps1
-```
-
-The release script validates the project, builds the Nuitka engine sidecar, stages it for Tauri, and creates the NSIS installer. An installed app still needs access to your own DBC/SQL and AzerothCore source directories.
 
 ## App workflow
 
@@ -53,17 +37,74 @@ The React/TypeScript UI calls typed Tauri commands in the Rust backend. Rust own
 
 The Python generator remains the generation authority. Rust translates the Forge configuration into generator arguments and starts `wotlk-item-forge-engine` with `--ui json`. The engine emits protocol-v1 newline-delimited JSON events on stdout; Rust validates and forwards them to the UI while capturing diagnostics in the app-local log. A completed event triggers indexing of `items.ndjson` and known report files. Expensive source mappings are cached locally and can be rebuilt from Sources.
 
-## Generated packs
+## To use your OWN Server Files:
+### Necessary files:
+```
+creature.sql
+creature_loot_template.sql
+creature_template.sql
+disenchant_loot_template.sql
+DungeonMap.dbc
+instance_encounters.sql
+Item.dbc
+item_template.sql
+ItemSet.dbc
+Map.dbc
+MapDifficulty.dbc
+reference_loot_template.sql
+Spell.dbc
+spell_proc.sql
+spell_script_names.sql
+SpellItemEnchantment.dbc
+```
 
-Each run creates `generated-<seed>/`, normally containing:
+### Optional:
+```
+Item.custom.dbc
+gameobject.sql
+gameobject_template.sql
+gameobject_loot_template.sql
+```
 
-- `sql/` with import order, schema checks, collision checks, and rollback SQL
-- client `Item.dbc` and optional client/server `ItemSet.dbc`
-- GM `.additem` commands
-- `items.ndjson`, `manifest.csv`, checksums, validation, placement, and encounter reports
-- a generated README with the run configuration and import notes
+## Generated output
 
-Review `00_SCHEMA_CHECK.sql`, `00_PREIMPORT_COLLISION_CHECK.sql`, and `sql/IMPORT_ORDER.txt` before any manual server import. Generated packs stay separate from `app.db`; clearing or rebuilding the Library index does not delete pack files. Cancelling a run preserves partial diagnostic output when available.
+Each run creates `generated-<seed>/`, including:
+
+- `sql/` and `sql/IMPORT_ORDER.txt`
+- `client/Item.dbc` and optional `client/ItemSet.dbc`
+- `server/dbc/ItemSet.dbc`
+- `additem_commands/`
+- `validation_report.json`, `manifest.csv`, and placement reports
+- `00_SCHEMA_CHECK.sql`
+- `00_PREIMPORT_COLLISION_CHECK.sql`
+- `99_REMOVE_GENERATED_ITEMS.sql`
+- a self-contained generated `README.md`
+
+## Import safely
+
+1. Back up `acore_world`.
+2. Run `00_SCHEMA_CHECK.sql`.
+3. Run `00_PREIMPORT_COLLISION_CHECK.sql`; stop if any collision count is non-zero.
+4. Import the files listed in `sql/IMPORT_ORDER.txt`.
+5. Copy the generated server `ItemSet.dbc` when sets are enabled.
+6. Package the generated client DBCs under `DBFilesClient/`.
+7. Restart worldserver; clear `Cache/WDB/<locale>/itemcache.wdb` if names or icons are stale.
+
+### Run from source
+
+```powershell
+npm install
+npm run tauri dev
+```
+
+The development app uses the staged Windows engine in `src-tauri/binaries/`. To build the complete Windows release, install the sidecar build dependencies and run:
+
+```powershell
+py -m pip install -r engine/requirements-build.txt
+.\scripts\build-windows-release.ps1
+```
+
+The release script validates the project, builds the Nuitka engine sidecar, stages it for Tauri, and creates the NSIS installer. An installed app still needs access to your own DBC/SQL and AzerothCore source directories.
 
 ## Developer commands
 
