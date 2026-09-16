@@ -1,0 +1,140 @@
+# AzerothCore WotLK Random Item Generator
+
+[![Video Preview](https://img.youtube.com/vi/JyAfgg5msl4/maxresdefault.jpg)](https://youtu.be/JyAfgg5msl4)
+
+Deterministic custom equipment generation for AzerothCore / World of Warcraft: Wrath of the Lich King 3.3.5a (build 12340).
+
+Running `py generate_pack.py` opens a Rich setup wizard that lists the required `Data/` inputs, remembers the AzerothCore source directory, asks for the expansion, effects, sockets, sets, Legendaries, disenchant data, classes, item count, and loot destinations, then confirms the run before generation.
+
+Derived source mappings are cached in the user profile and automatically rebuilt when the relevant DBC/SQL/source files or generator code changes.
+
+The default run creates 100,000 items across the ten WotLK classes and writes:
+
+- AzerothCore `item_template` and loot SQL
+- GM `.additem` command files
+- merged client `Item.dbc`
+- matching client/server `ItemSet.dbc` when sets are enabled
+- validation, collision-check, rollback, and placement reports
+
+> The generator writes files for review and import. It does not connect to or modify a live database.
+
+## Features
+
+- deterministic seeds and reproducible output
+- role- and equipment-compatible stats, levels 1-80, and Death Knight levels 55-80
+- verified stock appearances, effects, socket bonuses, disenchant data, and five-piece sets
+- shared world-loot pools plus automatic or manifest-driven dungeon/raid/quest placement
+- optional Rich terminal dashboard with plain and quiet modes, opened by a short animated arcane-globe splash with a rarity-rolling progress bar
+
+## Requirements
+
+- Python 3
+- Rich for the bare-run setup wizard (`py -m pip install rich`)
+- a matching AzerothCore/WotLK source bundle under `Data/`
+
+The SQL and DBC inputs are local files ignored by Git. The default bundle includes the stock item, loot, spell, set, enchantment, and encounter sources used by the generator. See [Architecture.md](Architecture.md#expected-project-layout) for the complete list and path overrides.
+
+## Quick start
+
+Windows / PowerShell:
+
+```powershell
+py generate_pack.py
+```
+
+The wizard defaults to the All expansion, all magic effects, enabled optional features, all classes, and All of the Above loot insertion. Its item-count default is 100,000 for all classes or 10,000 per selected class; explicit options such as `--number` remain available for non-interactive runs.
+
+Linux / macOS:
+
+```bash
+python3 ./generate_pack.py
+```
+
+Small deterministic smoke test:
+
+```powershell
+py generate_pack.py --seed 1234567890 --number 100
+```
+
+Single-class run:
+
+```powershell
+py generate_pack.py --class warrior --number 100
+```
+
+Rich is required for the bare interactive setup; explicit `--ui plain` runs can avoid it. Install it with:
+
+```powershell
+py -m pip install rich
+py generate_pack.py --ui fancy
+```
+
+## Defaults and limits
+
+| Setting | Default |
+| --- | ---: |
+| Total items | 100,000 |
+| Items per class | 10,000 |
+| Maximum total | 200,000 |
+| Maximum per class | 20,000 |
+| World-loot attachment chance | 2% |
+| Death Knight required level | 55-80 |
+| Expansion scope | All (levels 1-80) |
+| Magic effects | All |
+| Sockets, socket bonuses, sets, Legendaries, disenchant data | Enabled |
+
+Use `--number` and `--class` to control pack size. Use `--seed` when you need the same pack again.
+Expansion choices use Classic (1-60), TBC (58-70), Wrath (68-80), or All (1-80) and limit matching dungeon/raid loot areas.
+
+## Common options
+
+```text
+--content-manifest PATH       Targeted recipes, dungeon/raid loot, and quest rewards
+--quest-template-source PATH  Source used for mapped quest rewards
+--loot-chance PERCENT         World-loot attachment chance
+--disable FEATURE ...         Disable sets, effects, procs, on-use, sockets, or disenchant
+--set-rate / --set-min-level / --set-size
+--no-sockets                  Skip socket colors, including Legendary sockets
+--strict-expansion-scoping    Fail on appearance provenance outside the selected expansion
+--ui auto|fancy|plain         Terminal presentation
+--quiet                       Errors and final completion line only
+--azerothcore-source-root PATH  AzerothCore checkout used to scan scripted reward caches
+--verbose-audit               Keep every rejected static gameobject spawn row instead of the aggregated audit
+```
+
+Run `py generate_pack.py --help` for the complete option list. Use [Docs/content_manifest.example.json](Docs/content_manifest.example.json) for targeted-content syntax.
+
+`--azerothcore-source-root PATH` runs the AzerothCore script audit and reports the files scanned, candidate
+reward calls, candidate creature summons, validated mappings, and rejected mappings in
+`validation_report.json` (`encounter_source_audit.script_reward_scan`). `script_reward_mapping` is
+`EXERCISED` only when at least one reward relationship validated from source.
+
+## Generated output
+
+Each run creates `generated-<seed>/`, including:
+
+- `sql/` and `sql/IMPORT_ORDER.txt`
+- `client/Item.dbc` and optional `client/ItemSet.dbc`
+- `server/dbc/ItemSet.dbc`
+- `additem_commands/`
+- `validation_report.json`, `manifest.csv`, and placement reports
+- `00_SCHEMA_CHECK.sql`
+- `00_PREIMPORT_COLLISION_CHECK.sql`
+- `99_REMOVE_GENERATED_ITEMS.sql`
+- a self-contained generated `README.md`
+
+## Import safely
+
+1. Back up `acore_world`.
+2. Run `00_SCHEMA_CHECK.sql`.
+3. Run `00_PREIMPORT_COLLISION_CHECK.sql`; stop if any collision count is non-zero.
+4. Import the files listed in `sql/IMPORT_ORDER.txt`.
+5. Copy the generated server `ItemSet.dbc` when sets are enabled.
+6. Package the generated client DBCs under `DBFilesClient/`.
+7. Restart worldserver; clear `Cache/WDB/<locale>/itemcache.wdb` if names or icons are stale.
+
+For removal, run `99_REMOVE_GENERATED_ITEMS.sql` and restore the previous client DBC/patch separately.
+
+## LICENSE 
+
+MIT - Go crazy.
