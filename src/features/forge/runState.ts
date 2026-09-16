@@ -39,6 +39,12 @@ export type ClassProgress = {
   total: number;
 };
 
+export type SourceCacheStatus = {
+  status: 'hit' | 'miss' | 'partial';
+  elapsedMs: number;
+  rebuilt: boolean;
+};
+
 export type RunState = {
   lifecycle: RunLifecycle;
   phaseName: string;
@@ -51,6 +57,7 @@ export type RunState = {
   error: ErrorEvent | null;
   configuredSeed: string | null;
   outputDir: string | null;
+  sourceCache: SourceCacheStatus | null;
 };
 
 export type LocalRunAction =
@@ -74,6 +81,7 @@ export function initialRunState(): RunState {
     error: null,
     configuredSeed: null,
     outputDir: null,
+    sourceCache: null,
   };
 }
 
@@ -105,6 +113,13 @@ export function reduceRunState(state: RunState, action: RunAction): RunState {
         lifecycle: 'configuring',
         configuredSeed: action.seed,
         outputDir: typeof action.output_dir === 'string' ? action.output_dir : state.outputDir,
+        sourceCache: action.source_cache_status && action.source_cache_elapsed_ms != null
+          ? {
+              status: action.source_cache_status,
+              elapsedMs: action.source_cache_elapsed_ms,
+              rebuilt: action.source_catalog_rebuilt === true,
+            }
+          : state.sourceCache,
         classProgress: Object.fromEntries(
           Object.entries(action.class_counts ?? {}).map(([name, total]) => [
             name,

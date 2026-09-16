@@ -35,7 +35,7 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
     <div className="live-forge-grid" data-testid="live-forge" data-phase={state.lifecycle}>
       <section className="panel live-main-panel">
         <div className="panel-header live-title-row">
-          <div><p className="micro-kicker">FORGE ACTIVE</p><h2 className="panel-heading">{state.phaseName || 'Preparing item forge'}</h2><p className="live-detail">{state.phaseDetail || state.progress.current || 'Resolving generation inputs'}</p></div>
+          <div><p className="micro-kicker">FORGE ACTIVE</p><h2 className="panel-heading">{state.phaseName || 'Preparing item forge'}</h2><p className="live-detail">{state.phaseDetail || state.progress.current || 'Resolving generation inputs'}</p>{state.sourceCache ? <p className="source-cache-status">SOURCE CACHE • {state.sourceCache.rebuilt ? 'REBUILT' : state.sourceCache.status.toUpperCase()} • {Math.round(state.sourceCache.elapsedMs).toLocaleString()} ms</p> : null}</div>
           <div className="live-pulse"><span className="status-dot" /> FORGING</div>
         </div>
         <div className="panel-body">

@@ -1,5 +1,7 @@
 from pathlib import Path
 import importlib.util
+import json
+import re
 
 ENGINE = Path(__file__).parents[1] / "generate_pack.py"
 
@@ -76,6 +78,21 @@ def test_source_cache_files_walks_source_tree_once(tmp_path, monkeypatch):
     assert calls == [tmp_path / "src"]
     assert files == tuple(sorted((script, header), key=lambda path: str(path)))
     assert len(files) == len(set(files))
+
+
+def test_release_version_contract():
+    root = Path(__file__).parents[2]
+    package = json.loads((root / "package.json").read_text())
+    tauri = json.loads((root / "src-tauri" / "tauri.conf.json").read_text())
+    cargo = (root / "src-tauri" / "Cargo.toml").read_text()
+    engine = load_engine()
+
+    assert package["version"] == "0.1.1"
+    assert tauri["version"] == "0.1.1"
+    assert re.search(r'^version = "([^"]+)"', cargo, re.MULTILINE).group(1) == "0.1.1"
+    assert engine.GENERATOR_VERSION == "0.1.1"
+    assert engine.EVENT_PROTOCOL_VERSION == 1
+    assert engine.CACHE_SCHEMA_VERSION == 2
 
 
 def test_configure_runtime_classifies_source_cache_states(tmp_path, monkeypatch):

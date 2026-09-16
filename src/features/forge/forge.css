@@ -57,6 +57,7 @@
 .live-forge-grid[data-phase='finalizing_items'] .live-main-panel { border-color:color-mix(in srgb,var(--forge-success) 48%,var(--forge-border)); }
 .live-title-row { align-items:flex-start; }
 .live-detail { margin:7px 0 0; color:var(--forge-text-dim); font-size:11px; }
+.source-cache-status { margin:5px 0 0; color:#6f9db6; font-family:var(--forge-font-mono); font-size:9px; letter-spacing:.08em; }
 .live-pulse { display:flex; align-items:center; gap:7px; color:var(--forge-cyan); font-family:var(--forge-font-mono); font-size:9px; letter-spacing:.1em; }
 .overall-progress-heading,.progress-meta { display:flex; justify-content:space-between; align-items:center; gap:12px; color:#879fb1; font-family:var(--forge-font-mono); font-size:10px; }
 .overall-progress-heading strong { color:var(--forge-cyan); font-size:16px; }

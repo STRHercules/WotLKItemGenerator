@@ -18,7 +18,7 @@ import { ForgeLive } from './ForgeLive';
 import { defaultForgeConfig, type ForgeConfig, type ReadinessState } from './forgeConfig';
 import { initialRunState, reduceRunState, runViewForLifecycle } from './runState';
 
-const ENGINE_VERSION = '0.1.0';
+const ENGINE_VERSION = '0.1.1';
 
 type ForgePageProps = {
   readiness: ReadinessState;
