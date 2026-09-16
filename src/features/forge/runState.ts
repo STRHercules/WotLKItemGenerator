@@ -112,10 +112,20 @@ export function reduceRunState(state: RunState, action: RunAction): RunState {
           ]),
         ),
       };
-    case 'phase':
+    case 'phase': {
+      const lifecycle = lifecycleForPhase(action.name);
+      const classProgress =
+        lifecycle === 'generating_skeletons' || lifecycle === 'finalizing_items'
+          ? Object.fromEntries(
+              Object.entries(state.classProgress).map(([name, progress]) => [
+                name,
+                { completed: 0, total: progress.total },
+              ]),
+            )
+          : state.classProgress;
       return {
         ...state,
-        lifecycle: lifecycleForPhase(action.name),
+        lifecycle,
         phaseName: action.name,
         phaseDetail: action.detail ?? '',
         progress: {
@@ -123,7 +133,9 @@ export function reduceRunState(state: RunState, action: RunAction): RunState {
           total: action.total ?? 0,
           current: '',
         },
+        classProgress,
       };
+    }
     case 'progress': {
       const classProgress = { ...state.classProgress };
       if (action.class_name && action.class_total != null) {
