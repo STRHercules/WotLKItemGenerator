@@ -26,6 +26,31 @@ if (state.progress.completed !== 12 || state.classProgress.Mage?.completed !== 7
   throw new Error('progress event did not update overall and class progress');
 }
 
+state = reduceRunState(
+  {
+    ...initialRunState(),
+    classProgress: {
+      Mage: { completed: 10, total: 10 },
+      Druid: { completed: 10, total: 10 },
+    },
+  },
+  {
+    protocol_version: 1,
+    type: 'phase',
+    name: 'Finalizing generated items',
+    total: 100,
+  },
+);
+if (JSON.stringify(state.progress) !== JSON.stringify({ completed: 0, total: 100, current: '' })) {
+  throw new Error('phase event did not reset overall progress');
+}
+if (JSON.stringify(state.classProgress) !== JSON.stringify({
+  Mage: { completed: 0, total: 10 },
+  Druid: { completed: 0, total: 10 },
+})) {
+  throw new Error('phase event did not reset completed class progress');
+}
+
 state = reduceRunState(state, {
   protocol_version: 1,
   type: 'error',

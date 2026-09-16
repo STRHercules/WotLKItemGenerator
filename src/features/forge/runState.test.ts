@@ -35,6 +35,27 @@ describe('reduceRunState', () => {
     expect(next.classProgress.Druid.completed).toBe(0);
   });
 
+  it('resets completed progress when a new phase starts', () => {
+    const initial = {
+      ...initialRunState(),
+      classProgress: {
+        Mage: { completed: 10, total: 10 },
+        Druid: { completed: 10, total: 10 },
+      },
+    };
+    const next = reduceRunState(initial, {
+      protocol_version: 1,
+      type: 'phase',
+      name: 'Finalizing generated items',
+      total: 100,
+    });
+    expect(next.progress).toEqual({ completed: 0, total: 100, current: '' });
+    expect(next.classProgress).toEqual({
+      Mage: { completed: 0, total: 10 },
+      Druid: { completed: 0, total: 10 },
+    });
+  });
+
   it('caps discoveries at the newest fifty', () => {
     let state = initialRunState();
     for (let index = 0; index < 55; index += 1) {
