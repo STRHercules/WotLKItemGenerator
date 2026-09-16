@@ -42,10 +42,11 @@ describe('ForgeLive', () => {
     expect(screen.getAllByTestId('forge-spark')).toHaveLength(6);
     expect(scene.querySelector('.forge-hammer')).not.toBeNull();
     expect(scene.querySelector('.forge-anvil')).not.toBeNull();
+    expect(scene.querySelector('.forge-anvil-face')).not.toBeNull();
     expect(scene.querySelector('.forge-impact')).not.toBeNull();
     expect(scene.querySelectorAll('.forge-ember')).toHaveLength(4);
-    expect(scene.querySelector('.forge-hot-metal')).toHaveStyle({ width: '72.134%' });
-    expect(scene.querySelector('.forge-scene-meter-track span')).toHaveStyle({ width: '72.134%' });
+    expect(scene.querySelector('.forge-hot-metal')).toBeNull();
+    expect(scene.querySelector('.forge-scene-meter')).toBeNull();
   });
 
   it('stagger-displays discovery cards', () => {

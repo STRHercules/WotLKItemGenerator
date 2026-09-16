@@ -64,7 +64,7 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
             <div className="forge-machine">
               <div className="forge-hammer"><span className="forge-hammer-handle" /><span className="forge-hammer-head" /></div>
               <div className="forge-impact">✦</div>
-              <div className="forge-anvil"><span className="forge-anvil-face" /><span className="forge-anvil-body" /><span className="forge-hot-metal" style={{ width: `${Math.max(8, progressPercent)}%` }} /></div>
+              <div className="forge-anvil"><span className="forge-anvil-face" /><span className="forge-anvil-body" /></div>
               <span className="forge-spark forge-spark-1" data-testid="forge-spark">✦</span>
               <span className="forge-spark forge-spark-2" data-testid="forge-spark">+</span>
               <span className="forge-spark forge-spark-3" data-testid="forge-spark">·</span>
@@ -76,7 +76,6 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
               <span className="forge-ember forge-ember-3">·</span>
               <span className="forge-ember forge-ember-4">·</span>
             </div>
-            <div className="forge-scene-meter"><span>HEAT</span><div className="forge-scene-meter-track"><span style={{ width: `${progressPercent}%` }} /></div><strong>{Math.round(progressPercent)}%</strong></div>
           </div>
           <div className="overall-progress-heading"><span>{state.progress.current || 'Current work'}</span><strong>{Math.round(progressPercent)}%</strong></div>
           <div className="progress-track large active-progress"><span style={{ width: `${progressPercent}%` }} /><span className="progress-sheen" aria-hidden="true" /></div>
