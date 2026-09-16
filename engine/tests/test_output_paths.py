@@ -76,3 +76,33 @@ def test_source_cache_files_walks_source_tree_once(tmp_path, monkeypatch):
     assert calls == [tmp_path / "src"]
     assert files == tuple(sorted((script, header), key=lambda path: str(path)))
     assert len(files) == len(set(files))
+
+
+def test_configure_runtime_classifies_source_cache_states(tmp_path, monkeypatch):
+    engine = load_engine()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    for name in (
+        "creature_loot_template.sql", "reference_loot_template.sql", "item_template.sql",
+        "Item.dbc", "ItemSet.dbc", "Spell.dbc", "SpellItemEnchantment.dbc",
+        "disenchant_loot_template.sql", "spell_proc.sql", "spell_script_names.sql",
+    ):
+        (data_dir / name).touch()
+    args = engine.parse_args([
+        "--class", "Mage", "--number", "1", "--seed", "1", "--disable", "all-new",
+        "--loot-destinations", "world", "--data-dir", str(data_dir),
+        "--output-root", str(tmp_path), "--source-cache-file", str(tmp_path / "cache.gz"),
+    ])
+    current_cache = [None]
+    monkeypatch.setattr(engine, "_source_cache_key", lambda *parts: {})
+    monkeypatch.setattr(engine, "_load_source_cache", lambda path, key: current_cache[0])
+    monkeypatch.setattr(engine, "_save_source_cache", lambda *parts: True)
+    monkeypatch.setattr(engine, "harvest_reference_catalog", lambda path: ({}, {}, {"errors": []}))
+    complete_cache = {"reference_catalog": ({}, {}, {"errors": []})}
+
+    for cache, expected_status in ((None, "miss"), ({}, "partial"), (complete_cache, "hit")):
+        current_cache[0] = cache
+        runtime = engine.configure_runtime(args=args)
+        assert runtime["source_cache_status"] == expected_status
+        assert runtime["source_catalog_rebuilt"] is (expected_status != "hit")
+        assert isinstance(runtime["source_cache_elapsed_ms"], float)
