@@ -33,6 +33,16 @@ describe('ForgeLive', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it('stagger-displays discovery cards', () => {
+    render(<ForgeLive state={{ ...state, discoveries: [
+      ...state.discoveries,
+      { protocol_version: 1 as const, type: 'discovery' as const, kind: 'epic', title: 'Second Test', detail: 'Mage • Level 80' },
+    ] }} elapsedSeconds={1} cancelling={false} onCancel={() => undefined} />);
+    const cards = document.querySelectorAll('.discovery-card');
+    expect(cards[0]).toHaveStyle({ animationDelay: '0ms' });
+    expect(cards[1]).toHaveStyle({ animationDelay: '70ms' });
+  });
+
   it.each([
     [{ status: 'hit', elapsedMs: 842, rebuilt: false }, /SOURCE CACHE.*HIT.*842/],
     [{ status: 'miss', elapsedMs: 182431, rebuilt: false }, /SOURCE CACHE.*MISS.*182,431/],

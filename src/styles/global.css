@@ -4,6 +4,20 @@
 
 html, body, #root { min-width: 100%; min-height: 100%; margin: 0; }
 
+body::before {
+  position: fixed;
+  z-index: 0;
+  inset: -18%;
+  content: "";
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 22% 28%, color-mix(in srgb, var(--forge-cyan) 9%, transparent), transparent 30%),
+    radial-gradient(circle at 78% 72%, color-mix(in srgb, var(--forge-epic) 7%, transparent), transparent 32%);
+  animation: forge-glow-drift 42s ease-in-out infinite alternate;
+}
+
+#root { position: relative; z-index: 1; }
+
 body {
   min-width: 980px;
   min-height: 100vh;
@@ -23,6 +37,11 @@ body {
 @keyframes forge-grid-drift {
   from { background-position: 0 0, 0 0; }
   to { background-position: 32px 32px, 32px 32px; }
+}
+
+@keyframes forge-glow-drift {
+  from { transform:translate3d(-2%, -1%, 0) scale(1); opacity:.7; }
+  to { transform:translate3d(2%, 1%, 0) scale(1.04); opacity:1; }
 }
 
 button, input, select, textarea { font: inherit; }
@@ -105,7 +124,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
-  .live-forge-grid { animation: none !important; }
+  .live-forge-grid, body::before { animation: none !important; }
 }
 
 .page-header-row { display:flex; align-items:flex-end; justify-content:space-between; gap:20px; }
@@ -122,5 +141,5 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .alert--failure { border-color:color-mix(in srgb,var(--forge-danger) 42%,var(--forge-border)); background:color-mix(in srgb,var(--forge-danger) 7%,transparent); color:var(--forge-danger); }
 .app-level-alert { margin-bottom:var(--forge-space-4); }
 [data-reduce-motion='true'] *, [data-reduce-motion='true'] *::before, [data-reduce-motion='true'] *::after { scroll-behavior:auto !important; animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
-[data-reduce-motion='true'] .live-forge-grid { animation: none !important; }
+[data-reduce-motion='true'] .live-forge-grid, html[data-reduce-motion='true'] body::before { animation: none !important; }
 @media(max-width:760px){ .page-header-row{align-items:flex-start;flex-direction:column;} }

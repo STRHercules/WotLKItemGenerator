@@ -50,6 +50,16 @@ def test_source_cache_key_uses_engine_build_identity():
     assert key["generator"] == f"{engine.GENERATOR_VERSION}:{engine.ENGINE_BUILD_ID}"
 
 
+def test_source_cache_key_changes_when_source_metadata_changes(tmp_path):
+    engine = load_engine()
+    source = tmp_path / "source.cpp"
+    source.write_text("one")
+    first = engine._source_cache_key([source])
+    source.write_text("changed")
+    second = engine._source_cache_key([source])
+    assert first["files"] != second["files"]
+
+
 def test_source_cache_file_can_be_overridden(tmp_path):
     engine = load_engine()
     cache = tmp_path / "cache" / "source-cache.json.gz"
@@ -123,3 +133,53 @@ def test_configure_runtime_classifies_source_cache_states(tmp_path, monkeypatch)
         assert runtime["source_cache_status"] == expected_status
         assert runtime["source_catalog_rebuilt"] is (expected_status != "hit")
         assert isinstance(runtime["source_cache_elapsed_ms"], float)
+
+
+def test_configure_runtime_cache_hit_skips_catalog_rebuild(tmp_path, monkeypatch):
+    engine = load_engine()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    for name in (
+        "creature_loot_template.sql", "reference_loot_template.sql", "item_template.sql",
+        "Item.dbc", "ItemSet.dbc", "Spell.dbc", "SpellItemEnchantment.dbc",
+        "disenchant_loot_template.sql", "spell_proc.sql", "spell_script_names.sql",
+    ):
+        (data_dir / name).touch()
+    args = engine.parse_args([
+        "--class", "Mage", "--number", "1", "--seed", "1", "--disable", "all-new",
+        "--loot-destinations", "world", "--data-dir", str(data_dir),
+        "--output-root", str(tmp_path), "--source-cache-file", str(tmp_path / "cache.gz"),
+    ])
+    cached = {"reference_catalog": ({}, {}, {"errors": []})}
+    monkeypatch.setattr(engine, "_source_cache_key", lambda *parts: {})
+    monkeypatch.setattr(engine, "_load_source_cache", lambda path, key: cached)
+    monkeypatch.setattr(engine, "_save_source_cache", lambda *parts: (_ for _ in ()).throw(AssertionError("cache hit saved")))
+    monkeypatch.setattr(engine, "harvest_reference_catalog", lambda path: (_ for _ in ()).throw(AssertionError("catalog rebuilt")))
+    runtime = engine.configure_runtime(args=args)
+    assert runtime["source_cache_status"] == "hit"
+    assert runtime["source_catalog_rebuilt"] is False
+
+
+def test_configure_runtime_cache_elapsed_includes_catalog_rebuild_and_save(tmp_path, monkeypatch):
+    engine = load_engine()
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    for name in (
+        "creature_loot_template.sql", "reference_loot_template.sql", "item_template.sql",
+        "Item.dbc", "ItemSet.dbc", "Spell.dbc", "SpellItemEnchantment.dbc",
+        "disenchant_loot_template.sql", "spell_proc.sql", "spell_script_names.sql",
+    ):
+        (data_dir / name).touch()
+    args = engine.parse_args([
+        "--class", "Mage", "--number", "1", "--seed", "1", "--disable", "all-new",
+        "--loot-destinations", "world", "--data-dir", str(data_dir),
+        "--output-root", str(tmp_path), "--source-cache-file", str(tmp_path / "cache.gz"),
+    ])
+    clock = [0.0]
+    monkeypatch.setattr(engine.time, "perf_counter", lambda: clock[0])
+    monkeypatch.setattr(engine, "_source_cache_key", lambda *parts: {})
+    monkeypatch.setattr(engine, "_load_source_cache", lambda path, key: None)
+    monkeypatch.setattr(engine, "harvest_reference_catalog", lambda path: (clock.__setitem__(0, 5.0) or ({}, {}, {"errors": []})))
+    monkeypatch.setattr(engine, "_save_source_cache", lambda *parts: (clock.__setitem__(0, 8.0) or True))
+    runtime = engine.configure_runtime(args=args)
+    assert runtime["source_cache_elapsed_ms"] == 8000.0

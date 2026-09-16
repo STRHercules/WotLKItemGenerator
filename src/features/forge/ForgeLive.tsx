@@ -55,7 +55,7 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
       <aside className="panel discovery-panel">
         <div className="panel-header"><div><p className="micro-kicker">LIVE FEED</p><h2 className="panel-heading">Recent discoveries</h2></div><span className="feed-count">{state.discoveries.length}</span></div>
         <div className="discovery-list">
-          {discoveries.length ? discoveries.map((event, index) => <div className="discovery-card" key={`${event.kind}-${event.title}-${index}`}><span className="discovery-symbol">{event.kind === 'legendary' ? '★' : event.kind === 'set' ? '◈' : event.kind === 'proc' ? '⚡' : '✦'}</span><div><strong className={discoveryClass(event.kind)}>{event.title}</strong><small>{event.detail || event.kind}</small></div></div>) : <div className="empty-feed">Interesting items will appear here as they are forged.</div>}
+          {discoveries.length ? discoveries.map((event, index) => <div className="discovery-card" style={{ animationDelay: `${index * 70}ms` }} key={`${event.kind}-${event.title}-${index}`}><span className="discovery-symbol">{event.kind === 'legendary' ? '★' : event.kind === 'set' ? '◈' : event.kind === 'proc' ? '⚡' : '✦'}</span><div><strong className={discoveryClass(event.kind)}>{event.title}</strong><small>{event.detail || event.kind}</small></div></div>) : <div className="empty-feed">Interesting items will appear here as they are forged.</div>}
         </div>
         <div className="cancel-zone"><button className="forge-button danger" type="button" disabled={cancelling} aria-label="Cancel generation" onClick={onCancel}>{cancelling ? 'Cancelling…' : 'Cancel generation'}</button></div>
       </aside>

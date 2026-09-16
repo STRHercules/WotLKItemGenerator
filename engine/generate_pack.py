@@ -2638,7 +2638,6 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
                         (content_manifest is None and wants_encounter and cached_encounter_manifest is None) or
                         (needs_feature_catalog and cached_feature_catalog is None))
     source_cache_status='miss' if source_cache is None else 'partial' if cache_write_needed else 'hit'
-    source_cache_elapsed_ms=round((time.perf_counter()-cache_started)*1000,2)
     source_catalog_rebuilt=cache_write_needed
     if source_cache is not None and ui:
         ui.startup_status('Using cached source mappings')
@@ -2833,6 +2832,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
             'encounter_source_catalog':encounter_source_catalog,
             'default_encounter_manifest':default_encounter_manifest,
         })
+    source_cache_elapsed_ms=round((time.perf_counter()-cache_started)*1000,2)
     REFERENCE_CATALOG_AUDIT=catalog_audit
     CONTENT_MANIFEST=content_manifest
     TARGETED_PLAN=targeted_plan
