@@ -72,14 +72,30 @@ pub struct GenerationRequest {
     pub gameobject_loot_source: Option<String>,
 }
 
-fn default_loot_chance() -> f64 { 2.0 }
-fn default_set_rate() -> f64 { 0.20 }
-fn default_set_min_level() -> u64 { 20 }
-fn default_set_size() -> u64 { 5 }
-fn default_multiplier() -> f64 { 1.0 }
-fn default_effect_window() -> u64 { 15 }
-fn default_full_percent() -> f64 { 100.0 }
-fn default_max_effects() -> u64 { 1 }
+fn default_loot_chance() -> f64 {
+    2.0
+}
+fn default_set_rate() -> f64 {
+    0.20
+}
+fn default_set_min_level() -> u64 {
+    20
+}
+fn default_set_size() -> u64 {
+    5
+}
+fn default_multiplier() -> f64 {
+    1.0
+}
+fn default_effect_window() -> u64 {
+    15
+}
+fn default_full_percent() -> f64 {
+    100.0
+}
+fn default_max_effects() -> u64 {
+    1
+}
 
 impl GenerationRequest {
     pub fn to_engine_args(&self) -> Vec<String> {
@@ -167,14 +183,30 @@ impl GenerationRequest {
         }
 
         push_optional(&mut args, "--content-manifest", &self.content_manifest);
-        push_optional(&mut args, "--quest-template-source", &self.quest_template_source);
+        push_optional(
+            &mut args,
+            "--quest-template-source",
+            &self.quest_template_source,
+        );
         push_optional(&mut args, "--world-loot-source", &self.world_loot_source);
-        push_optional(&mut args, "--reference-loot-source", &self.reference_loot_source);
-        push_optional(&mut args, "--item-template-source", &self.item_template_source);
+        push_optional(
+            &mut args,
+            "--reference-loot-source",
+            &self.reference_loot_source,
+        );
+        push_optional(
+            &mut args,
+            "--item-template-source",
+            &self.item_template_source,
+        );
         for source in &self.item_dbc_sources {
             args.extend(["--item-dbc-source".into(), source.clone()]);
         }
-        push_optional(&mut args, "--item-set-dbc-source", &self.item_set_dbc_source);
+        push_optional(
+            &mut args,
+            "--item-set-dbc-source",
+            &self.item_set_dbc_source,
+        );
         push_optional(&mut args, "--spell-dbc-source", &self.spell_dbc_source);
         push_optional(
             &mut args,
@@ -235,7 +267,9 @@ pub fn start_generation(
     run_id: Option<String>,
     request: GenerationRequest,
 ) -> Result<RunHandle, String> {
-    let run_id = run_id.filter(|value| !value.trim().is_empty()).unwrap_or_else(|| Uuid::new_v4().to_string());
+    let run_id = run_id
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
     let mut engine_args = request.to_engine_args();
     let cache_path = app
         .path()
@@ -243,7 +277,10 @@ pub fn start_generation(
         .map_err(|error| format!("failed to resolve app data directory: {error}"))?
         .join("cache")
         .join("source-cache.json.gz");
-    engine_args.extend(["--source-cache-file".into(), cache_path.to_string_lossy().to_string()]);
+    engine_args.extend([
+        "--source-cache-file".into(),
+        cache_path.to_string_lossy().to_string(),
+    ]);
     let command = app
         .shell()
         .sidecar(ENGINE_SIDECAR)
@@ -326,7 +363,9 @@ pub fn start_generation(
                     }
                 }
                 CommandEvent::Terminated(payload) => {
-                    let was_cancelled = registry_for_task.take_cancelled(&run_for_task).unwrap_or(false);
+                    let was_cancelled = registry_for_task
+                        .take_cancelled(&run_for_task)
+                        .unwrap_or(false);
                     let _ = registry_for_task.remove(&run_for_task);
                     if payload.code.unwrap_or(-1) != 0 && !saw_terminal_event && !was_cancelled {
                         let _ = app_for_task.emit(
@@ -427,8 +466,12 @@ mod tests {
     #[test]
     fn request_maps_gui_controls_to_engine_flags() {
         let args = request().to_engine_args();
-        assert!(args.windows(2).any(|pair| pair == ["--classes", "Mage,Druid"]));
-        assert!(args.windows(2).any(|pair| pair == ["--loot-destinations", "world"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--classes", "Mage,Druid"]));
+        assert!(args
+            .windows(2)
+            .any(|pair| pair == ["--loot-destinations", "world"]));
         assert!(args.iter().any(|value| value == "raid"));
         assert!(args.iter().any(|value| value == "--no-legendaries"));
         assert!(args.iter().any(|value| value == "sets"));

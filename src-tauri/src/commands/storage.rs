@@ -55,7 +55,9 @@ pub fn create_run_with_id(
     config: RunConfiguration,
 ) -> Result<RunRecord, String> {
     non_empty(&run_id, "run id")?;
-    database.create_run_with_id(&run_id, &config).map_err(storage_error)
+    database
+        .create_run_with_id(&run_id, &config)
+        .map_err(storage_error)
 }
 
 #[tauri::command]
@@ -68,7 +70,9 @@ pub fn update_run_runtime_metadata(
     non_empty(&run_id, "run id")?;
     non_empty(&seed, "seed")?;
     non_empty(&output_dir, "output directory")?;
-    database.update_run_runtime_metadata(&run_id, &seed, &output_dir).map_err(storage_error)
+    database
+        .update_run_runtime_metadata(&run_id, &seed, &output_dir)
+        .map_err(storage_error)
 }
 
 #[tauri::command]
@@ -78,7 +82,9 @@ pub fn update_run_status(
     update: RunStatusUpdate,
 ) -> Result<(), String> {
     non_empty(&run_id, "run id")?;
-    database.update_run_status(&run_id, update).map_err(storage_error)
+    database
+        .update_run_status(&run_id, update)
+        .map_err(storage_error)
 }
 
 #[tauri::command]
@@ -135,8 +141,12 @@ pub fn index_completed_run(
     non_empty(&run_id, "run id")?;
     non_empty(&output_dir, "output directory")?;
     let output_dir = PathBuf::from(output_dir);
-    let library = database.index_run_pack(&run_id, &output_dir).map_err(storage_error)?;
-    let reports = database.index_reports(&run_id, &output_dir).map_err(storage_error)?;
+    let library = database
+        .index_run_pack(&run_id, &output_dir)
+        .map_err(storage_error)?;
+    let reports = database
+        .index_reports(&run_id, &output_dir)
+        .map_err(storage_error)?;
     Ok(CompletedIndexResult { library, reports })
 }
 
@@ -217,9 +227,14 @@ pub fn open_run_output(
     let run = database.get_run_record(&run_id).map_err(storage_error)?;
     let path = PathBuf::from(&run.output_dir);
     if !path.is_dir() {
-        return Err(format!("run output directory does not exist: {}", run.output_dir));
+        return Err(format!(
+            "run output directory does not exist: {}",
+            run.output_dir
+        ));
     }
-    app.opener().open_path(path, None::<&str>).map_err(storage_error)
+    app.opener()
+        .open_path(path.to_string_lossy().to_string(), None::<&str>)
+        .map_err(storage_error)
 }
 
 #[tauri::command]
@@ -228,10 +243,7 @@ pub fn get_settings(database: State<'_, Database>) -> Result<AppSettings, String
 }
 
 #[tauri::command]
-pub fn save_settings(
-    database: State<'_, Database>,
-    settings: AppSettings,
-) -> Result<(), String> {
+pub fn save_settings(database: State<'_, Database>, settings: AppSettings) -> Result<(), String> {
     database.save_settings(&settings).map_err(storage_error)
 }
 
@@ -244,7 +256,8 @@ pub fn fingerprint_sources(
         .map(|source| {
             non_empty(&source.logical_name, "logical source name")?;
             non_empty(&source.path, "source path")?;
-            fingerprint_file(source.logical_name, &PathBuf::from(source.path)).map_err(storage_error)
+            fingerprint_file(source.logical_name, &PathBuf::from(source.path))
+                .map_err(storage_error)
         })
         .collect()
 }
@@ -256,7 +269,9 @@ pub fn save_run_sources(
     sources: Vec<SourceFingerprint>,
 ) -> Result<(), String> {
     non_empty(&run_id, "run id")?;
-    database.save_run_sources(&run_id, &sources).map_err(storage_error)
+    database
+        .save_run_sources(&run_id, &sources)
+        .map_err(storage_error)
 }
 
 #[tauri::command]
@@ -266,7 +281,9 @@ pub fn compare_source_drift(
     current: Vec<SourceFingerprint>,
 ) -> Result<SourceDriftReport, String> {
     non_empty(&run_id, "run id")?;
-    database.compare_run_sources(&run_id, &current).map_err(storage_error)
+    database
+        .compare_run_sources(&run_id, &current)
+        .map_err(storage_error)
 }
 
 #[cfg(test)]

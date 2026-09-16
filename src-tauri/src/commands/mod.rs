@@ -1,6 +1,6 @@
 pub mod engine;
-pub mod storage;
 pub mod sources;
+pub mod storage;
 
 #[cfg(test)]
 mod storage_contract_tests;

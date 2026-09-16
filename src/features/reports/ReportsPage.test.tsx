@@ -3,10 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { ReportsPage } from './ReportsPage';
 
-const reports = [
+const { reports } = vi.hoisted(() => ({ reports: [
   { id: 1, runId: 'run-1', reportType: 'validation', path: 'C:/pack/validation_report.json', importState: 'available', size: 100, modifiedAt: null },
   { id: 2, runId: 'run-1', reportType: 'world_loot', path: 'C:/pack/world_item_placements.csv', importState: 'available', size: 200, modifiedAt: null },
-];
+] }));
 
 vi.mock('../../lib/tauriStorage', () => ({
   listReports: vi.fn().mockResolvedValue(reports),

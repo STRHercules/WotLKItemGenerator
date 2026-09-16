@@ -35,6 +35,6 @@ describe('SettingsPage', () => {
   it('warns that clearing the library leaves generated packs untouched', () => {
     render(<SettingsPage settings={settings as any} onSettingsChange={vi.fn()} />);
     fireEvent.click(screen.getByRole('button', { name:/clear library index/i }));
-    expect(screen.getByText(/generated pack files remain untouched/i)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toHaveTextContent(/generated pack files remain untouched/i);
   });
 });

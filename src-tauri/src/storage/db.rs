@@ -1,4 +1,7 @@
-use std::{path::Path, sync::{Arc, Mutex}};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 use rusqlite::{Connection, OptionalExtension};
 
@@ -22,6 +25,7 @@ impl Database {
         Self::from_connection(connection)
     }
 
+    #[cfg(test)]
     pub fn open_in_memory() -> Result<Self> {
         let connection = Connection::open_in_memory()?;
         connection.execute_batch("PRAGMA foreign_keys=ON;")?;
@@ -37,7 +41,7 @@ impl Database {
     }
 
     fn run_migrations(&self) -> Result<()> {
-        let mut connection = self.connection.lock().map_err(map_poison)?;
+        let connection = self.connection.lock().map_err(map_poison)?;
         let has_meta: bool = connection
             .query_row(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_meta'",
@@ -48,7 +52,9 @@ impl Database {
             .unwrap_or(false);
         let current = if has_meta {
             connection
-                .query_row("SELECT MAX(version) FROM schema_meta", [], |row| row.get::<_, Option<i64>>(0))?
+                .query_row("SELECT MAX(version) FROM schema_meta", [], |row| {
+                    row.get::<_, Option<i64>>(0)
+                })?
                 .unwrap_or(0)
         } else {
             0
@@ -65,9 +71,11 @@ impl Database {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn schema_version(&self) -> Result<i64> {
         self.with_conn(|connection| {
-            Ok(connection.query_row("SELECT MAX(version) FROM schema_meta", [], |row| row.get(0))?)
+            Ok(connection
+                .query_row("SELECT MAX(version) FROM schema_meta", [], |row| row.get(0))?)
         })
     }
 
@@ -76,7 +84,10 @@ impl Database {
         f(&connection)
     }
 
-    pub(crate) fn with_conn_mut<T>(&self, f: impl FnOnce(&mut Connection) -> Result<T>) -> Result<T> {
+    pub(crate) fn with_conn_mut<T>(
+        &self,
+        f: impl FnOnce(&mut Connection) -> Result<T>,
+    ) -> Result<T> {
         let mut connection = self.connection.lock().map_err(map_poison)?;
         f(&mut connection)
     }
@@ -89,18 +100,31 @@ mod tests {
     #[test]
     fn migration_creates_schema() {
         let db = Database::open_in_memory().unwrap();
-        let tables = db.with_conn(|connection| {
-            let mut statement = connection.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
-            let names = statement
-                .query_map([], |row| row.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            Ok(names)
-        }).unwrap();
+        let tables = db
+            .with_conn(|connection| {
+                let mut statement =
+                    connection.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
+                let names = statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(names)
+            })
+            .unwrap();
         for expected in [
-            "runs", "run_configuration", "run_sources", "generated_items", "item_effects",
-            "item_sockets", "item_placements", "report_index", "settings",
+            "runs",
+            "run_configuration",
+            "run_sources",
+            "generated_items",
+            "item_effects",
+            "item_sockets",
+            "item_placements",
+            "report_index",
+            "settings",
         ] {
-            assert!(tables.iter().any(|name| name == expected), "missing {expected}");
+            assert!(
+                tables.iter().any(|name| name == expected),
+                "missing {expected}"
+            );
         }
         assert_eq!(db.schema_version().unwrap(), 1);
     }

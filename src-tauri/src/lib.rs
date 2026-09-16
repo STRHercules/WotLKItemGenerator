@@ -5,14 +5,15 @@ mod storage;
 use engine::process::ProcessRegistry;
 use storage::db::Database;
 use tauri::Manager;
+use tauri_plugin_shell::process::CommandChild;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(ProcessRegistry::default())
+        .manage(ProcessRegistry::<CommandChild>::default())
         .setup(|app| {
             let app_data = app.path().app_local_data_dir()?;
             std::fs::create_dir_all(&app_data)?;
@@ -49,7 +50,8 @@ pub fn run() {
             commands::sources::scan_sources,
             commands::sources::clear_source_cache,
             commands::sources::rebuild_source_cache,
-        ])
+        ]);
+    builder
         .run(tauri::generate_context!())
         .expect("error while running WotLK Item Forge");
 }

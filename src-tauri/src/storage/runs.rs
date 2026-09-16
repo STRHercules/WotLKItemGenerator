@@ -11,8 +11,17 @@ use super::{
 
 const TERMINAL_STATUSES: &[&str] = &["complete", "failed", "cancelled"];
 const VALID_STATUSES: &[&str] = &[
-    "idle", "checking_sources", "configuring", "generating_skeletons", "finalizing_items",
-    "validating", "writing_output", "indexing_library", "complete", "failed", "cancelled",
+    "idle",
+    "checking_sources",
+    "configuring",
+    "generating_skeletons",
+    "finalizing_items",
+    "validating",
+    "writing_output",
+    "indexing_library",
+    "complete",
+    "failed",
+    "cancelled",
 ];
 
 impl Database {
@@ -23,7 +32,9 @@ impl Database {
 
     pub fn create_run_with_id(&self, id: &str, config: &RunConfiguration) -> Result<RunRecord> {
         if id.trim().is_empty() {
-            return Err(StorageError::InvalidInput("run id must not be empty".into()));
+            return Err(StorageError::InvalidInput(
+                "run id must not be empty".into(),
+            ));
         }
         let started_at = Utc::now().to_rfc3339();
         let classes_json = serde_json::to_string(&config.classes)?;
@@ -31,7 +42,7 @@ impl Database {
         self.with_conn(|connection| {
             connection.execute(
                 "INSERT INTO runs(id, seed, status, started_at, output_dir, engine_version, protocol_version, expansion, item_count, classes_json) VALUES (?1,?2,'configuring',?3,?4,?5,?6,?7,?8,?9)",
-                params![id, config.seed, started_at, config.output_dir, config.engine_version, config.protocol_version, config.expansion, config.item_count, classes_json],
+                params![id, config.seed, started_at, config.output_dir, config.engine_version, config.protocol_version, config.expansion, config.item_count as i64, classes_json],
             )?;
             connection.execute(
                 "INSERT INTO run_configuration(run_id, config_json) VALUES (?1,?2)",
@@ -42,9 +53,16 @@ impl Database {
         self.get_run_record(id)
     }
 
-    pub fn update_run_runtime_metadata(&self, id: &str, seed: &str, output_dir: &str) -> Result<()> {
+    pub fn update_run_runtime_metadata(
+        &self,
+        id: &str,
+        seed: &str,
+        output_dir: &str,
+    ) -> Result<()> {
         if seed.trim().is_empty() || output_dir.trim().is_empty() {
-            return Err(StorageError::InvalidInput("runtime seed and output directory are required".into()));
+            return Err(StorageError::InvalidInput(
+                "runtime seed and output directory are required".into(),
+            ));
         }
         self.with_conn(|connection| {
             let changed = connection.execute(
@@ -60,7 +78,10 @@ impl Database {
 
     pub fn update_run_status(&self, id: &str, update: RunStatusUpdate) -> Result<()> {
         if !VALID_STATUSES.contains(&update.status.as_str()) {
-            return Err(StorageError::InvalidInput(format!("unknown run status {}", update.status)));
+            return Err(StorageError::InvalidInput(format!(
+                "unknown run status {}",
+                update.status
+            )));
         }
         self.with_conn(|connection| {
             let current: String = connection
@@ -103,7 +124,11 @@ impl Database {
             Ok(serde_json::from_str(&raw)?)
         })?;
         let sources = self.list_run_sources(id)?;
-        Ok(RunDetail { run, configuration, sources })
+        Ok(RunDetail {
+            run,
+            configuration,
+            sources,
+        })
     }
 
     pub fn list_runs(&self, filter: RunFilter) -> Result<Vec<RunRecord>> {
@@ -120,7 +145,11 @@ impl Database {
         if let Some(search) = filter.search.filter(|value| !value.trim().is_empty()) {
             clauses.push("(seed LIKE ? COLLATE NOCASE OR classes_json LIKE ? COLLATE NOCASE OR output_dir LIKE ? COLLATE NOCASE)".to_string());
             let pattern = format!("%{}%", search.trim());
-            values.extend([pattern.clone().into(), pattern.clone().into(), pattern.into()]);
+            values.extend([
+                pattern.clone().into(),
+                pattern.clone().into(),
+                pattern.into(),
+            ]);
         }
         let mut sql = "SELECT id,seed,status,started_at,finished_at,elapsed_ms,output_dir,engine_version,protocol_version,validation_error_count,summary_json,index_status,index_error,expansion,item_count,classes_json FROM runs".to_string();
         if !clauses.is_empty() {
@@ -157,7 +186,7 @@ fn row_to_run(row: &Row<'_>) -> rusqlite::Result<RunRecord> {
         index_status: row.get(11)?,
         index_error: row.get(12)?,
         expansion: row.get(13)?,
-        item_count: row.get(14)?,
+        item_count: row.get::<_, i64>(14)? as u64,
         classes: serde_json::from_str(&classes_json).unwrap_or_default(),
     })
 }
@@ -183,8 +212,14 @@ mod tests {
     #[test]
     fn runtime_metadata_replaces_provisional_seed_and_output() {
         let db = Database::open_in_memory().unwrap();
-        db.create_run_with_id("runtime-meta", &config("auto", 10)).unwrap();
-        db.update_run_runtime_metadata("runtime-meta", "9876543210", "C:/Packs/generated-9876543210").unwrap();
+        db.create_run_with_id("runtime-meta", &config("auto", 10))
+            .unwrap();
+        db.update_run_runtime_metadata(
+            "runtime-meta",
+            "9876543210",
+            "C:/Packs/generated-9876543210",
+        )
+        .unwrap();
         let record = db.get_run_record("runtime-meta").unwrap();
         assert_eq!(record.seed, "9876543210");
         assert_eq!(record.output_dir, "C:/Packs/generated-9876543210");
@@ -193,9 +228,14 @@ mod tests {
     #[test]
     fn explicit_run_id_is_preserved_for_engine_bridge() {
         let db = Database::open_in_memory().unwrap();
-        let record = db.create_run_with_id("run-from-engine-bridge", &config("pending", 10)).unwrap();
+        let record = db
+            .create_run_with_id("run-from-engine-bridge", &config("pending", 10))
+            .unwrap();
         assert_eq!(record.id, "run-from-engine-bridge");
-        assert_eq!(db.get_run_record("run-from-engine-bridge").unwrap().seed, "pending");
+        assert_eq!(
+            db.get_run_record("run-from-engine-bridge").unwrap().seed,
+            "pending"
+        );
     }
 
     #[test]
@@ -213,14 +253,31 @@ mod tests {
     fn terminal_status_cannot_rewind() {
         let db = Database::open_in_memory().unwrap();
         let run = db.create_run(&config("123", 10)).unwrap();
-        db.update_run_status(&run.id, RunStatusUpdate {
-            status: "complete".into(), finished_at: Some(Utc::now().to_rfc3339()), elapsed_ms: Some(10),
-            validation_error_count: Some(0), summary: None, index_status: None, index_error: None,
-        }).unwrap();
-        let result = db.update_run_status(&run.id, RunStatusUpdate {
-            status: "validating".into(), finished_at: None, elapsed_ms: None,
-            validation_error_count: None, summary: None, index_status: None, index_error: None,
-        });
+        db.update_run_status(
+            &run.id,
+            RunStatusUpdate {
+                status: "complete".into(),
+                finished_at: Some(Utc::now().to_rfc3339()),
+                elapsed_ms: Some(10),
+                validation_error_count: Some(0),
+                summary: None,
+                index_status: None,
+                index_error: None,
+            },
+        )
+        .unwrap();
+        let result = db.update_run_status(
+            &run.id,
+            RunStatusUpdate {
+                status: "validating".into(),
+                finished_at: None,
+                elapsed_ms: None,
+                validation_error_count: None,
+                summary: None,
+                index_status: None,
+                index_error: None,
+            },
+        );
         assert!(result.is_err());
     }
 }

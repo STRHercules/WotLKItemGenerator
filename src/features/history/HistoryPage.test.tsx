@@ -2,11 +2,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { HistoryPage } from './HistoryPage';
 
-const runs = [
+const { runs } = vi.hoisted(() => ({ runs: [
   { id:'run-1', seed:'123', status:'complete', startedAt:'2026-09-15T20:00:00Z', finishedAt:'2026-09-15T20:01:00Z', elapsedMs:60000, outputDir:'C:/packs/123', engineVersion:'0.1.0', protocolVersion:1, validationErrorCount:0, summary:{ item_count:1000 }, indexStatus:'indexed', indexError:null, expansion:'Wrath', itemCount:1000, classes:['Mage'] },
   { id:'run-2', seed:'456', status:'failed', startedAt:'2026-09-14T20:00:00Z', finishedAt:'2026-09-14T20:00:05Z', elapsedMs:5000, outputDir:'C:/packs/456', engineVersion:'0.1.0', protocolVersion:1, validationErrorCount:1, summary:{}, indexStatus:'pending', indexError:null, expansion:'All', itemCount:500, classes:['Priest'] },
   { id:'run-3', seed:'789', status:'cancelled', startedAt:'2026-09-13T20:00:00Z', finishedAt:'2026-09-13T20:00:02Z', elapsedMs:2000, outputDir:'C:/packs/789', engineVersion:'0.1.0', protocolVersion:1, validationErrorCount:0, summary:{}, indexStatus:'pending', indexError:null, expansion:'TBC', itemCount:500, classes:['Rogue'] },
-];
+] }));
 
 vi.mock('../../lib/tauriStorage', () => ({
   listRuns: vi.fn().mockResolvedValue(runs),
@@ -21,7 +21,7 @@ describe('HistoryPage', () => {
     expect(await screen.findByText('Complete')).toBeInTheDocument();
     expect(screen.getByText('Failed')).toBeInTheDocument();
     expect(screen.getByText('Cancelled')).toBeInTheDocument();
-    expect(screen.getByText('123')).toBeInTheDocument();
+    expect(await screen.findByText('123')).toBeInTheDocument();
   });
 
   it('opens details, reports source drift, and preloads Forge without starting a run', async () => {

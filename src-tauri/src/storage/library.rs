@@ -4,12 +4,16 @@ use std::{
     path::Path,
 };
 
-use rusqlite::{params, params_from_iter, types::Value as SqlValue, OptionalExtension, Transaction};
+use rusqlite::{
+    params, params_from_iter, types::Value as SqlValue, OptionalExtension, Transaction,
+};
 use serde_json::Value;
 
 use super::{
     db::Database,
-    models::{IndexSummary, ItemDetail, ItemEffect, ItemPlacement, ItemSummary, LibraryQuery, PagedItems},
+    models::{
+        IndexSummary, ItemDetail, ItemEffect, ItemPlacement, ItemSummary, LibraryQuery, PagedItems,
+    },
     Result, StorageError,
 };
 
@@ -54,7 +58,8 @@ impl Database {
     pub fn delete_run_index(&self, run_id: &str) -> Result<u64> {
         self.with_conn(|connection| {
             ensure_run_exists_connection(connection, run_id)?;
-            let deleted = connection.execute("DELETE FROM generated_items WHERE run_id=?1", [run_id])?;
+            let deleted =
+                connection.execute("DELETE FROM generated_items WHERE run_id=?1", [run_id])?;
             connection.execute(
                 "UPDATE runs SET index_status='not_indexed', index_error=NULL WHERE id=?1",
                 [run_id],
@@ -125,18 +130,31 @@ impl Database {
             Ok(rows)
         })?;
         let sockets = self.with_conn(|connection| {
-            let mut statement = connection.prepare("SELECT color FROM item_sockets WHERE run_id=?1 AND entry=?2 ORDER BY slot")?;
-            Ok(statement.query_map(params![run_id, entry], |row| row.get::<_, i64>(0))?.collect::<std::result::Result<Vec<_>, _>>()?)
+            let mut statement = connection.prepare(
+                "SELECT color FROM item_sockets WHERE run_id=?1 AND entry=?2 ORDER BY slot",
+            )?;
+            let rows = statement
+                .query_map(params![run_id, entry], |row| row.get::<_, i64>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
         })?;
         let placements = self.with_conn(|connection| {
             let mut statement = connection.prepare("SELECT destination,profile_id,map_id,difficulty_id,instance,encounter,pool_id,chance,raw_json FROM item_placements WHERE run_id=?1 AND entry=?2 ORDER BY destination,instance,encounter")?;
-            Ok(statement.query_map(params![run_id, entry], |row| {
+            let rows = statement.query_map(params![run_id, entry], |row| {
                 let raw: String = row.get(8)?;
                 Ok(ItemPlacement { destination: row.get(0)?, profile_id: row.get(1)?, map_id: row.get(2)?, difficulty_id: row.get(3)?, instance: row.get(4)?, encounter: row.get(5)?, pool_id: row.get(6)?, chance: row.get(7)?, raw: serde_json::from_str(&raw).unwrap_or(Value::Null) })
-            })?.collect::<std::result::Result<Vec<_>, _>>()?)
+            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+            Ok(rows)
         })?;
         let run = self.get_run_record(run_id)?;
-        Ok(ItemDetail { item: summary, raw, effects, sockets, placements, run })
+        Ok(ItemDetail {
+            item: summary,
+            raw,
+            effects,
+            sockets,
+            placements,
+            run,
+        })
     }
 }
 
@@ -173,24 +191,52 @@ fn import_items(transaction: &Transaction<'_>, run_id: &str, path: &Path) -> Res
     let mut insert_effect = transaction.prepare_cached(
         "INSERT INTO item_effects(run_id,entry,slot,spell_id,trigger,charges,ppm_rate,cooldown,category,category_cooldown,raw_json) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)"
     )?;
-    let mut insert_socket = transaction.prepare_cached(
-        "INSERT INTO item_sockets(run_id,entry,slot,color) VALUES (?1,?2,?3,?4)"
-    )?;
+    let mut insert_socket = transaction
+        .prepare_cached("INSERT INTO item_sockets(run_id,entry,slot,color) VALUES (?1,?2,?3,?4)")?;
 
     for (index, line) in reader.lines().enumerate() {
         let line = line?;
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         let item: Value = serde_json::from_str(&line).map_err(|error| {
             StorageError::InvalidInput(format!("items.ndjson line {}: {error}", index + 1))
         })?;
-        let entry = int(&item, "entry").ok_or_else(|| StorageError::InvalidInput(format!("items.ndjson line {} has no entry", index + 1)))?;
+        let entry = int(&item, "entry").ok_or_else(|| {
+            StorageError::InvalidInput(format!("items.ndjson line {} has no entry", index + 1))
+        })?;
         let name = string(&item, "name").unwrap_or_default();
-        let sockets = item.get("sockets").and_then(Value::as_array).cloned().unwrap_or_default();
+        let sockets = item
+            .get("sockets")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
         insert_item.execute(params![
-            run_id, entry, name, string(&item,"class_name"), string(&item,"role"), int(&item,"Quality"), int(&item,"RequiredLevel"), int(&item,"ItemLevel"),
-            string(&item,"kind"), string(&item,"weapon_kind"), int(&item,"InventoryType"), int(&item,"subclass"), int(&item,"displayid"), int(&item,"reference_entry"),
-            int(&item,"armor"), float(&item,"dps"), int(&item,"itemset"), string(&item,"set_name"), string(&item,"special_effect_feature"), int(&item,"effect_source_entry"),
-            int(&item,"effect_source_spell"), int(&item,"socketBonus"), int(&item,"DisenchantID"), sockets.len() as i64, line,
+            run_id,
+            entry,
+            name,
+            string(&item, "class_name"),
+            string(&item, "role"),
+            int(&item, "Quality"),
+            int(&item, "RequiredLevel"),
+            int(&item, "ItemLevel"),
+            string(&item, "kind"),
+            string(&item, "weapon_kind"),
+            int(&item, "InventoryType"),
+            int(&item, "subclass"),
+            int(&item, "displayid"),
+            int(&item, "reference_entry"),
+            int(&item, "armor"),
+            float(&item, "dps"),
+            int(&item, "itemset"),
+            string(&item, "set_name"),
+            string(&item, "special_effect_feature"),
+            int(&item, "effect_source_entry"),
+            int(&item, "effect_source_spell"),
+            int(&item, "socketBonus"),
+            int(&item, "DisenchantID"),
+            sockets.len() as i64,
+            line,
         ])?;
         item_count += 1;
 
@@ -203,20 +249,41 @@ fn import_items(transaction: &Transaction<'_>, run_id: &str, path: &Path) -> Res
         if let Some(effects) = item.get("spell_slots").and_then(Value::as_array) {
             for (slot, effect) in effects.iter().enumerate() {
                 insert_effect.execute(params![
-                    run_id, entry, slot as i64, int(effect,"spell_id"), int(effect,"trigger"), int(effect,"charges"), float(effect,"ppm_rate"),
-                    int(effect,"cooldown"), int(effect,"category"), int(effect,"category_cooldown"), serde_json::to_string(effect)?,
+                    run_id,
+                    entry,
+                    slot as i64,
+                    int(effect, "spell_id"),
+                    int(effect, "trigger"),
+                    int(effect, "charges"),
+                    float(effect, "ppm_rate"),
+                    int(effect, "cooldown"),
+                    int(effect, "category"),
+                    int(effect, "category_cooldown"),
+                    serde_json::to_string(effect)?,
                 ])?;
                 effect_count += 1;
             }
         }
     }
-    Ok(IndexSummary { run_id: run_id.to_string(), item_count, effect_count, socket_count })
+    Ok(IndexSummary {
+        run_id: run_id.to_string(),
+        item_count,
+        effect_count,
+        socket_count,
+    })
 }
 
 fn build_item_where(query: &LibraryQuery) -> (String, Vec<SqlValue>) {
     let mut clauses = Vec::new();
     let mut values = Vec::new();
-    macro_rules! eq_filter { ($field:expr, $value:expr) => { if let Some(value) = $value { clauses.push(format!("{} = ?", $field)); values.push(value.into()); } }; }
+    macro_rules! eq_filter {
+        ($field:expr, $value:expr) => {
+            if let Some(value) = $value {
+                clauses.push(format!("{} = ?", $field));
+                values.push(value.into());
+            }
+        };
+    }
     eq_filter!("i.run_id", query.run_id.clone());
     eq_filter!("r.seed", query.seed.clone());
     eq_filter!("i.class_name", query.class_name.clone());
@@ -230,34 +297,89 @@ fn build_item_where(query: &LibraryQuery) -> (String, Vec<SqlValue>) {
         clauses.push("i.name LIKE ? ESCAPE '\\' COLLATE NOCASE".into());
         values.push(format!("%{}%", escape_like(text.trim())).into());
     }
-    range_filter(&mut clauses, &mut values, "i.required_level", query.required_level_min, query.required_level_max);
-    range_filter(&mut clauses, &mut values, "i.item_level", query.item_level_min, query.item_level_max);
+    range_filter(
+        &mut clauses,
+        &mut values,
+        "i.required_level",
+        query.required_level_min,
+        query.required_level_max,
+    );
+    range_filter(
+        &mut clauses,
+        &mut values,
+        "i.item_level",
+        query.item_level_min,
+        query.item_level_max,
+    );
     if let Some(minimum) = query.minimum_socket_count {
-        clauses.push("i.socket_count >= ?".into()); values.push(minimum.into());
+        clauses.push("i.socket_count >= ?".into());
+        values.push(minimum.into());
     }
     if let Some(destination) = query.placement_type.clone() {
         clauses.push("EXISTS (SELECT 1 FROM item_placements p WHERE p.run_id=i.run_id AND p.entry=i.entry AND p.destination=?)".into());
         values.push(destination.into());
     }
-    if clauses.is_empty() { (String::new(), values) } else { (format!("WHERE {}", clauses.join(" AND ")), values) }
+    if clauses.is_empty() {
+        (String::new(), values)
+    } else {
+        (format!("WHERE {}", clauses.join(" AND ")), values)
+    }
 }
 
-fn range_filter(clauses: &mut Vec<String>, values: &mut Vec<SqlValue>, field: &str, min: Option<i64>, max: Option<i64>) {
-    if let Some(value) = min { clauses.push(format!("{field} >= ?")); values.push(value.into()); }
-    if let Some(value) = max { clauses.push(format!("{field} <= ?")); values.push(value.into()); }
+fn range_filter(
+    clauses: &mut Vec<String>,
+    values: &mut Vec<SqlValue>,
+    field: &str,
+    min: Option<i64>,
+    max: Option<i64>,
+) {
+    if let Some(value) = min {
+        clauses.push(format!("{field} >= ?"));
+        values.push(value.into());
+    }
+    if let Some(value) = max {
+        clauses.push(format!("{field} <= ?"));
+        values.push(value.into());
+    }
 }
 
 fn escape_like(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 fn row_to_item_summary(row: &rusqlite::Row<'_>) -> rusqlite::Result<ItemSummary> {
-    Ok(ItemSummary { run_id: row.get(0)?, entry: row.get(1)?, name: row.get(2)?, class_name: row.get(3)?, role: row.get(4)?, quality: row.get(5)?, required_level: row.get(6)?, item_level: row.get(7)?, kind: row.get(8)?, itemset: row.get(9)?, set_name: row.get(10)?, special_effect_feature: row.get(11)?, socket_count: row.get(12)?, seed: row.get(13)? })
+    Ok(ItemSummary {
+        run_id: row.get(0)?,
+        entry: row.get(1)?,
+        name: row.get(2)?,
+        class_name: row.get(3)?,
+        role: row.get(4)?,
+        quality: row.get(5)?,
+        required_level: row.get(6)?,
+        item_level: row.get(7)?,
+        kind: row.get(8)?,
+        itemset: row.get(9)?,
+        set_name: row.get(10)?,
+        special_effect_feature: row.get(11)?,
+        socket_count: row.get(12)?,
+        seed: row.get(13)?,
+    })
 }
 
-fn int(value: &Value, key: &str) -> Option<i64> { value.get(key).and_then(Value::as_i64) }
-fn float(value: &Value, key: &str) -> Option<f64> { value.get(key).and_then(|value| value.as_f64().or_else(|| value.as_i64().map(|v| v as f64))) }
-fn string(value: &Value, key: &str) -> Option<String> { value.get(key).and_then(Value::as_str).map(str::to_owned) }
+fn int(value: &Value, key: &str) -> Option<i64> {
+    value.get(key).and_then(Value::as_i64)
+}
+fn float(value: &Value, key: &str) -> Option<f64> {
+    value
+        .get(key)
+        .and_then(|value| value.as_f64().or_else(|| value.as_i64().map(|v| v as f64)))
+}
+fn string(value: &Value, key: &str) -> Option<String> {
+    value.get(key).and_then(Value::as_str).map(str::to_owned)
+}
 
 #[cfg(test)]
 mod tests {
@@ -267,7 +389,18 @@ mod tests {
     use std::{fs, io::Write};
 
     fn run(db: &Database, dir: &Path) -> String {
-        db.create_run(&RunConfiguration { seed: "123".into(), output_dir: dir.display().to_string(), engine_version: "test".into(), protocol_version: 1, expansion: "Wrath".into(), item_count: 1, classes: vec!["Paladin".into()], config: json!({}) }).unwrap().id
+        db.create_run(&RunConfiguration {
+            seed: "123".into(),
+            output_dir: dir.display().to_string(),
+            engine_version: "test".into(),
+            protocol_version: 1,
+            expansion: "Wrath".into(),
+            item_count: 1,
+            classes: vec!["Paladin".into()],
+            config: json!({}),
+        })
+        .unwrap()
+        .id
     }
 
     #[test]
@@ -282,10 +415,17 @@ mod tests {
         assert_eq!(summary.item_count, 1);
         assert_eq!(summary.effect_count, 1);
         assert_eq!(summary.socket_count, 2);
-        assert_eq!(db.search_items(LibraryQuery { quality: Some(5), ..Default::default() }).unwrap().total, 1);
+        assert_eq!(
+            db.search_items(LibraryQuery {
+                quality: Some(5),
+                ..Default::default()
+            })
+            .unwrap()
+            .total,
+            1
+        );
         fs::remove_dir_all(dir).ok();
     }
-
 
     #[test]
     fn malformed_ndjson_rolls_back_entire_run_index() {
@@ -296,11 +436,23 @@ mod tests {
         fs::write(
             dir.join("items.ndjson"),
             "{\"entry\":1,\"name\":\"Good\"}\n{not valid json}\n",
-        ).unwrap();
+        )
+        .unwrap();
         let error = db.index_run_pack(&run_id, &dir).unwrap_err().to_string();
         assert!(error.contains("line 2"));
-        assert_eq!(db.search_items(LibraryQuery { run_id: Some(run_id.clone()), ..Default::default() }).unwrap().total, 0);
-        assert_eq!(db.get_run_record(&run_id).unwrap().index_status, "not_indexed");
+        assert_eq!(
+            db.search_items(LibraryQuery {
+                run_id: Some(run_id.clone()),
+                ..Default::default()
+            })
+            .unwrap()
+            .total,
+            0
+        );
+        assert_eq!(
+            db.get_run_record(&run_id).unwrap().index_status,
+            "not_indexed"
+        );
         fs::remove_dir_all(dir).ok();
     }
 
@@ -312,7 +464,19 @@ mod tests {
         fs::create_dir_all(&dir_a).unwrap();
         fs::create_dir_all(&dir_b).unwrap();
         let run_a = run(&db, &dir_a);
-        let run_b = db.create_run(&RunConfiguration { seed: "456".into(), output_dir: dir_b.display().to_string(), engine_version: "test".into(), protocol_version: 1, expansion: "Wrath".into(), item_count: 1, classes: vec!["Mage".into()], config: json!({}) }).unwrap().id;
+        let run_b = db
+            .create_run(&RunConfiguration {
+                seed: "456".into(),
+                output_dir: dir_b.display().to_string(),
+                engine_version: "test".into(),
+                protocol_version: 1,
+                expansion: "Wrath".into(),
+                item_count: 1,
+                classes: vec!["Mage".into()],
+                config: json!({}),
+            })
+            .unwrap()
+            .id;
         fs::write(dir_a.join("items.ndjson"), [
             json!({"entry":10,"name":"Crown of Dawn","class_name":"Paladin","role":"tank","Quality":5,"RequiredLevel":80,"ItemLevel":264,"kind":"head","itemset":42,"set_name":"Dawn Oath","sockets":[1,2],"spell_slots":[]}).to_string(),
             json!({"entry":11,"name":"Crown of Dusk","class_name":"Paladin","role":"tank","Quality":4,"RequiredLevel":80,"ItemLevel":245,"kind":"head","sockets":[],"spell_slots":[]}).to_string(),
@@ -321,18 +485,31 @@ mod tests {
         db.index_run_pack(&run_a, &dir_a).unwrap();
         db.index_run_pack(&run_b, &dir_b).unwrap();
 
-        let page = db.search_items(LibraryQuery {
-            text: Some("crown".into()), class_name: Some("Paladin".into()), quality: Some(5),
-            item_level_min: Some(250), run_id: Some(run_a.clone()), limit: Some(1), offset: Some(0),
-            ..Default::default()
-        }).unwrap();
+        let page = db
+            .search_items(LibraryQuery {
+                text: Some("crown".into()),
+                class_name: Some("Paladin".into()),
+                quality: Some(5),
+                item_level_min: Some(250),
+                run_id: Some(run_a.clone()),
+                limit: Some(1),
+                offset: Some(0),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].entry, 10);
         let detail = db.get_item(&run_a, 10).unwrap();
         assert_eq!(detail.raw["set_name"], "Dawn Oath");
         assert_eq!(detail.sockets, vec![1, 2]);
 
-        let seed_page = db.search_items(LibraryQuery { seed: Some("456".into()), entry: Some(12), ..Default::default() }).unwrap();
+        let seed_page = db
+            .search_items(LibraryQuery {
+                seed: Some("456".into()),
+                entry: Some(12),
+                ..Default::default()
+            })
+            .unwrap();
         assert_eq!(seed_page.total, 1);
         assert_eq!(seed_page.items[0].class_name.as_deref(), Some("Mage"));
         fs::remove_dir_all(dir_a).ok();
@@ -363,9 +540,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wotlk-library-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let run_id = run(&db, &dir);
-        fs::write(dir.join("items.ndjson"), "{\"entry\":1,\"name\":\"Test\"}\n").unwrap();
+        fs::write(
+            dir.join("items.ndjson"),
+            "{\"entry\":1,\"name\":\"Test\"}\n",
+        )
+        .unwrap();
         db.index_run_pack(&run_id, &dir).unwrap();
-        assert!(matches!(db.index_run_pack(&run_id, &dir), Err(StorageError::AlreadyIndexed(_))));
+        assert!(matches!(
+            db.index_run_pack(&run_id, &dir),
+            Err(StorageError::AlreadyIndexed(_))
+        ));
         fs::remove_dir_all(dir).ok();
     }
 }

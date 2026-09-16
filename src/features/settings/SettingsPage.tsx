@@ -55,7 +55,7 @@ export function SettingsPage({ settings, onSettingsChange }: Props) {
     {errors.length ? <div className="alert alert--failure">{errors.map((error) => <span key={error}>{error}</span>)}</div> : null}
     <div className="settings-grid">
       <SettingsGroup title="General" eyebrow="FORGE STARTUP">
-        <Field label="Default expansion"><select aria-label="Default expansion" className="field-select" value={draft.defaultExpansion} onChange={(event) => patch('defaultExpansion', event.target.value)}><option>Classic</option><option>TBC</option><option>Wrath</option><option>All</option></select></Field>
+        <Field label="Default expansion"><select aria-label="Default expansion" className="field-select" value={draft.defaultExpansion} onChange={(event) => patch('defaultExpansion', event.target.value as AppSettings['defaultExpansion'])}><option>Classic</option><option>TBC</option><option>Wrath</option><option>All</option></select></Field>
         <Field label="Default item count"><input className="field-input" type="number" min={1} max={200000} value={draft.defaultItemCount} onChange={(event) => patch('defaultItemCount', Number(event.target.value))} /></Field>
         <Toggle label="Remember last Forge configuration" checked={draft.rememberLastForgeConfiguration} onChange={(value) => patch('rememberLastForgeConfiguration', value)} />
       </SettingsGroup>

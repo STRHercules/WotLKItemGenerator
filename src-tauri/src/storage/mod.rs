@@ -22,6 +22,8 @@ pub enum StorageError {
     RunNotFound(String),
     #[error("item not found: run={run_id}, entry={entry}")]
     ItemNotFound { run_id: String, entry: i64 },
+    #[error("report not found: {0}")]
+    NotFound(String),
     #[error("run is already indexed: {0}")]
     AlreadyIndexed(String),
     #[error("invalid run state transition: {from} -> {to}")]

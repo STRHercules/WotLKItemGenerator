@@ -9,5 +9,6 @@ def test_intentional_sidecar_cancellation_is_not_reclassified_as_failure() -> No
     assert 'cancelled:' in process
     assert 'mark_cancelled' in process
     assert 'take_cancelled' in process
-    assert 'let was_cancelled = registry_for_task.take_cancelled(&run_for_task)' in command
+    assert 'let was_cancelled = registry_for_task' in command
+    assert 'take_cancelled(&run_for_task)' in command
     assert '&& !was_cancelled' in command

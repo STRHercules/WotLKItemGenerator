@@ -29,6 +29,21 @@ function Read-RegexValue([string]$Path, [string]$Pattern, [string]$Label) {
     return $match.Groups['value'].Value
 }
 
+function Get-Sha256([string]$Path) {
+    $fileHash = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+    if ($fileHash) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+    } finally {
+        $stream.Dispose()
+        $sha256.Dispose()
+    }
+}
+
 
 function Optional-FileEvidence([string]$RelativePath) {
     $fullPath = Join-Path $ProjectRoot $RelativePath
@@ -37,7 +52,7 @@ function Optional-FileEvidence([string]$RelativePath) {
     }
     return [ordered]@{
         path = $RelativePath
-        sha256 = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+        sha256 = Get-Sha256 $fullPath
         sizeBytes = (Get-Item -LiteralPath $fullPath).Length
     }
 }
@@ -60,7 +75,7 @@ $NpmVersion = (npm --version | Out-String).Trim()
 $RustVersion = (rustc --version | Out-String).Trim()
 $CargoVersion = (cargo --version | Out-String).Trim()
 
-$Hash = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$Hash = Get-Sha256 $InstallerPath
 $PackageLockEvidence = Optional-FileEvidence 'package-lock.json'
 $CargoLockEvidence = Optional-FileEvidence 'src-tauri\Cargo.lock'
 $Manifest = [ordered]@{

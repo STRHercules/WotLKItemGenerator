@@ -123,10 +123,9 @@ mod tests {
 
     #[test]
     fn rejects_incompatible_protocol() {
-        let error = parse_event_line(
-            r#"{"protocol_version":2,"type":"status","message":"working"}"#,
-        )
-        .expect_err("protocol v2 must be rejected");
+        let error =
+            parse_event_line(r#"{"protocol_version":2,"type":"status","message":"working"}"#)
+                .expect_err("protocol v2 must be rejected");
         assert!(error.contains("protocol"));
     }
 }

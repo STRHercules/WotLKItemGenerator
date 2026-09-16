@@ -56,14 +56,14 @@ New-Item -ItemType Directory -Force -Path $OutputRoot | Out-Null
 $CommonArgs = @(
     '-m', 'nuitka',
     '--assume-yes-for-downloads',
-    '--output-dir=' + $OutputRoot,
+    "--output-dir=$OutputRoot",
     '--output-filename=wotlk-item-forge-engine.exe',
     '--windows-console-mode=attach',
     '--company-name=Modern Mods',
     '--product-name=WotLK Item Forge Engine',
     '--file-description=WotLK Item Forge generator sidecar',
-    '--product-version=' + $WindowsVersion,
-    '--file-version=' + $WindowsVersion,
+    "--product-version=$WindowsVersion",
+    "--file-version=$WindowsVersion",
     '--nofollow-import-to=rich',
     $EngineSource
 )

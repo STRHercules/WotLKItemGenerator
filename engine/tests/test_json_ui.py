@@ -64,7 +64,9 @@ def test_configured_event_serializes_paths_and_sets():
     assert event["type"] == "configured"
     assert event["seed"] == "123"
     assert event["number"] == 42
-    assert event["output_dir"].endswith("/tmp/out")
+    output_dir = Path(event["output_dir"])
+    assert output_dir.parent.name == "tmp"
+    assert output_dir.name == "out"
     assert event["disabled_features"] == ["sets"]
 
 
