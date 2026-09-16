@@ -62,9 +62,10 @@
 .forge-scene-title { left:16px; color:#d7e8f0; }
 .forge-scene-phase { right:16px; color:var(--forge-cyan); }
 .forge-machine { position:absolute; z-index:2; inset:38px 0 30px; }
-.forge-hammer { position:absolute; top:-40px; left:calc(50% - 39px); width:156px; height:112px; transform-origin:92px 0; animation:forge-hammer-cycle 1.8s cubic-bezier(.35,.05,.2,1) infinite; }
-.forge-hammer-handle { position:absolute; bottom:16px; left:32px; width:9px; height:96px; transform:rotate(35deg); transform-origin:50% 100%; border:1px solid #8f6236; border-radius:5px; background:linear-gradient(90deg,#4a2c16,#c48a4c 45%,#70431f); }
-.forge-hammer-head { position:absolute; right:auto; bottom:0; left:0; width:78px; height:25px; transform:none; border:1px solid #d9e5ee; border-bottom:3px solid #f5f8fc; border-radius:3px 3px 1px 1px; background:linear-gradient(180deg,#f5f8fc,#727884); }
+.forge-hammer { position:absolute; top:-40px; left:calc(50% - 23px); width:100px; height:112px; transform-origin:78px 0; animation:forge-hammer-cycle 1.8s cubic-bezier(.35,.05,.2,1) infinite; }
+.forge-hammer-handle { position:absolute; bottom:10px; left:31px; width:8px; height:92px; transform:rotate(35deg); transform-origin:50% 100%; border:1px solid #8f6236; border-radius:5px; background:linear-gradient(90deg,#4a2c16,#c48a4c 45%,#70431f); }
+.forge-hammer-head { position:absolute; bottom:0; left:0; width:46px; height:21px; border:1px solid #d9e5ee; border-radius:3px 3px 1px 1px; background:linear-gradient(180deg,#f5f8fc,#727884); box-shadow:0 0 12px rgba(185,198,212,.2); }
+.forge-striking-face { position:absolute; bottom:0; left:13px; width:20px; height:3px; border:1px solid #f5f8fc; border-radius:1px; background:#f5f8fc; box-shadow:0 0 8px rgba(245,248,252,.32); }
 .forge-impact { position:absolute; bottom:42px; left:50%; z-index:3; color:#fff3c0; font-size:24px; opacity:0; text-shadow:0 0 18px #ffb040; transform:translateX(-50%) scale(.3); animation:forge-impact-flash 1.8s ease-out infinite; }
 .forge-anvil { position:absolute; bottom:2px; left:50%; width:168px; height:54px; transform:translateX(-50%); }
 .forge-anvil-face { position:absolute; top:0; left:11px; width:146px; height:15px; border:1px solid #d0dbe4; border-radius:3px 3px 6px 6px; background:linear-gradient(180deg,#f5f8fc,#7e8996); }
@@ -141,11 +142,11 @@
   to { background-position:24px 24px,24px 24px; }
 }
 @keyframes forge-hammer-cycle {
-  0%,28% { transform:translate(32px,-28px) rotate(10deg); }
-  44% { transform:translate(18px,-16px) rotate(7deg); }
+  0%,28% { transform:translate(28px,-30px) rotate(-18deg); }
+  44% { transform:translate(14px,-15px) rotate(-10deg); }
   55% { transform:translate(0,0) rotate(0deg); }
-  61% { transform:translate(0,2px) rotate(-2deg); }
-  72%,100% { transform:translate(32px,-28px) rotate(10deg); }
+  61% { transform:translate(0,2px) rotate(2deg); }
+  72%,100% { transform:translate(28px,-30px) rotate(-18deg); }
 }
 @keyframes forge-impact-flash {
   0%,48% { opacity:0; transform:translateX(-50%) scale(.3); }

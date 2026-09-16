@@ -43,6 +43,7 @@ describe('ForgeLive', () => {
     expect(scene.querySelector('.forge-hammer')).not.toBeNull();
     expect(scene.querySelector('.forge-anvil')).not.toBeNull();
     expect(scene.querySelector('.forge-anvil-face')).not.toBeNull();
+    expect(scene.querySelector('.forge-striking-face')).not.toBeNull();
     expect(scene.querySelector('.forge-impact')).not.toBeNull();
     expect(scene.querySelectorAll('.forge-ember')).toHaveLength(4);
     expect(scene.querySelector('.forge-hot-metal')).toBeNull();
