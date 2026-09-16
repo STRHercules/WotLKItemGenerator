@@ -1,5 +1,0 @@
-# Build-only dependencies for the Windows engine sidecar.
-# The generator itself remains standard-library-only; Rich is optional for CLI development.
-Nuitka>=2.7,<5
-ordered-set>=4.1.0,<5
-zstandard>=0.23.0,<1

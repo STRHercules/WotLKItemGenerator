@@ -1,1 +1,0 @@
-{"default":{"identifier":"default","description":"Least-privilege capability for the WotLK Item Forge main window","local":true,"windows":["main"],"permissions":["core:default","dialog:allow-open","dialog:allow-save","dialog:allow-message"]}}
