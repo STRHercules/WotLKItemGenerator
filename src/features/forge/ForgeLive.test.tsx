@@ -33,6 +33,21 @@ describe('ForgeLive', () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
+  it('renders the active hammer and anvil forge scene', () => {
+    render(<ForgeLive state={state} elapsedSeconds={1} cancelling={false} onCancel={() => undefined} />);
+    const scene = screen.getByTestId('forge-scene');
+    expect(scene).toHaveAttribute('data-phase', 'finalizing_items');
+    expect(scene).toHaveAttribute('data-heat', 'white-hot');
+    expect(screen.getByText('HAMMER & ANVIL')).toBeInTheDocument();
+    expect(screen.getAllByTestId('forge-spark')).toHaveLength(6);
+    expect(scene.querySelector('.forge-hammer')).not.toBeNull();
+    expect(scene.querySelector('.forge-anvil')).not.toBeNull();
+    expect(scene.querySelector('.forge-impact')).not.toBeNull();
+    expect(scene.querySelectorAll('.forge-ember')).toHaveLength(4);
+    expect(scene.querySelector('.forge-hot-metal')).toHaveStyle({ width: '72.134%' });
+    expect(scene.querySelector('.forge-scene-meter-track span')).toHaveStyle({ width: '72.134%' });
+  });
+
   it('stagger-displays discovery cards', () => {
     render(<ForgeLive state={{ ...state, discoveries: [
       ...state.discoveries,

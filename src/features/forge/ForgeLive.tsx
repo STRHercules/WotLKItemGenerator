@@ -23,6 +23,21 @@ function discoveryClass(kind: string): string {
   return 'rarity-effect';
 }
 
+function heatBand(progressPercent: number): 'cool' | 'warming' | 'hot' | 'white-hot' {
+  if (progressPercent >= 70) return 'white-hot';
+  if (progressPercent >= 45) return 'hot';
+  if (progressPercent >= 20) return 'warming';
+  return 'cool';
+}
+
+function forgeStageLabel(lifecycle: RunState['lifecycle']): string {
+  if (lifecycle === 'generating_skeletons') return 'SHAPING SKELETONS';
+  if (lifecycle === 'finalizing_items') return 'TEMPERING FULL ITEMS';
+  if (lifecycle === 'validating') return 'CHECKING THE FINISH';
+  if (lifecycle === 'writing_output') return 'PACKING THE FORGE';
+  return 'PREPARING THE BILLET';
+}
+
 export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
   state: RunState;
   elapsedSeconds: number;
@@ -31,6 +46,7 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
 }) {
   const progressPercent = pct(state.progress.completed, state.progress.total);
   const discoveries = [...state.discoveries].reverse().slice(0, 7);
+  const heat = heatBand(progressPercent);
   const sourceCacheLabel = state.sourceCache
     ? `${state.sourceCache.status.toUpperCase()}${state.sourceCache.rebuilt && state.sourceCache.status !== 'hit' ? ' • REBUILT' : ''}`
     : null;
@@ -42,6 +58,26 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
           <div className="live-pulse"><span className="status-dot" /> FORGING</div>
         </div>
         <div className="panel-body">
+          <div className="forge-scene" data-testid="forge-scene" data-phase={state.lifecycle} data-heat={heat} aria-hidden="true">
+            <div className="forge-scene-title">HAMMER &amp; ANVIL</div>
+            <div className="forge-scene-phase">{forgeStageLabel(state.lifecycle)}</div>
+            <div className="forge-machine">
+              <div className="forge-hammer"><span className="forge-hammer-handle" /><span className="forge-hammer-head" /></div>
+              <div className="forge-impact">✦</div>
+              <div className="forge-anvil"><span className="forge-anvil-face" /><span className="forge-anvil-body" /><span className="forge-hot-metal" style={{ width: `${Math.max(8, progressPercent)}%` }} /></div>
+              <span className="forge-spark forge-spark-1" data-testid="forge-spark">✦</span>
+              <span className="forge-spark forge-spark-2" data-testid="forge-spark">+</span>
+              <span className="forge-spark forge-spark-3" data-testid="forge-spark">·</span>
+              <span className="forge-spark forge-spark-4" data-testid="forge-spark">✦</span>
+              <span className="forge-spark forge-spark-5" data-testid="forge-spark">+</span>
+              <span className="forge-spark forge-spark-6" data-testid="forge-spark">·</span>
+              <span className="forge-ember forge-ember-1">·</span>
+              <span className="forge-ember forge-ember-2">·</span>
+              <span className="forge-ember forge-ember-3">·</span>
+              <span className="forge-ember forge-ember-4">·</span>
+            </div>
+            <div className="forge-scene-meter"><span>HEAT</span><div className="forge-scene-meter-track"><span style={{ width: `${progressPercent}%` }} /></div><strong>{Math.round(progressPercent)}%</strong></div>
+          </div>
           <div className="overall-progress-heading"><span>{state.progress.current || 'Current work'}</span><strong>{Math.round(progressPercent)}%</strong></div>
           <div className="progress-track large active-progress"><span style={{ width: `${progressPercent}%` }} /><span className="progress-sheen" aria-hidden="true" /></div>
           <div className="progress-meta"><span>{state.progress.completed.toLocaleString()} / {state.progress.total.toLocaleString()}</span><span>ELAPSED {formatElapsed(elapsedSeconds)}</span></div>
