@@ -81,7 +81,7 @@ export function SettingsPage({ settings, onSettingsChange }: Props) {
         <div className="storage-action"><div><strong>Rebuild Library Index</strong><p>Re-import items and reports from completed run output folders.</p></div><ConfirmAction buttonLabel="Rebuild Library Index" title="Rebuild local Library index?" confirmLabel="Rebuild" busy={maintenance==='rebuild'} onConfirm={rebuildLibrary}><p>The app will read existing completed pack outputs and rebuild searchable metadata. It will not modify pack contents.</p></ConfirmAction></div>
       </SettingsGroup>
       <SettingsGroup title="About" eyebrow="BUILD IDENTITY">
-        <dl className="about-list"><div><dt>WotLK Item Forge</dt><dd>0.1.0</dd></div><div><dt>Generator engine</dt><dd>0.1.0</dd></div><div><dt>Event protocol</dt><dd>v1</dd></div><div><dt>Database schema</dt><dd>v1</dd></div></dl>
+        <dl className="about-list"><div><dt>WotLK Item Forge</dt><dd>0.1.1</dd></div><div><dt>Generator engine</dt><dd>0.1.1</dd></div><div><dt>Event protocol</dt><dd>v1</dd></div><div><dt>Database schema</dt><dd>v1</dd></div></dl>
       </SettingsGroup>
     </div>
   </section>;

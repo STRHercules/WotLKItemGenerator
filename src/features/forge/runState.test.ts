@@ -13,6 +13,19 @@ describe('reduceRunState', () => {
     expect(state.lifecycle).toBe('finalizing_items');
   });
 
+  it('carries configured source cache metadata into live state', () => {
+    const state = reduceRunState(initialRunState(), {
+      protocol_version: 1,
+      type: 'configured',
+      seed: 'test-seed',
+      number: 1,
+      source_cache_status: 'partial',
+      source_cache_elapsed_ms: 182431.5,
+      source_catalog_rebuilt: true,
+    });
+    expect(state.sourceCache).toEqual({ status: 'partial', elapsedMs: 182431.5, rebuilt: true });
+  });
+
   it('updates only the reported class progress', () => {
     const initial = {
       ...initialRunState(),

@@ -59,3 +59,18 @@ The pre-existing untracked planning and specification files under `docs/superpow
 ## Concerns
 
 `npm install` reported two existing moderate audit findings. They were not changed because dependency upgrades are outside Task 5.
+
+## Fix round 1
+
+Review findings addressed:
+
+- ForgeLive now preserves `HIT`, `MISS`, and `PARTIAL`; rebuilt non-hit states render as `MISS • REBUILT` or `PARTIAL • REBUILT`. A rebuilt hit remains `HIT`.
+- Settings About labels now report Forge and generator version `0.1.1`.
+- Added reducer coverage for configured-event cache metadata and ForgeLive coverage for hit, miss, partial, and rebuilt miss/partial display cases.
+
+Verification:
+
+- Focused ForgeLive/reducer tests: `2 test files, 12 tests passed`.
+- Full frontend suite: `11 test files, 30 tests passed`.
+- Production build: passed; TypeScript and Vite completed successfully.
+- No real item generation tests were run.
