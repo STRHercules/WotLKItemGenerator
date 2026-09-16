@@ -12,3 +12,10 @@ def test_intentional_sidecar_cancellation_is_not_reclassified_as_failure() -> No
     assert 'let was_cancelled = registry_for_task' in command
     assert 'take_cancelled(&run_for_task)' in command
     assert '&& !was_cancelled' in command
+
+
+def test_release_app_hides_windows_console_and_captures_sidecar_diagnostics() -> None:
+    main = (ROOT / 'src-tauri/src/main.rs').read_text(encoding='utf-8')
+    command = (ROOT / 'src-tauri/src/commands/engine.rs').read_text(encoding='utf-8')
+    assert '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]' in main
+    assert 'append_log_line' in command

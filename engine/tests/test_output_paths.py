@@ -97,9 +97,9 @@ def test_release_version_contract():
     cargo = (root / "src-tauri" / "Cargo.toml").read_text()
     engine = load_engine()
 
-    assert package["version"] == "0.1.1"
-    assert tauri["version"] == "0.1.1"
-    assert re.search(r'^version = "([^"]+)"', cargo, re.MULTILINE).group(1) == "0.1.1"
+    assert package["version"] == "0.1.2"
+    assert tauri["version"] == "0.1.2"
+    assert re.search(r'^version = "([^"]+)"', cargo, re.MULTILINE).group(1) == "0.1.2"
     assert engine.GENERATOR_VERSION == "0.1.1"
     assert engine.EVENT_PROTOCOL_VERSION == 1
     assert engine.CACHE_SCHEMA_VERSION == 2

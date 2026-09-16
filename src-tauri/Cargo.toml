@@ -1,6 +1,6 @@
 [package]
 name = "wotlk-item-forge"
-version = "0.1.1"
+version = "0.1.2"
 description = "AzerothCore WotLK item generation workbench"
 authors = ["Modern Mods"]
 edition = "2021"

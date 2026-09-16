@@ -1,3 +1,5 @@
+use std::{fs::OpenOptions, io::Write, path::Path};
+
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -271,12 +273,12 @@ pub fn start_generation(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| Uuid::new_v4().to_string());
     let mut engine_args = request.to_engine_args();
-    let cache_path = app
+    let app_data = app
         .path()
         .app_local_data_dir()
-        .map_err(|error| format!("failed to resolve app data directory: {error}"))?
-        .join("cache")
-        .join("source-cache.json.gz");
+        .map_err(|error| format!("failed to resolve app data directory: {error}"))?;
+    let cache_path = app_data.join("cache").join("source-cache.json.gz");
+    let log_path = app_data.join("log.txt");
     engine_args.extend([
         "--source-cache-file".into(),
         cache_path.to_string_lossy().to_string(),
@@ -294,6 +296,7 @@ pub fn start_generation(
     let registry_for_task = registry.inner().clone();
     let app_for_task = app.clone();
     let run_for_task = run_id.clone();
+    let log_path_for_task = log_path;
 
     tauri::async_runtime::spawn(async move {
         let mut saw_terminal_event = false;
@@ -304,6 +307,7 @@ pub fn start_generation(
                     if line.is_empty() {
                         continue;
                     }
+                    append_log_line(&log_path_for_task, "stdout", &line);
                     match parse_event_line(&line) {
                         Ok(event) => {
                             saw_terminal_event |= event.is_complete() || event.is_error();
@@ -329,6 +333,7 @@ pub fn start_generation(
                 CommandEvent::Stderr(bytes) => {
                     let line = String::from_utf8_lossy(&bytes).trim().to_string();
                     if !line.is_empty() {
+                        append_log_line(&log_path_for_task, "stderr", &line);
                         let _ = app_for_task.emit(
                             "engine://stderr",
                             EngineStderrEnvelope {
@@ -339,6 +344,7 @@ pub fn start_generation(
                     }
                 }
                 CommandEvent::Error(message) => {
+                    append_log_line(&log_path_for_task, "process", &message);
                     let _ = app_for_task.emit(
                         "engine://stderr",
                         EngineStderrEnvelope {
@@ -412,6 +418,12 @@ pub fn generation_active(
     registry.contains(&run_id)
 }
 
+fn append_log_line(path: &Path, stream: &str, line: &str) {
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "[{stream}] {line}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +488,19 @@ mod tests {
         assert!(args.iter().any(|value| value == "--no-legendaries"));
         assert!(args.iter().any(|value| value == "sets"));
         assert!(args.windows(2).any(|pair| pair == ["--seed", "123456"]));
+    }
+
+    #[test]
+    fn appends_sidecar_diagnostics_to_log_file() {
+        let path =
+            std::env::temp_dir().join(format!("wotlk-item-forge-log-test-{}.txt", Uuid::new_v4()));
+        append_log_line(&path, "stderr", "sidecar warning");
+        append_log_line(&path, "stdout", "{\"type\":\"status\"}");
+        let contents = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            contents,
+            "[stderr] sidecar warning\n[stdout] {\"type\":\"status\"}\n"
+        );
+        std::fs::remove_file(path).unwrap();
     }
 }
