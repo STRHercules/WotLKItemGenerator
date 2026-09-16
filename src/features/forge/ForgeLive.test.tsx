@@ -19,6 +19,7 @@ const state = {
 describe('ForgeLive', () => {
   it('renders phase, progress, class progress and discoveries', () => {
     render(<ForgeLive state={state} elapsedSeconds={42.18} cancelling={false} onCancel={() => undefined} />);
+    expect(screen.getByTestId('live-forge')).toHaveAttribute('data-phase', 'finalizing_items');
     expect(screen.getByText('Finalizing generated items')).toBeInTheDocument();
     expect(screen.getByText(/72,134/)).toBeInTheDocument();
     expect(screen.getByText('Crown of Test')).toHaveClass('rarity-legendary');

@@ -32,7 +32,7 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
   const progressPercent = pct(state.progress.completed, state.progress.total);
   const discoveries = [...state.discoveries].reverse().slice(0, 7);
   return (
-    <div className="live-forge-grid">
+    <div className="live-forge-grid" data-testid="live-forge" data-phase={state.lifecycle}>
       <section className="panel live-main-panel">
         <div className="panel-header live-title-row">
           <div><p className="micro-kicker">FORGE ACTIVE</p><h2 className="panel-heading">{state.phaseName || 'Preparing item forge'}</h2><p className="live-detail">{state.phaseDetail || state.progress.current || 'Resolving generation inputs'}</p></div>
@@ -40,7 +40,7 @@ export function ForgeLive({ state, elapsedSeconds, cancelling, onCancel }: {
         </div>
         <div className="panel-body">
           <div className="overall-progress-heading"><span>{state.progress.current || 'Current work'}</span><strong>{Math.round(progressPercent)}%</strong></div>
-          <div className="progress-track large"><span style={{ width: `${progressPercent}%` }} /></div>
+          <div className="progress-track large active-progress"><span style={{ width: `${progressPercent}%` }} /><span className="progress-sheen" aria-hidden="true" /></div>
           <div className="progress-meta"><span>{state.progress.completed.toLocaleString()} / {state.progress.total.toLocaleString()}</span><span>ELAPSED {formatElapsed(elapsedSeconds)}</span></div>
 
           {Object.keys(state.classProgress).length ? <div className="class-progress-section"><div className="section-rule-title"><span>CLASS PROGRESS</span></div><div className="class-progress-grid">

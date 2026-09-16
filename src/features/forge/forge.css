@@ -50,7 +50,7 @@
 .begin-forge { width:100%; min-height:46px; margin-top:18px; font-family:var(--forge-font-mono); font-size:11px; font-weight:800; letter-spacing:.08em; }
 .begin-help { margin:9px 0 0; color:#4d697c; font-size:9px; line-height:1.45; text-align:center; }
 @media(max-width:1200px){.forge-config-layout{grid-template-columns:1fr}.forge-readiness{position:relative}.class-grid{grid-template-columns:repeat(2,1fr)}.advanced-grid{grid-template-columns:repeat(2,1fr)}}
-.live-forge-grid { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:20px; }
+.live-forge-grid { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:20px; animation:forge-grid-drift 36s linear infinite; background-image:linear-gradient(var(--forge-grid) 1px,transparent 1px),linear-gradient(90deg,var(--forge-grid) 1px,transparent 1px); background-size:32px 32px; }
 .live-main-panel,.discovery-panel { overflow:hidden; }
 .live-title-row { align-items:flex-start; }
 .live-detail { margin:7px 0 0; color:var(--forge-text-dim); font-size:11px; }
@@ -60,6 +60,7 @@
 .progress-track { position:relative; height:7px; overflow:hidden; border-radius:20px; background:#07111b; box-shadow:inset 0 0 0 1px #1f3546; }
 .progress-track.large { height:12px; margin:10px 0 8px; }
 .progress-track > span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#1c7a99,#63d8f2); box-shadow:0 0 14px rgba(99,216,242,.18); }
+.progress-track .progress-sheen { position:absolute; inset:0 auto 0 -35%; width:35%; background:linear-gradient(90deg,transparent,rgba(220,249,255,.22),transparent); animation:forge-progress-sheen 4.5s ease-in-out infinite; }
 .progress-meta { color:#536f83; }
 .class-progress-section { margin-top:30px; }
 .section-rule-title { display:flex; align-items:center; gap:12px; margin-bottom:12px; color:#6e899c; font-family:var(--forge-font-mono); font-size:9px; letter-spacing:.12em; }
@@ -71,7 +72,7 @@
 .discovery-panel { display:flex; flex-direction:column; min-height:480px; }
 .feed-count { display:grid; place-items:center; min-width:26px; height:22px; border:1px solid #28465c; border-radius:5px; color:#64859a; font-family:var(--forge-font-mono); font-size:9px; }
 .discovery-list { flex:1; display:flex; flex-direction:column; padding:10px 0; }
-.discovery-card { display:grid; grid-template-columns:28px 1fr; gap:8px; align-items:start; padding:11px 16px; border-bottom:1px solid rgba(32,56,80,.5); }
+.discovery-card { display:grid; grid-template-columns:28px 1fr; gap:8px; align-items:start; padding:11px 16px; border-bottom:1px solid rgba(32,56,80,.5); animation:forge-discovery-in 700ms ease-out both; }
 .discovery-symbol { color:#577a90; font-size:15px; text-align:center; }
 .discovery-card div { display:flex; flex-direction:column; gap:3px; min-width:0; }
 .discovery-card strong { overflow:hidden; font-family:var(--forge-font-mono); font-size:11px; text-overflow:ellipsis; white-space:nowrap; }
@@ -94,3 +95,19 @@
 .cancelled-completion .completion-emblem { border-color:rgba(240,182,91,.42); color:var(--forge-warning); background:rgba(73,50,18,.24); box-shadow:0 0 25px rgba(240,182,91,.07); }
 @media(max-width:1150px){.live-forge-grid{grid-template-columns:1fr}.completion-stats{grid-template-columns:repeat(3,1fr)}}
 .bridge-warning { padding:10px 12px; border:1px solid rgba(240,182,91,.3); border-radius:7px; background:rgba(73,50,18,.22); color:#d9b06d; font-family:var(--forge-font-mono); font-size:10px; }
+
+@keyframes forge-progress-sheen {
+  0%, 35% { transform:translateX(0); opacity:0; }
+  50% { opacity:.8; }
+  75%, 100% { transform:translateX(390%); opacity:0; }
+}
+@keyframes forge-discovery-in {
+  from { opacity:0; transform:translateY(6px); }
+  to { opacity:1; transform:translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-forge-grid, .progress-track .progress-sheen, .discovery-card { animation:none !important; }
+}
+[data-reduce-motion='true'] .live-forge-grid,
+[data-reduce-motion='true'] .progress-track .progress-sheen,
+[data-reduce-motion='true'] .discovery-card { animation:none !important; }
