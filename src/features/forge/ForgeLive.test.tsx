@@ -41,6 +41,9 @@ describe('ForgeLive', () => {
     expect(screen.getByText('HAMMER & ANVIL')).toBeInTheDocument();
     expect(screen.getAllByTestId('forge-spark')).toHaveLength(6);
     expect(scene.querySelector('.forge-hammer')).not.toBeNull();
+    const hammer = screen.getByTestId('forge-hammer');
+    expect(hammer).toHaveAttribute('data-pivot', 'handle-end');
+    expect(hammer).toHaveAttribute('data-handle-attachment', 'head-right-center');
     expect(scene.querySelector('.forge-anvil')).not.toBeNull();
     expect(scene.querySelector('.forge-anvil-face')).not.toBeNull();
     expect(scene.querySelector('.forge-striking-face')).not.toBeNull();
