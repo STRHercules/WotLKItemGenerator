@@ -52,6 +52,9 @@
 @media(max-width:1200px){.forge-config-layout{grid-template-columns:1fr}.forge-readiness{position:relative}.class-grid{grid-template-columns:repeat(2,1fr)}.advanced-grid{grid-template-columns:repeat(2,1fr)}}
 .live-forge-grid { display:grid; grid-template-columns:minmax(0,1fr) 360px; gap:20px; animation:forge-grid-drift 36s linear infinite; background-image:linear-gradient(var(--forge-grid) 1px,transparent 1px),linear-gradient(90deg,var(--forge-grid) 1px,transparent 1px); background-size:32px 32px; }
 .live-main-panel,.discovery-panel { overflow:hidden; }
+.live-forge-grid[data-phase='indexing_library'] .live-main-panel { border-color:color-mix(in srgb,var(--forge-warning) 48%,var(--forge-border)); }
+.live-forge-grid[data-phase='generating_skeletons'] .live-main-panel { border-color:color-mix(in srgb,var(--forge-cyan) 48%,var(--forge-border)); }
+.live-forge-grid[data-phase='finalizing_items'] .live-main-panel { border-color:color-mix(in srgb,var(--forge-success) 48%,var(--forge-border)); }
 .live-title-row { align-items:flex-start; }
 .live-detail { margin:7px 0 0; color:var(--forge-text-dim); font-size:11px; }
 .live-pulse { display:flex; align-items:center; gap:7px; color:var(--forge-cyan); font-family:var(--forge-font-mono); font-size:9px; letter-spacing:.1em; }

@@ -33,3 +33,14 @@ The pre-existing untracked planning and specification documents were preserved a
 ## Verification boundary
 
 This task is presentation-only. Automated tests and the production build verify the DOM contract, compilation, and bundled CSS; no live browser visual smoke test was required by the brief.
+
+## Review fix
+
+The review found that `data-phase` was exposed but unused by CSS. Added selectors for the three live lifecycle values (`indexing_library`, `generating_skeletons`, and `finalizing_items`) to tint the existing main-panel border with the existing warning, cyan, and success variables. The selectors are static, so reduced-motion behavior remains unchanged.
+
+Fix verification:
+
+- Focused ForgeLive suite: passed, 2 tests.
+- Full frontend suite: passed, 11 test files and 24 tests.
+- Production build: passed with `tsc -b && vite build`; Vite transformed 76 modules.
+- `git diff --check`: passed.
