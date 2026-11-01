@@ -45,6 +45,7 @@ GENERATE_SOCKETS = True
 GENERATE_LEGENDARIES = True
 EXPANSION = 'All'
 ACTIVE_LEVEL_RANGE = (1, 80)
+RARITY = 'All'
 MAGIC_EFFECTS = 'All'
 STRICT_EXPANSION_SCOPING = False
 APPEARANCE_PROVENANCE = {}
@@ -84,6 +85,8 @@ EXPANSION_IDS = {'Classic': 0, 'TBC': 1, 'Wrath': 2}
 EXPANSION_REFERENCE_ITEM_LEVEL_RANGES = {
     'Classic': (1, 100), 'TBC': (80, 164), 'Wrath': (110, 284), 'All': (1, 284),
 }
+RARITY_CHOICES = ('All', 'Common', 'Uncommon', 'Rare', 'Epic', 'Legendary')
+RARITY_QUALITY = {'Common': 1, 'Uncommon': 2, 'Rare': 3, 'Epic': 4, 'Legendary': 5}
 _TBC_NAME_TERMS = frozenset({
     'burningcrusade', 'outland', 'draenei', 'bloodelf', 'sindorei', 'silvermoon',
     'exodar', 'hellfire', 'shadowmoon', 'netherstorm', 'nagrand', 'terokkar',
@@ -279,6 +282,13 @@ def _normalise_expansion(choice):
         if label.casefold()==value:
             return label
     raise ValueError(f'unknown expansion {choice!r}; choose from: {", ".join(EXPANSION_CHOICES)}')
+
+def _normalise_rarity(choice):
+    value=str(choice).strip().casefold()
+    for label in RARITY_CHOICES:
+        if label.casefold()==value:
+            return label
+    raise ValueError(f'unknown rarity {choice!r}; choose from: {", ".join(RARITY_CHOICES)}')
 
 _EXPANSION_POOL_CACHE={}
 
@@ -758,7 +768,7 @@ class PlainTerminalUI:
         features=' • '.join(_feature_display_names(runtime.get('disabled_features',()))) or 'None'
         self._write(f"Seed: {runtime['seed']} ({runtime['source']})")
         self._write(f"Items: {runtime['number']:,} | Classes: {', '.join(runtime['classes'])}")
-        self._write(f"Expansion: {runtime.get('expansion','All')} | Magic effects: {runtime.get('magic_effects','All')}")
+        self._write(f"Expansion: {runtime.get('expansion','All')} | Rarity: {runtime.get('rarity','All')} | Magic effects: {runtime.get('magic_effects','All')}")
         self._write(f"Sockets: {'yes' if runtime.get('generate_sockets',True) else 'no'} | Legendaries: {'yes' if runtime.get('generate_legendaries',True) else 'no'}")
         self._write(f"Features: {features}")
         destinations=' + '.join(runtime.get('loot_destinations',())) or 'none'
@@ -834,7 +844,7 @@ class PlainTerminalUI:
         f=report.get('feature_counts',{})
         self._write('\n╔══════════════════ GENERATION COMPLETE ══════════════════╗')
         self._write(f"  Items        {report.get('item_count',report.get('total_items',0)):>10,}")
-        for quality in ('Uncommon','Rare','Epic','Legendary'):
+        for quality in ('Common','Uncommon','Rare','Epic','Legendary'):
             if quality in q: self._write(f"  {quality:<12} {q.get(quality,0):>10,}")
         self._write(f"  Sets         {f.get('sets',0):>10,}")
         self._write(f"  Effects      {f.get('spell-effects',0):>10,}")
@@ -898,7 +908,7 @@ class JsonEventUI(PlainTerminalUI):
         self.runtime=runtime
         fields=(
             'seed','source','output_dir','number','class_name','classes','class_counts',
-            'expansion','expansion_level_range','strict_expansion_scoping','generate_sockets',
+            'expansion','expansion_level_range','rarity','strict_expansion_scoping','generate_sockets',
             'generate_legendaries','magic_effects','socket_bonuses','loot_destinations',
             'loot_chance','disabled_features','set_rate','set_min_level','set_size',
             'spell_effect_rate_multiplier','proc_rate_multiplier','on_use_rate_multiplier',
@@ -1074,7 +1084,7 @@ class FancyTerminalUI(PlainTerminalUI):
         grid=Table.grid(padding=(0,2))
         grid.add_column(style='bold'); grid.add_column(justify='right')
         grid.add_row('Items generated',f"{report.get('item_count',report.get('total_items',0)):,}")
-        for quality,style in (('Uncommon','green'),('Rare','blue'),('Epic','magenta'),('Legendary','yellow')):
+        for quality,style in (('Common','white'),('Uncommon','green'),('Rare','blue'),('Epic','magenta'),('Legendary','yellow')):
             if quality in q: grid.add_row(Text(quality,style=style),f"{q.get(quality,0):,}")
         grid.add_row('Item sets',f"{f.get('sets',0):,}")
         grid.add_row('Special effects',f"{f.get('spell-effects',0):,}")
@@ -1128,6 +1138,7 @@ class FancyTerminalUI(PlainTerminalUI):
             cfg.add_row('Items',f"{self.runtime['number']:,}")
             cfg.add_row('Classes',', '.join(self.runtime['classes']))
             cfg.add_row('Expansion',self.runtime.get('expansion','All'))
+            cfg.add_row('Rarity',self.runtime.get('rarity','All'))
             cfg.add_row('Magic effects',self.runtime.get('magic_effects','All'))
             cfg.add_row('Sockets','yes' if self.runtime.get('generate_sockets',True) else 'no')
             cfg.add_row('Legendaries','yes' if self.runtime.get('generate_legendaries',True) else 'no')
@@ -1260,8 +1271,8 @@ STAT_ID = {'agi':3,'str':4,'int':5,'spirit':6,'stam':7,'def':12,'dodge':13,'parr
            'hit':31,'crit':32,'resil':35,'haste':36,'expertise':37,'ap':38,'rap':39,'mp5':43,
            'arp':44,'sp':45,'spellpen':47,'blockvalue':48}
 STAT_COST = {'ap':0.5,'rap':0.5,'sp':0.8,'mp5':2.5,'blockvalue':0.65}
-QUALITY_POWER={2:0.82,3:0.92,4:1.0,5:1.12}
-QUALITY_NAME={2:'Uncommon',3:'Rare',4:'Epic',5:'Legendary'}
+QUALITY_POWER={1:0.72,2:0.82,3:0.92,4:1.0,5:1.12}
+QUALITY_NAME={1:'Common',2:'Uncommon',3:'Rare',4:'Epic',5:'Legendary'}
 SLOT_BUDGET={'head':1.00,'neck':0.70,'shoulder':0.80,'back':0.65,'chest':1.15,'wrists':0.60,
              'hands':0.80,'waist':0.80,'legs':1.10,'feet':0.80,'finger':0.70,'trinket':0.85,
              'one_hand':0.75,'two_hand':1.10,'ranged':0.90,'shield':0.90,'relic':0.50}
@@ -2384,6 +2395,7 @@ def parse_args(argv=None):
     class_group.add_argument('--class',dest='class_name',type=_class_arg,help='Generate items for only this class (case-insensitive).')
     class_group.add_argument('--classes',dest='class_names',type=_classes_arg,default=None,metavar='LIST',help='Generate items for a comma-separated class list or ALL.')
     parser.add_argument('--expansion',choices=EXPANSION_CHOICES,default='All',help='Expansion scope for levels, appearances, and encounter discovery (default: All).')
+    parser.add_argument('--rarity',choices=RARITY_CHOICES,default='All',help='Rarity for every generated item (default: All).')
     parser.add_argument('--magic-effects',choices=MAGIC_EFFECT_CHOICES,default='All',help='Restrict generated magic effects (default: All).')
     parser.add_argument('--loot-destinations',nargs='+',choices=('world','dungeon','raid','none'),default=None,metavar='DEST',help='Loot insertion destinations: world, dungeon, raid, or none.')
     parser.add_argument('--strict-expansion-scoping',action='store_true',help='Fail if an appearance provenance row is outside the selected expansion scope.')
@@ -2473,6 +2485,8 @@ def interactive_setup(storage_path=USER_AZEROTHCORE_SOURCE_FILE,console=None):
 
     expansion=Prompt.ask('Which expansion should guide generation?',choices=EXPANSION_CHOICES,default='All',console=console)
     expansion=_normalise_expansion(expansion)
+    rarity=Prompt.ask('Which rarity should be generated?',choices=RARITY_CHOICES,default='All',console=console)
+    rarity=_normalise_rarity(rarity)
     magic_effects=Prompt.ask('Which magic effects should be generated?',choices=MAGIC_EFFECT_CHOICES,default='All',console=console)
     magic_effects=_normalise_magic_effect(magic_effects)
     generate_sockets=Confirm.ask('Generate sockets?',default=True,console=console)
@@ -2513,6 +2527,7 @@ def interactive_setup(storage_path=USER_AZEROTHCORE_SOURCE_FILE,console=None):
     summary.add_column('Value')
     summary.add_row('AzerothCore',str(source_root))
     summary.add_row('Expansion',expansion)
+    summary.add_row('Rarity',rarity)
     summary.add_row('Classes',', '.join(class_names))
     summary.add_row('Items',f'{number:,}')
     summary.add_row('Magic effects',magic_effects)
@@ -2532,6 +2547,7 @@ def interactive_setup(storage_path=USER_AZEROTHCORE_SOURCE_FILE,console=None):
     args.azerothcore_source_root=source_root
     args.loot_destinations=destinations
     args.expansion=expansion
+    args.rarity=rarity
     args.strict_expansion_scoping=expansion!='All'
     args.magic_effects=magic_effects
     args.generate_sockets=generate_sockets
@@ -2568,13 +2584,14 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     global ITEM_SET_DBC_SOURCE, SPELL_DBC_SOURCE, SPELL_ENCHANTMENT_DBC_SOURCE, DISENCHANT_SOURCE, SPELL_PROC_SOURCE, SPELL_SCRIPT_NAMES_SOURCE
     global DISABLED_FEATURES, FEATURE_CATALOG, SET_RATE, SET_MIN_LEVEL, SET_SIZE, SPELL_EFFECT_RATE_MULTIPLIER, PROC_RATE_MULTIPLIER
     global ON_USE_RATE_MULTIPLIER, EFFECT_ILVL_WINDOW, SOCKET_BONUS_RATE, DISENCHANT_RATE, MAX_SPECIAL_EFFECTS, REFERENCE_CATALOG_AUDIT
-    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT, LOOT_DESTINATIONS, GENERATE_SOCKETS, GENERATE_LEGENDARIES, EXPANSION, ACTIVE_LEVEL_RANGE, MAGIC_EFFECTS, STRICT_EXPANSION_SCOPING, APPEARANCE_PROVENANCE, SOURCE_CACHE_FILE
+    global ACTIVE_CLASSES, TARGET_ITEM_COUNT, CLASS_ITEM_COUNTS, A, W, CONTENT_MANIFEST, TARGETED_PLAN, QUEST_TEMPLATE_SOURCE, QUEST_REWARD_ROWS, ENCOUNTER_SOURCE_CATALOG, DEFAULT_ENCOUNTER_MANIFEST, ENCOUNTER_SOURCE_PATHS, GAMEOBJECT_SOURCE_PATHS, GAMEOBJECT_SOURCE_AUDIT, VERBOSE_AUDIT, LOOT_DESTINATIONS, GENERATE_SOCKETS, GENERATE_LEGENDARIES, EXPANSION, ACTIVE_LEVEL_RANGE, RARITY, MAGIC_EFFECTS, STRICT_EXPANSION_SCOPING, APPEARANCE_PROVENANCE, SOURCE_CACHE_FILE
     args=parse_args(argv) if args is None else args
     if getattr(args,'source_cache_file',None):
         SOURCE_CACHE_FILE=Path(args.source_cache_file).expanduser().resolve()
     FEATURE_CATALOG=None
     EXPANSION=_normalise_expansion(getattr(args,'expansion','All'))
     ACTIVE_LEVEL_RANGE=expansion_level_range(EXPANSION)
+    RARITY=_normalise_rarity(getattr(args,'rarity','All'))
     MAGIC_EFFECTS=_normalise_magic_effect(getattr(args,'magic_effects','All'))
     GENERATE_SOCKETS=bool(getattr(args,'generate_sockets',True))
     GENERATE_LEGENDARIES=bool(getattr(args,'generate_legendaries',True))
@@ -2851,7 +2868,7 @@ def configure_runtime(argv=None,now=None,guid_path=None,args=None,ui=None):
     return {
         'seed':SEED,'source':source,'output_dir':OUT,'number':TARGET_ITEM_COUNT,
         'class_name':args.class_name,'classes':[row[0] for row in ACTIVE_CLASSES],
-        'expansion':EXPANSION,'expansion_level_range':ACTIVE_LEVEL_RANGE,
+        'expansion':EXPANSION,'expansion_level_range':ACTIVE_LEVEL_RANGE,'rarity':RARITY,
         'strict_expansion_scoping':STRICT_EXPANSION_SCOPING,
         'generate_sockets':GENERATE_SOCKETS,'generate_legendaries':GENERATE_LEGENDARIES,
         'magic_effects':MAGIC_EFFECTS,
@@ -3115,11 +3132,17 @@ def load_encounter_source_catalog(map_path,map_difficulty_path,dungeon_map_path,
                         'minlevel':_sql_int(row[template_index['minlevel']],1) if 'minlevel' in template_index else 1,
                         'maxlevel':_sql_int(row[template_index['maxlevel']],80) if 'maxlevel' in template_index else 80} for row in template_rows}
     creature_columns,creature_rows=_load_sql_table_rows(creature_path); creature_index=_sql_column_indexes(creature_columns)
+    creature_id_indexes=[creature_index[name] for name in ('id','id1','id2','id3') if name in creature_index]
+    if 'map' not in creature_index or not any(name in creature_index for name in ('id','id1')):
+        raise ValueError(f'creature SQL source {creature_path} requires a map column and id or id1 (with optional id2/id3) creature identifiers')
     creature_maps=defaultdict(set)
     for row in creature_rows:
         map_id=_sql_int(row[creature_index['map']])
         if scope_map_ids is None or map_id in scope_map_ids:
-            creature_maps[_sql_int(row[creature_index['id']])].add(map_id)
+            for index in creature_id_indexes:
+                creature_entry=_sql_int(row[index])
+                if creature_entry>0:
+                    creature_maps[creature_entry].add(map_id)
     encounter_columns,encounter_rows=_load_sql_table_rows(instance_encounters_path); encounter_index=_sql_column_indexes(encounter_columns)
     encounters={_sql_int(row[encounter_index['entry']]):{'credit_type':_sql_int(row[encounter_index['credittype']]),'credit_entry':_sql_int(row[encounter_index['creditentry']]),'last_encounter_dungeon':_sql_int(row[encounter_index['lastencounterdungeon']]),'comment':str(row[encounter_index['comment']]).strip("'").replace("''","'")} for row in encounter_rows}
     creature_loot_columns,creature_loot_rows=_load_sql_table_rows(creature_loot_path)
@@ -6377,7 +6400,10 @@ def item_level(req,entry):
     vals=[(187,8),(200,15),(213,15),(219,10),(226,10),(232,10),(239,7),(245,7),(251,5),(258,5),(264,4),(271,2),(277,1.5),(284,.5)]
     return weighted(vals,entry,'ilvl80')
 
-def quality(req,ilvl,entry):
+def quality(req,ilvl,entry,rarity=None):
+    selected=_normalise_rarity(RARITY if rarity is None else rarity)
+    if selected!='All':
+        return RARITY_QUALITY[selected]
     # Hard endgame caps: greens stop after ilvl 213 and blues stop after ilvl 226.
     if ilvl>226: return 4
     if ilvl>213: rows=[(3,30),(4,70)]
@@ -6531,7 +6557,7 @@ def stat_count(req,entry,slot):
 
 def make_stats(cname,role,req,ilvl,q,entry,budget_key,sockets,is_shield=False,force_count=None,budget_multiplier=1.0):
     n=force_count if force_count is not None else stat_count(req,entry,budget_key)
-    prim,sec=role_stats(cname,role,req,is_shield)
+    prim,sec=role_stats(cname,role,max(req,40) if q==5 else req,is_shield)
     picks=[]
     for p in prim:
         if len(picks)<n: picks.append(p)
@@ -6716,7 +6742,7 @@ def legendary_name_candidates(entry,slot,weapon_kind=None,armor_subclass=None):
         if pattern==0: name=f'{root}, {base} of the {epithet}'
         elif pattern==1: name=f'{root}, Legacy of the {epithet}'
         elif pattern==2:
-            oath=oath_epithet[h64(entry,'legend_oath_epithet',attempt)%len(oath_epithet)]
+            oath=oath_epithets[h64(entry,'legend_oath_epithet',attempt)%len(oath_epithets)]
             name=f'{root}, Oath of the {oath}'
         else: name=f'{root}, {base} of {epithet}'
         if valid_item_name(name):
@@ -6811,15 +6837,15 @@ def weapon_damage(kind,ilvl,q,entry):
 def socket_colors(req,ilvl,q,entry,slot,ref_q):
     if not GENERATE_SOCKETS:
         return []
-    if req<60: return []
     # Legendaries are intentionally bespoke: always at least two sockets, sometimes three.
-    if q==5 and req>=80:
-        n=3 if r01(entry,'legend_socket3')<.35 else 2
+    if q==5:
+        n=3 if req>=80 and r01(entry,'legend_socket3')<.35 else 2
         colors=[]
         if slot=='head': colors.append(1)
         while len(colors)<n:
             x=r01(entry,'legend_socket_color',len(colors)); colors.append(2 if x<.40 else 4 if x<.75 else 8)
         return colors
+    if req<60: return []
     # Conservative socket progression; validated socket bonuses are assigned later when enabled.
     chance = .06 if req<70 else .14 if req<75 else .24 if req<80 else (.24 if q==2 else .36 if q==3 else .50)
     if r01(entry,'socket_chance')>=chance: return []
@@ -6898,6 +6924,10 @@ def choose_structure_for_slot(cname,role,req,ilvl,q,entry,slot):
 
 def expected_legendary_count(item_count):
     # Preserve the original rarity: three Legendaries per 100,000 generated items.
+    if RARITY=='Legendary':
+        return item_count
+    if RARITY!='All':
+        return 0
     return (item_count*3)//100000 if GENERATE_LEGENDARIES and ACTIVE_LEVEL_RANGE[1]>=80 else 0
 
 SET_SLOT_ORDER=('head','shoulder','chest','hands','legs','waist','feet','wrists','back','neck')
@@ -7366,7 +7396,7 @@ def build_targeted_skeletons(plan,ui=None):
     for completed,recipe in enumerate(plan,1):
         cname=recipe['class_name']; entry=entry_for_class(cname,recipe['class_index'])
         req=choose_recipe_level(recipe,recipe['index']); ilvl=choose_recipe_item_level(recipe,req,recipe['index'])
-        q=int(recipe['quality']) if recipe.get('quality') is not None else quality(req,ilvl,entry)
+        q=quality(req,ilvl,entry) if RARITY!='All' else int(recipe['quality']) if recipe.get('quality') is not None else quality(req,ilvl,entry)
         role=recipe.get('role') or weighted(ROLE_WEIGHTS[cname],entry,'targeted_role',recipe['recipe_id'])
         if recipe.get('set_slot'):
             st=choose_structure_for_slot(cname,role,req,ilvl,q,entry,recipe['set_slot'])
@@ -7415,7 +7445,7 @@ def build_skeletons(ui=None):
         raise RuntimeError(f'generation plan produced {len(sk)} skeletons, expected {TARGET_ITEM_COUNT}')
 
     # Preserve extreme rarity but distribute promoted Legendaries across distinct classes when possible.
-    target=expected_legendary_count(len(sk))
+    target=expected_legendary_count(len(sk)) if RARITY=='All' else 0
     eligible=[x for x in sk if x['required_level']==80 and x['item_level']>=264 and x['quality']==4]
     eligible.sort(key=lambda x:h64(x['entry'],'legendary'))
     selected=[]; used_classes=set()
@@ -7548,18 +7578,22 @@ def validate(items,ui=None):
 
     legends=[x for x in items if x['Quality']==5]
     expected_legends=expected_legendary_count(expected_total)
-    if len(legends)!=expected_legends or any(x['RequiredLevel']!=80 or x['ItemLevel']<264 for x in legends):
+    if RARITY=='All' and (len(legends)!=expected_legends or any(x['RequiredLevel']!=80 or x['ItemLevel']<264 for x in legends)):
         errors.append(f'legendary policy violation: {len(legends)} expected {expected_legends}')
-    if any(len(x['stats'])!=5 or (GENERATE_SOCKETS and len(x['sockets'])<2) or not x['description'] or ',' not in x['name'] for x in legends):
+    if RARITY!='All' and len(legends)!=expected_legends:
+        errors.append(f'legendary policy violation: {len(legends)} expected {expected_legends}')
+    if RARITY in ('All','Legendary') and any(len(x['stats'])!=5 or (GENERATE_SOCKETS and len(x['sockets'])<2) or not x['description'] or (not x.get('itemset') and ',' not in x['name']) for x in legends):
         errors.append('legendary bespoke-design policy violation')
 
     camel_name_re=re.compile(r'[a-z][A-Z]')
     for validation_index,x in enumerate(items,1):
         if not (1<=x['RequiredLevel']<=80): errors.append(f"{x['entry']} bad req")
         if x['ItemLevel']<x['RequiredLevel']: errors.append(f"{x['entry']} ilvl<req")
-        if x['Quality'] not in (2,3,4,5): errors.append(f"{x['entry']} quality")
-        if x['ItemLevel']>213 and x['Quality']==2: errors.append(f"{x['entry']} green above ilvl 213")
-        if x['ItemLevel']>226 and x['Quality']==3: errors.append(f"{x['entry']} blue above ilvl 226")
+        if x['Quality'] not in (1,2,3,4,5): errors.append(f"{x['entry']} quality")
+        selected_quality=RARITY_QUALITY.get(RARITY)
+        if selected_quality is not None and x['Quality']!=selected_quality: errors.append(f"{x['entry']} quality is not {QUALITY_NAME[selected_quality]}")
+        if RARITY=='All' and x['ItemLevel']>213 and x['Quality']==2: errors.append(f"{x['entry']} green above ilvl 213")
+        if RARITY=='All' and x['ItemLevel']>226 and x['Quality']==3: errors.append(f"{x['entry']} blue above ilvl 226")
         if camel_name_re.search(x['name']): errors.append(f"{x['entry']} internal CamelCase name: {x['name']}")
         if x['class_mask']<=0: errors.append(f"{x['entry']} empty class mask")
         if x.get('itemset'):
@@ -8303,7 +8337,7 @@ def write_outputs(items,ui=None,name_changes=()):
                                      source_audit.get('script_reward_mapping'),'not_exercised'),
     }
     report={'seed':SEED,'requested_number':TARGET_ITEM_COUNT,'selected_classes':generated_class_names,
-            'expansion':EXPANSION,'expansion_level_range':list(ACTIVE_LEVEL_RANGE),
+            'expansion':EXPANSION,'expansion_level_range':list(ACTIVE_LEVEL_RANGE),'rarity':RARITY,
             'magic_effects':MAGIC_EFFECTS,'generate_sockets':GENERATE_SOCKETS,
             'generate_legendaries':GENERATE_LEGENDARIES,
             'total_items':len(items),'entry_min':min(x['entry'] for x in items),'entry_max':max(x['entry'] for x in items),

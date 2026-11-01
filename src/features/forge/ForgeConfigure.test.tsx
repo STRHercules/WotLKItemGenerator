@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { defaultForgeConfig } from './forgeConfig';
 import { ForgeConfigure } from './ForgeConfigure';
@@ -16,6 +16,9 @@ describe('ForgeConfigure', () => {
   it('shows common controls and keeps advanced controls collapsed', () => {
     render(<ForgeConfigure config={{ ...defaultForgeConfig(), output_root: 'C:/Packs' }} readiness={readiness} onChange={() => undefined} onBegin={() => undefined} onOpenSources={() => undefined} />);
     expect(screen.getByRole('button', { name: 'Wrath' })).toBeInTheDocument();
+    const rarity = screen.getByRole('group', { name: 'Rarity' });
+    expect(within(rarity).getByRole('button', { name: 'Common' })).toBeInTheDocument();
+    expect(within(rarity).getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('checkbox', { name: 'Paladin' })).toBeChecked();
     expect(screen.getByRole('button', { name: /advanced options/i })).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByLabelText('Set rate')).not.toBeInTheDocument();

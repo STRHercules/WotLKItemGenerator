@@ -34,6 +34,7 @@ export function ForgeConfigure({ config, readiness, onChange, onBegin, onOpenSou
         <div className="panel-header"><div><p className="micro-kicker">GENERATION PROFILE</p><h2 className="panel-heading">Configure the forge</h2></div><span className="profile-badge">STANDARD PACK</span></div>
         <div className="panel-body forge-form">
           <SegmentedControl label="Expansion" value={config.expansion} options={['Classic', 'TBC', 'Wrath', 'All'] as const} onChange={(value) => update('expansion', value)} />
+          <SegmentedControl label="Rarity" value={config.rarity} options={['All', 'Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'] as const} onChange={(value) => update('rarity', value)} />
 
           <fieldset className="forge-fieldset"><legend>Classes</legend><div className="class-grid">
             {FORGE_CLASSES.map((name) => <label key={name} className={`class-chip${config.classes.includes(name) ? ' class-chip-selected' : ''}`}><input type="checkbox" aria-label={name} checked={config.classes.includes(name)} onChange={() => toggleClass(name)} /><span className="class-gem" aria-hidden="true" /><span>{name}</span></label>)}

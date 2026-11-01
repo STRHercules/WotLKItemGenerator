@@ -23,7 +23,7 @@ export function ReportSummary({ rawJson }: { rawJson: unknown }) {
       </section>
       <div className="report-summary__grid">
         <section className="panel"><div className="panel-header"><h2>Quality Distribution</h2></div><div className="panel-body report-breakdown">
-          {['Uncommon', 'Rare', 'Epic', 'Legendary'].map((quality) => (
+          {['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'].map((quality) => (
             <Metric key={quality} label={quality} value={summary.qualities[quality] ?? 0} />
           ))}
         </div></section>

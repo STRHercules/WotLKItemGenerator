@@ -13,6 +13,7 @@ export type ConfiguredEvent = EngineEventBase & {
   classes?: string[];
   class_counts?: Record<string, number>;
   expansion?: string;
+  rarity?: string;
   magic_effects?: string;
   loot_destinations?: string[];
   disabled_features?: string[];
@@ -109,6 +110,7 @@ export type GenerationRequest = {
   number: number;
   classes: string[];
   expansion: 'Classic' | 'TBC' | 'Wrath' | 'All';
+  rarity: 'All' | 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary';
   magic_effects: 'On Hit' | 'On Use' | 'On Equip' | 'None' | 'All';
   loot_destinations: Array<'world' | 'dungeon' | 'raid'>;
   generate_sets: boolean;

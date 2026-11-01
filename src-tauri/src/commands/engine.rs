@@ -18,6 +18,8 @@ pub struct GenerationRequest {
     pub number: u64,
     pub classes: Vec<String>,
     pub expansion: String,
+    #[serde(default = "default_rarity")]
+    pub rarity: String,
     pub magic_effects: String,
     #[serde(default)]
     pub loot_destinations: Vec<String>,
@@ -77,6 +79,9 @@ pub struct GenerationRequest {
 fn default_loot_chance() -> f64 {
     2.0
 }
+fn default_rarity() -> String {
+    "All".into()
+}
 fn default_set_rate() -> f64 {
     0.20
 }
@@ -110,6 +115,8 @@ impl GenerationRequest {
             self.classes.join(","),
             "--expansion".into(),
             self.expansion.clone(),
+            "--rarity".into(),
+            self.rarity.clone(),
             "--magic-effects".into(),
             self.magic_effects.clone(),
             "--output-root".into(),
@@ -433,6 +440,7 @@ mod tests {
             number: 100,
             classes: vec!["Mage".into(), "Druid".into()],
             expansion: "Wrath".into(),
+            rarity: "Epic".into(),
             magic_effects: "All".into(),
             loot_destinations: vec!["world".into(), "raid".into()],
             generate_sets: false,
@@ -481,6 +489,7 @@ mod tests {
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--classes", "Mage,Druid"]));
+        assert!(args.windows(2).any(|pair| pair == ["--rarity", "Epic"]));
         assert!(args
             .windows(2)
             .any(|pair| pair == ["--loot-destinations", "world"]));

@@ -21,6 +21,7 @@ export function defaultForgeConfig(): ForgeConfig {
     number: 100_000,
     classes: [...FORGE_CLASSES],
     expansion: 'All',
+    rarity: 'All',
     magic_effects: 'All',
     loot_destinations: ['world', 'dungeon', 'raid'],
     generate_sets: true,
